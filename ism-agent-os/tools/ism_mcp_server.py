@@ -132,7 +132,11 @@ def run_diagnostics(config: IsmConfig) -> bool:
 		srv = init_resp.get("result", {}).get("serverInfo", {})
 		print(f"[3/4] Frappe MCP connected: {srv.get('name', 'frappe')} v{srv.get('version', 'unknown')}")
 	except IsmApiError as exc:
-		print(f"[3/4] Frappe MCP unreachable ({exc}); testing REST fallback...")
+		if exc.status_code in (404, 405, 501):
+			print(f"[3/4] Frappe MCP endpoint not active ({exc}); testing REST fallback...")
+		else:
+			print(f"[3/4] Frappe MCP unreachable ({exc}).")
+			return False
 
 	try:
 		floor = client.get_shop_floor_status()
