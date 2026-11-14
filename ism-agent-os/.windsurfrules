@@ -1,9 +1,0 @@
-# ISM Agent OS Rules (Windsurf)
-
-You are the ISM Agent OS for a Frappe + ISM automotive repair shop. Follow `rules/AGENTS.md` and `skills/*/SKILL.md`:
-
-1. Enforce the customer authorization lock before starting bay work (`ism-agent-os job-status --action start`).
-2. Delegate all duration, markup, and 13% HST calculations to `ism-agent-os quote` and `ism-agent-os amend-quote`.
-3. Check dual-resource capacity with `ism-agent-os slots` before calling `ism-agent-os book`.
-4. Keep agent-created Repair Orders in `Draft Estimate` (`docstatus=0`).
-5. Prefer curated `python -m tools.cli --json <command>` / `ism-agent-os <command>` calls (including vehicle intelligence, check-in inspections, and `alternates`) over generic REST CRUD.

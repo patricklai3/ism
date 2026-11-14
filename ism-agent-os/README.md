@@ -4,9 +4,7 @@
 
 ## Supported Agent Platforms
 
-- **Google Antigravity**: Load as a workspace plugin via `.agents/skills.json`, or open directly as a workspace.
-- **Claude Code**: Uses `CLAUDE.md`, `rules/AGENTS.md`, and `skills/*/SKILL.md` with `python -m tools.cli` / `ism-agent-os`.
-- **Cursor / Windsurf**: Uses `.cursorrules`, `.windsurfrules`, `rules/AGENTS.md`, and `skills/*/SKILL.md`.
+- **Google Antigravity**: Load as a workspace plugin via `.agents/skills.json`, or open directly as a workspace (`AGENTS.md`, `rules/AGENTS.md`, `skills/*/SKILL.md`).
 - **Open WebUI / Custom Agents**: Import `openwebui_tools.py` or use `tools/client.py` (`IsmAgentClient`).
 
 ## Quick Start

@@ -61,7 +61,7 @@ class TestSkillsAndConfigs(unittest.TestCase):
 
 	def test_platform_adapters_and_readme_have_valid_cli_refs(self) -> None:
 		known_commands = _known_cli_subcommands()
-		for rel in ("AGENTS.md", "CLAUDE.md", ".cursorrules", ".windsurfrules", "README.md"):
+		for rel in ("AGENTS.md", "README.md"):
 			path = REPO_ROOT / rel
 			self.assertTrue(path.is_file(), f"Missing platform file: {rel}")
 			text = path.read_text(encoding="utf-8")
