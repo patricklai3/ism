@@ -7,18 +7,20 @@ You are operating as the **ISM Agent OS** for an automotive repair shop running 
 Verify live connectivity before starting shop workflows:
 
 ```bash
-python tools/ism_mcp_server.py --test
+python -m tools.cli test
 ```
 
 Configure connection parameters in `.env` (`FRAPPE_URL`, `FRAPPE_API_KEY`, `FRAPPE_API_SECRET`, `FRAPPE_SITE`).
 
 ## Mandatory Shop Rules
 
-1. **Authorization Lock**: Never call `ism_update_job_status(action="start")` unless customer authorization is `Approved` or `Partially Approved`.
-2. **Server-Side Math**: Never calculate prices, flat-rate totals, or 13% HST directly. Always invoke `ism_create_quote` or `ism_amend_quote`.
-3. **Conflict-Free Scheduling**: Always run `ism_find_available_slots` before `ism_book_appointment`.
+See `rules/AGENTS.md` for full operational invariants and valid status values.
+
+1. **Authorization Lock**: Never run `ism-agent-os job-status --action start` unless customer authorization is `Approved` or `Partially Approved`.
+2. **Server-Side Math**: Never calculate prices, flat-rate totals, or 13% HST directly. Always invoke `ism-agent-os quote` or `ism-agent-os amend-quote`.
+3. **Conflict-Free Scheduling**: Always run `ism-agent-os slots` before `ism-agent-os book`.
 4. **Safe Draft Writes**: Keep generated Repair Orders in `Draft Estimate` (`docstatus=0`) until a human approves or submits them.
-5. **Curated Tool Priority**: Always use `ism_*` MCP tools (or `tools/cli.py`) instead of raw database or document writes.
+5. **Curated CLI Priority**: Always use curated `python -m tools.cli --json <command>` / `ism-agent-os <command>` workflows (including vehicle intelligence, check-in inspections, and `alternates`) instead of raw database or direct document writes.
 
 ## Role Skills (Read On Demand)
 

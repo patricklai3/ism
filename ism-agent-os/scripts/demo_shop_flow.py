@@ -8,29 +8,32 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
-if _REPO_ROOT not in sys.path:
-	sys.path.insert(0, _REPO_ROOT)
-
-from tools.client import IsmAgentClient  # noqa: E402
-from tools.config import IsmConfig  # noqa: E402
+try:
+	from ism_agent_os.client import IsmAgentClient
+	from ism_agent_os.config import IsmConfig
+except ImportError:
+	_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+	if _REPO_ROOT not in sys.path:
+		sys.path.insert(0, _REPO_ROOT)
+	from tools.client import IsmAgentClient  # noqa: E402
+	from tools.config import IsmConfig  # noqa: E402
 
 
 def run_demo(client: IsmAgentClient, live: bool = False) -> None:
 	if not live:
 		print("Dry-run preview (pass --live to execute against configured Frappe site):")
 		steps = [
-			"1. ism_get_shop_floor_status() -> Inspect active bays & technicians",
-			"2. ism_create_quote(...) -> Create Draft Estimate RO with 13% HST",
-			"3. ism_amend_quote(...) -> Append additional service operation",
-			"4. ism_send_quote_for_approval(...) -> Dispatch 48h SMS approval link",
-			"5. ism_find_available_slots(...) -> Query dual-resource bay & tech capacity",
-			"6. ism_book_appointment(...) -> Book bay & push ism_calendar_update event",
+			"1. ism-agent-os status -> Inspect active bays & technicians",
+			"2. ism-agent-os quote ... -> Create Draft Estimate RO with 13% HST",
+			"3. ism-agent-os amend-quote ... -> Append additional service operation",
+			"4. ism-agent-os send-approval ... -> Dispatch 48h SMS approval link",
+			"5. ism-agent-os slots ... -> Query dual-resource bay & tech capacity",
+			"6. ism-agent-os book ... -> Book bay & push ism_calendar_update event",
 		]
 		print("\n".join(steps))
 		return
 
-	floor = client.get_shop_floor_status()
+	floor = client.get_shop_floor_status(include_summary=True)
 	print(floor.get("summary_card", floor))
 
 	quote = client.create_quote(
@@ -38,11 +41,12 @@ def run_demo(client: IsmAgentClient, live: bool = False) -> None:
 		vehicle_identifier="5YJ3E1EBXNF123456",
 		services=[{"service_title": "Brake Inspection", "labor_hours": 1.0}],
 		notes="Demo intake via ISM Agent OS",
+		include_summary=True,
 	)
-	ro_name = quote["repair_order"]
+	ro_name = quote.get("data", {}).get("name") or quote.get("repair_order")
 	print(quote.get("summary_card", quote))
 
-	slots_res = client.find_available_slots(repair_order=ro_name, days_ahead=3)
+	slots_res = client.find_available_slots(repair_order=ro_name, days_ahead=3, include_summary=True)
 	print(slots_res.get("summary_card", slots_res))
 
 

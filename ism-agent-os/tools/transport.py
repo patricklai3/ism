@@ -1,7 +1,8 @@
-"""Low-level HTTP/MCP JSON-RPC 2.0 and REST transport for Frappe."""
+"""Low-level HTTP REST transport for Frappe."""
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -12,7 +13,7 @@ from .config import IsmConfig
 
 
 class IsmApiError(Exception):
-	"""Raised when Frappe or MCP returns an API or transport error."""
+	"""Raised when Frappe returns an API or REST transport error."""
 
 	def __init__(self, message: str, status_code: int = 500, details: Any = None) -> None:
 		super().__init__(message)
@@ -21,44 +22,13 @@ class IsmApiError(Exception):
 
 
 class FrappeTransport:
-	"""Handles authenticated requests over Frappe MCP (/api/v2/mcp) and REST."""
+	"""Handles authenticated requests over Frappe REST (/api/method/* and /api/resource/*)."""
 
 	def __init__(self, config: IsmConfig) -> None:
 		self.config = config
-		self.mcp_available: Optional[bool] = None
-		self._req_counter = 0
-
-	def should_use_mcp(self) -> bool:
-		if self.config.transport == "rest":
-			return False
-		if self.config.transport == "mcp":
-			return True
-		return self.mcp_available is not False
-
-	def post_mcp(self, method: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-		self._req_counter += 1
-		payload: dict[str, Any] = {"jsonrpc": "2.0", "id": self._req_counter, "method": method}
-		if params is not None:
-			payload["params"] = params
-		body = self.request_json(self.config.mcp_endpoint, "POST", payload)
-		if isinstance(body, dict) and "error" in body:
-			err = body["error"]
-			msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-			raise IsmApiError(msg, status_code=400, details=err)
-		self.mcp_available = True
-		return body
-
-	def call_mcp_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-		res = self.post_mcp("tools/call", {"name": tool_name, "arguments": arguments})
-		result = res.get("result", {})
-		if result.get("isError"):
-			raise IsmApiError(_extract_mcp_error_text(result), status_code=400, details=result)
-		if "structuredContent" in result and isinstance(result["structuredContent"], dict):
-			sc = result["structuredContent"]
-			return sc.get("result", sc)
-		return _extract_mcp_text_or_json(result)
 
 	def call_rest_method(self, method: str, args: dict[str, Any]) -> Any:
+		"""Invoke a whitelisted Frappe method over POST /api/method/{method}."""
 		res = self.request_json(f"{self.config.base_url}/api/method/{method}", "POST", args)
 		if isinstance(res, dict) and "message" in res:
 			return res["message"]
@@ -67,11 +37,12 @@ class FrappeTransport:
 	def rest_list_documents(
 		self,
 		doctype: str,
-		filters: Optional[dict[str, Any] | list[Any]],
-		fields: Optional[list[str]],
-		limit: int,
-		order_by: Optional[str],
+		filters: Optional[dict[str, Any] | list[Any]] = None,
+		fields: Optional[list[str]] = None,
+		limit: int = 20,
+		order_by: Optional[str] = None,
 	) -> Any:
+		"""Query a Frappe DocType list over GET /api/resource/{doctype}."""
 		query: dict[str, str] = {"limit_page_length": str(limit)}
 		if filters is not None:
 			query["filters"] = json.dumps(filters)
@@ -84,8 +55,31 @@ class FrappeTransport:
 		res = self.request_json(f"{self.config.base_url}/api/resource/{encoded_dt}?{qs}", "GET")
 		return res.get("data", res)
 
+	def rest_get_document(self, doctype: str, name: str) -> Any:
+		"""Fetch a single Frappe document over GET /api/resource/{doctype}/{name}."""
+		url = f"{self.config.base_url}/api/resource/{_encode_part(doctype)}/{_encode_part(name)}"
+		res = self.request_json(url, "GET")
+		return res.get("data", res)
+
+	def rest_create_document(self, doctype: str, data: dict[str, Any]) -> Any:
+		"""Create a Frappe document over POST /api/resource/{doctype}."""
+		url = f"{self.config.base_url}/api/resource/{_encode_part(doctype)}"
+		res = self.request_json(url, "POST", data)
+		return res.get("data", res)
+
+	def rest_update_document(self, doctype: str, name: str, data: dict[str, Any]) -> Any:
+		"""Update an existing Frappe document over PUT /api/resource/{doctype}/{name}."""
+		url = f"{self.config.base_url}/api/resource/{_encode_part(doctype)}/{_encode_part(name)}"
+		res = self.request_json(url, "PUT", data)
+		return res.get("data", res)
+
 	def request_json(self, url: str, http_method: str, body: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-		headers = {"Accept": "application/json", "Content-Type": "application/json"}
+		"""Send an authenticated JSON request with keep-alive retry on stale connections."""
+		headers = {
+			"Accept": "application/json",
+			"Content-Type": "application/json",
+			"Connection": "keep-alive",
+		}
 		if self.config.auth_header:
 			headers["Authorization"] = self.config.auth_header
 		if self.config.site:
@@ -93,31 +87,25 @@ class FrappeTransport:
 
 		data = json.dumps(body).encode("utf-8") if body is not None else None
 		req = urllib.request.Request(url, data=data, headers=headers, method=http_method)
-		try:
-			with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-				raw = resp.read().decode("utf-8")
-				return json.loads(raw) if raw else {}
-		except urllib.error.HTTPError as exc:
-			raw_err = exc.read().decode("utf-8", errors="replace")
-			raise IsmApiError(_format_http_error(exc.code, raw_err), status_code=exc.code, details=raw_err) from exc
-		except urllib.error.URLError as exc:
-			raise IsmApiError(f"Connection failed to {url}: {exc.reason}", status_code=503) from exc
+		for attempt in range(2):
+			try:
+				with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+					raw = resp.read().decode("utf-8")
+					return json.loads(raw) if raw else {}
+			except http.client.RemoteDisconnected as exc:
+				if attempt == 0:
+					continue
+				raise IsmApiError(f"Connection closed by {url}: {exc}", status_code=503) from exc
+			except urllib.error.HTTPError as exc:
+				raw_err = exc.read().decode("utf-8", errors="replace")
+				raise IsmApiError(_format_http_error(exc.code, raw_err), status_code=exc.code, details=raw_err) from exc
+			except urllib.error.URLError as exc:
+				raise IsmApiError(f"Connection failed to {url}: {exc.reason}", status_code=503) from exc
+		return {}
 
 
-def _extract_mcp_error_text(result: dict[str, Any]) -> str:
-	texts = [c.get("text", "") for c in result.get("content", []) if isinstance(c, dict) and c.get("text")]
-	return "\n".join(texts) or "MCP tool execution failed."
-
-
-def _extract_mcp_text_or_json(result: dict[str, Any]) -> Any:
-	texts = [c.get("text", "") for c in result.get("content", []) if isinstance(c, dict) and c.get("text")]
-	joined = "\n".join(texts)
-	if not joined:
-		return result
-	try:
-		return json.loads(joined)
-	except Exception:
-		return joined
+def _encode_part(value: str) -> str:
+	return urllib.parse.quote(value, safe="")
 
 
 def _format_http_error(status_code: int, raw_body: str) -> str:

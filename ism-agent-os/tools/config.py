@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -14,19 +14,14 @@ class IsmConfig:
 
 	url: str = "http://localhost:8000"
 	api_key: str = ""
-	api_secret: str = ""
+	api_secret: str = field(default="", repr=False)
 	site: str = ""
 	company: str = ""
 	timeout: int = 30
-	transport: str = "auto"
 
 	@property
 	def base_url(self) -> str:
 		return self.url.rstrip("/")
-
-	@property
-	def mcp_endpoint(self) -> str:
-		return f"{self.base_url}/api/v2/mcp"
 
 	@property
 	def auth_header(self) -> str:
@@ -43,8 +38,6 @@ class IsmConfig:
 			errors.append("FRAPPE_API_KEY is missing.")
 		if not self.api_secret:
 			errors.append("FRAPPE_API_SECRET is missing.")
-		if self.transport not in ("auto", "mcp", "rest"):
-			errors.append(f"Unsupported ISM_TRANSPORT '{self.transport}'. Use auto, mcp, or rest.")
 		return errors
 
 	@classmethod
@@ -74,8 +67,7 @@ class IsmConfig:
 			api_secret=merged.get("FRAPPE_API_SECRET", "").strip(),
 			site=merged.get("FRAPPE_SITE", "").strip(),
 			company=merged.get("ISM_DEFAULT_COMPANY", "").strip(),
-			timeout=_parse_int(merged.get("ISM_MCP_TIMEOUT", "30"), default=30),
-			transport=merged.get("ISM_TRANSPORT", "auto").strip().lower() or "auto",
+			timeout=_parse_int(merged.get("ISM_TIMEOUT", "30"), default=30),
 		)
 
 
@@ -85,8 +77,7 @@ _ENV_KEYS = (
 	"FRAPPE_API_SECRET",
 	"FRAPPE_SITE",
 	"ISM_DEFAULT_COMPANY",
-	"ISM_MCP_TIMEOUT",
-	"ISM_TRANSPORT",
+	"ISM_TIMEOUT",
 )
 
 

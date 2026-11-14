@@ -10,9 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+openwebui = ["pydantic>=2.0"]
+dev = ["pytest>=7.0"]
+
 [project.scripts]
 ism-agent-os = "ism_agent_os.cli:main"
-ism-mcp = "ism_agent_os.ism_mcp_server:main"
 
 [tool.setuptools]
 packages = ["ism_agent_os", "ism_agent_os.ingestion"]

@@ -25,11 +25,29 @@ class TestSupplierCatalogSanitizer(unittest.TestCase):
 	def test_ingest_batches_rows(self) -> None:
 		mock_client = MagicMock()
 		mock_client.import_supplier_catalog.return_value = {"success": True}
-		raw = "Part#,Description,Rate\nP1,Part One,10\nP2,Part Two,20\nP3,Part Three,30\n"
+		raw = "Part#,Description,Rate\nP1,Part One,$10.00\nP2,Part Two,20\nP3,Part Three,30\n"
 
-		results = SupplierCatalogSanitizer().ingest(mock_client, raw, supplier="Tesla", chunk_size=2)
+		results = SupplierCatalogSanitizer().ingest(
+			mock_client, raw, supplier="Tesla", chunk_size=2, service_package="SP-1"
+		)
 		self.assertEqual(len(results), 2)
 		self.assertEqual(mock_client.import_supplier_catalog.call_count, 2)
+
+		first_kwargs = mock_client.import_supplier_catalog.call_args_list[0].kwargs
+		second_kwargs = mock_client.import_supplier_catalog.call_args_list[1].kwargs
+		self.assertNotIn("raw_text", first_kwargs)
+		self.assertEqual(first_kwargs["supplier"], "Tesla")
+		self.assertEqual(first_kwargs["service_package"], "SP-1")
+		self.assertEqual(len(first_kwargs["items"]), 2)
+		self.assertEqual(first_kwargs["items"][0]["part_number"], "P1")
+		self.assertEqual(first_kwargs["items"][0]["unit_rate"], 10.0)
+		self.assertEqual(len(second_kwargs["items"]), 1)
+		self.assertEqual(second_kwargs["items"][0]["part_number"], "P3")
+
+	def test_normalizes_reman_condition_to_reconditioned(self) -> None:
+		raw = "Part#,Description,Condition,Rate\nP9,Steering Rack,Reman,450.00\n"
+		normalized = SupplierCatalogSanitizer().normalize_text(raw, default_source="OEM", default_condition="Reman")
+		self.assertIn("| OEM | Reconditioned |", normalized)
 
 
 class TestTeslaManualParser(unittest.TestCase):
@@ -63,6 +81,35 @@ class TestTeslaManualParser(unittest.TestCase):
 		parser = TeslaManualParser(client=MagicMock())
 		with self.assertRaises(ValueError):
 			parser.ingest_from_url("https://example.com/manual.html")
+
+	def test_ingest_from_url_forwards_conflict_and_side_options(self) -> None:
+		mock_client = MagicMock()
+		mock_client.fetch_tesla_procedure.return_value = {
+			"title": "Link - Lower - Front - LH",
+			"correction_code": "31011402",
+			"frt": 0.85,
+			"applicable_model": "Model Y",
+			"parts": [{"part_number": "1044341-00-D", "qty": 1}],
+		}
+		mock_client.import_tesla_procedure.return_value = {"success": True, "data": {"action": "updated"}}
+		parser = TeslaManualParser(client=mock_client)
+		res = parser.ingest_from_url(
+			"https://service.tesla.com/docs/ModelY/ServiceManual/en-us/GUID-123.html",
+			repair_order="RO-1",
+			on_conflict="overwrite",
+			force=True,
+			side="LH",
+		)
+		self.assertTrue(res["success"])
+		mock_client.fetch_tesla_procedure.assert_called_once_with(
+			"https://service.tesla.com/docs/ModelY/ServiceManual/en-us/GUID-123.html", repair_order="RO-1"
+		)
+		imp_kwargs = mock_client.import_tesla_procedure.call_args.kwargs
+		self.assertEqual(imp_kwargs["repair_order"], "RO-1")
+		self.assertEqual(imp_kwargs["on_conflict"], "overwrite")
+		self.assertTrue(imp_kwargs["force"])
+		self.assertEqual(imp_kwargs["side"], "LH")
+		self.assertIsNotNone(imp_kwargs["data"])
 
 
 if __name__ == "__main__":

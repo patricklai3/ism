@@ -1,4 +1,4 @@
-"""ISM Agent OS client, configuration, and MCP server tools."""
+"""ISM Agent OS Python client, CLI, and configuration tools."""
 
 from .client import IsmAgentClient, IsmApiError
 from .config import IsmConfig

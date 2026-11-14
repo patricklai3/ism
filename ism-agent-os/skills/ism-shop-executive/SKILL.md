@@ -8,17 +8,18 @@ description: >-
 
 # Shop Executive Intelligence
 
-Use this workflow to compile operational briefings for shop managers and owners.
+Use this workflow to compile operational briefings for shop managers and owners via the ISM Agent OS CLI (`python -m tools.cli --json ...` or `ism-agent-os ...`).
 
 ## 1. Gather Live Shop Telemetry
 
-1. Call `ism_get_shop_floor_status` for the target date (defaults to today) to collect active bays, on-duty technicians, and scheduled appointments.
-2. Call `ism_get_tech_overview` with `date` to obtain scheduled hours per technician and identify unassigned jobs.
+1. Run `ism-agent-os status` (optionally `--date YYYY-MM-DD`, defaults to today) to collect active bays, on-duty technicians, and scheduled appointments.
+2. Run `ism-agent-os tech-overview` with `--date` to obtain scheduled hours per technician and identify unassigned jobs.
 
 ## 2. Query Work-in-Progress and Bottlenecks
 
-1. Call `frappe_list_documents` on `doctype="Repair Order"` with `fields=["name", "customer", "vehicle", "status", "approval_status", "grand_total", "outstanding_amount"]` and `limit=50` (filtered by active statuses or `posting_date`).
-2. Group active Repair Orders into clear operational buckets:
+1. Run `ism-agent-os list-docs --doctype "Repair Order" --fields-json '["name","customer","vehicle","status","approval_status","grand_total","outstanding_amount"]' --limit 50`.
+2. Run `ism-agent-os action-items --status Open` to surface open shop floor discrepancies, inventory shortages, or escalations (and mark handled ones done with `ism-agent-os resolve-action`). Use `ism-agent-os vehicle-info --vehicle <VEH>` or `ism-agent-os get-inspection --repair-order <RO>` when drilling into specific vehicle history or walkaround completion.
+3. Group active Repair Orders into clear operational buckets:
    - **Pending Authorization**: Quotes awaiting customer signature.
    - **Waiting on Parts**: Vehicles stalled in bays or lot due to parts deficits.
    - **Authorized - In Progress**: Vehicles actively on lifts.
@@ -32,4 +33,4 @@ Use this workflow to compile operational briefings for shop managers and owners.
 
 ## Verification
 
-- Cross-check bay and appointment counts against `ism_get_shop_floor_status` before presenting totals.
+- Cross-check bay and appointment counts against `ism-agent-os status` before presenting totals.
