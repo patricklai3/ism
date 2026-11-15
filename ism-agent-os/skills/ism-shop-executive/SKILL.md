@@ -8,17 +8,16 @@ description: >-
 
 # Shop Executive Intelligence
 
-Use this workflow to compile operational briefings for shop managers and owners via the ISM Agent OS CLI (`python -m tools.cli --json ...` or `ism-agent-os ...`).
+**NEVER run `--help`, `-h`, or `Get-ChildItem skills/`**. Use `python -m tools.cli --json <cmd> ...` (alias: `ism-agent-os`) directly with the exact flags below.
 
 ## 1. Gather Live Shop Telemetry
 
-1. Run `ism-agent-os status` (optionally `--date YYYY-MM-DD`, defaults to today) to collect active bays, on-duty technicians, and scheduled appointments.
-2. Run `ism-agent-os tech-overview` with `--date` to obtain scheduled hours per technician and identify unassigned jobs.
+1. Run `python -m tools.cli --json batch --cmd "status --date <YYYY-MM-DD>" --cmd "tech-overview --date <YYYY-MM-DD>"` (or omit `--date` for today) to collect active bays, on-duty technicians, scheduled appointments, and utilization in one call.
 
 ## 2. Query Work-in-Progress and Bottlenecks
 
-1. Run `ism-agent-os list-docs --doctype "Repair Order" --fields-json '["name","customer","vehicle","status","approval_status","grand_total","outstanding_amount"]' --limit 50`.
-2. Run `ism-agent-os action-items --status Open` to surface open shop floor discrepancies, inventory shortages, or escalations (and mark handled ones done with `ism-agent-os resolve-action`). Use `ism-agent-os vehicle-info --vehicle <VEH>` or `ism-agent-os get-inspection --repair-order <RO>` when drilling into specific vehicle history or walkaround completion.
+1. Run `python -m tools.cli --json list-docs --doctype "Repair Order" --fields-json "[name,customer,vehicle,status,approval_status,grand_total,outstanding_amount]" --limit 50` (or `--fields-json @fields.json`).
+2. Run `python -m tools.cli --json action-items --status Open` to surface open shop floor discrepancies, inventory shortages, or escalations (and mark handled ones done with `python -m tools.cli --json resolve-action`). Use `python -m tools.cli --json vehicle-info --vehicle <VEH>` or `python -m tools.cli --json get-inspection --repair-order <RO>` when drilling into specific vehicle history or walkaround completion.
 3. Group active Repair Orders into clear operational buckets:
    - **Pending Authorization**: Quotes awaiting customer signature.
    - **Waiting on Parts**: Vehicles stalled in bays or lot due to parts deficits.
@@ -33,4 +32,4 @@ Use this workflow to compile operational briefings for shop managers and owners 
 
 ## Verification
 
-- Cross-check bay and appointment counts against `ism-agent-os status` before presenting totals.
+- Cross-check bay and appointment counts against `status` output before presenting totals.

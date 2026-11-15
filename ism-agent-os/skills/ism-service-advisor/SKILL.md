@@ -8,37 +8,43 @@ description: >-
 
 # Service Advisor Operations
 
-Use this workflow to manage customer intake and Repair Order estimates through the ISM Agent OS CLI (`python -m tools.cli --json ...` or `ism-agent-os ...`).
+**NEVER run `--help`, `-h`, or `Get-ChildItem skills/`**. The table below lists exact CLI flags—call `python -m tools.cli --json <cmd> ...` (alias: `ism-agent-os`) directly on turn 1 without redundant pre-checks (`status`, `slots`, `tech-overview`, `search-vehicles`, `estimate`). Target 1-2 CLI turns for simple requests and 3 max for multi-step workflows.
 
-## 1. Vehicle Intelligence & Check-In Inspection
+## Direct Intent-to-Command Routing
 
-1. For returning customers or VIN inquiries, decode the VIN with `ism-agent-os decode-vin --vin <VIN>` or search existing records with `ism-agent-os search-vehicles --query <TERM>` (or `--customer` / `--model`).
-2. Run `ism-agent-os vehicle-info --vehicle <VEH>` to retrieve VIN details, linked owners, service history, and open deferred services. Use `ism-agent-os link-vehicle-customer --vehicle <VEH> --customer <CUST>` to attach a co-owner or fleet contact.
-3. For walkaround check-in on a Repair Order, list or inspect checklists with `ism-agent-os inspection-templates` (or `--template <NAME>`), apply a template with `ism-agent-os apply-inspection --repair-order <RO>`, inspect items with `ism-agent-os get-inspection --repair-order <RO>`, and record findings, odometer, or concern with `ism-agent-os record-inspection --repair-order <RO>`.
+| User Intent | Direct Command |
+| :--- | :--- |
+| Decode 17-char Tesla VIN | `python -m tools.cli --json decode-vin --vin <VIN>` |
+| Search vehicles by VIN, plate, customer, or model | `python -m tools.cli --json search-vehicles [--query <TERM>] [--customer <NAME>] [--model <MODEL>]` |
+| Full vehicle profile, owners, history, deferred work | `python -m tools.cli --json vehicle-info --vehicle <VEH>` |
+| Link co-owner or fleet contact to vehicle | `python -m tools.cli --json link-vehicle-customer --vehicle <VEH> --customer <CUST> [--primary] [--relationship <REL>]` |
+| Create Draft Estimate Repair Order | `python -m tools.cli --json quote --customer <NAME> --vehicle <VEH> [--service "Title::0.5"] [--parts-json @parts.json] [--notes <TEXT>] [--phone <NUM>] [--email <ADDR>] [--odometer-in <KM>]` |
+| Create Draft Quote + return filtered slots in one call | `python -m tools.cli --json intake-slots --customer <NAME> --vehicle <VEH> [--service "Title::0.5"] [--date <YYYY-MM-DD>] [--days N] [--duration <MIN>] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>]` |
+| Amend draft quote lines or notes | `python -m tools.cli --json amend-quote --repair-order <RO> [--add-service "Title::0.3"] [--remove-indices-json @indices.json] [--notes <TEXT>]` |
+| Probabilistic P80/P50 job duration estimate for an RO | `python -m tools.cli --json estimate --repair-order <RO>` |
+| Duplicate symmetrical LH/RH service row | `python -m tools.cli --json duplicate-side --repair-order <RO> --service-row <ROW>` |
+| List or add open deferred services | `python -m tools.cli --json deferred [--repair-order <RO> \| --vehicle <VEH>]` / `python -m tools.cli --json add-deferred --repair-order <RO> --item <ITEM>` |
+| Check live parts stock for an RO | `python -m tools.cli --json check-stock --repair-order <RO>` |
+| Send quote for customer approval | `python -m tools.cli --json send-approval --repair-order <RO> [--medium sms\|email\|link] [--phone <NUM>] [--recipient <ADDR>]` |
+| Check-in inspection templates / apply / read / record | `python -m tools.cli --json inspection-templates [--template <NAME>]`, `apply-inspection`, `get-inspection`, `record-inspection` |
+| Multi-step advisor flow in one process | `python -m tools.cli --json batch --cmd "amend-quote --repair-order <RO> --add-service 'Wiper Blade Replacement::0.3'" --cmd "send-approval --repair-order <RO>"` (alias: `ism-agent-os batch`) |
 
-## 2. Create a Draft Quote
+## Routing Rules
 
-1. Collect the customer name, vehicle VIN or license plate, customer concern, and phone number.
-2. Run `ism-agent-os quote` (`--customer`, `--vehicle`, `--services-json` / `--service`, `--notes`, `--phone`). On Windows PowerShell, pass `@path/to/payload.json` for complex `--*-json` payloads to avoid shell quoting issues. Passing a `Service Package` name via `--service` expands server FRT hours, correction code, position, and parts.
-3. **Surface Deferred Services**: Check `data.deferred_services` (`deferred_count > 0`) returned by `ism-agent-os quote` (or run `ism-agent-os deferred` / `ism-agent-os vehicle-info` for a returning vehicle). If open deferred repairs exist—especially any marked `safety_hazard`—inform the user immediately and prompt whether to add them via `ism-agent-os add-deferred`.
-4. Do not compute labor rates, parts totals, or 13% HST yourself. Let the Frappe server calculate totals.
-5. Return the server totals from `data` and Desk/Print links from `urls` to the advisor (pass `--summary` if a markdown `summary_card` is needed).
+1. **Zero `--help` or redundant pre-checks**: Use the exact flags in the table above on turn 1. When customer, vehicle, and service/concern are known, run `quote` directly—do not pre-run `--help`, `search-vehicles`, `status`, or `estimate`.
+2. **Quote-free `--service` & `--add-service` (NEVER pass inline JSON on PowerShell)**:
+   - On `quote` and `intake-slots`, pass repeatable `--service "Title"` (freeform title or exact Service Package) or `--service "Title::0.5"` to specify explicit labor hours (e.g., `--service "Brake Fluid Flush::1.0"`).
+   - On `amend-quote`, pass repeatable `--add-service "Title::0.3"` (e.g., `--add-service "Wiper Blade Replacement::0.3"`).
+   - Use `@path/to/payload.json` only if you need `--parts-json` (`[{"item_code":"...","qty":1}]`) or `--remove-indices-json` (`[0]`); never pass inline JSON strings on PowerShell.
+3. **One-call `intake-slots` & `batch --cmd`**: `intake-slots` creates the draft quote and returns filtered slots directly (no follow-up `slots` call needed). For chained calls (e.g., `decode-vin` + `vehicle-info`, or `amend-quote` + `send-approval`), run `python -m tools.cli --json batch --cmd "..." --cmd "..."` and wrap multi-word inner values in single quotes (`'...'`).
+4. **Surface deferred services**: Check `data.deferred_services` (`deferred_count > 0`) returned by `quote` or `vehicle-info`. Highlight any `safety_hazard` items immediately and offer `add-deferred`.
+5. **Server math & links**: Never compute labor rates, parts totals, or 13% HST manually. Return server totals from `data` and Desk/Print/Approval links from `urls` (pass `--summary` only if a markdown `summary_card` is requested).
 
-## 3. Check Parts, Add Opposite Side, and Amend Draft Lines
+## Required Fields & Pre-Dispatch Callback
 
-1. If the customer requests extra work or removes an operation, verify the Repair Order is still in `Draft Estimate`.
-2. Run `ism-agent-os amend-quote` with `--repair-order`, `--add-services-json`, `--remove-indices-json`, or `--notes`. For symmetrical LH/RH jobs, run `ism-agent-os duplicate-side` with `--repair-order` and `--service-row`.
-3. Run `ism-agent-os check-stock` with `--repair-order` to inspect live stock levels and identify deficits.
-4. If parts are missing, escalate to the `ism-parts-specialist` workflow before scheduling bay entry.
-
-## 4. Send Quote for Customer Authorization
-
-1. Before work can start on the shop floor, the customer must sign the estimate.
-2. Run `ism-agent-os send-approval` with `--repair-order` and `--medium sms` (or `--medium email` / `--medium link`; SMS falls back to generating the approval link when no SMS gateway is configured).
-3. Confirm the 48-hour approval URL in `urls.approval` and `data.delivery_status`.
-4. After the customer signs via the mobile approval portal, proceed to the `ism-shop-dispatcher` workflow to book a bay.
+- **`quote` / `intake-slots` required fields**: `--customer`, `--vehicle`, `--odometer-in` (`>= 0`; NEVER guess or default), and at least one `--service`/`--services-json`/`--notes`.
+- **Mandatory Callback**: Before executing any write (`quote`, `intake-slots`, `amend-quote`, `send-approval`, `add-deferred`), run read-only checks or `--dry-run`, output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation.
 
 ## Verification
 
-- Verify `success` is `true` and `data.name` starts with `RO-`.
-- Confirm `urls.print` and `urls.desk` are present.
+- Verify `success: true`, `data.name` (`RO-...`), and `urls.print` / `urls.desk` (or `urls.approval` for `send-approval`).

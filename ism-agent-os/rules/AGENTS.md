@@ -1,18 +1,56 @@
 # ISM Agent OS Core Rules
 
-This workspace acts as the operating system for an automotive repair facility running Frappe with ISM installed over Skills + CLI + direct Frappe REST (`/api/method/...` and `/api/resource/...`).
+This workspace operates an automotive repair facility on Frappe with ISM via Skills + CLI (`python -m tools.cli --json <command>`; alias: `ism-agent-os`) and direct Frappe REST (`/api/method/...`, `/api/resource/...`).
+
+## Skill Files (Read Directly — Do NOT Run `Get-ChildItem skills\`)
+
+- `skills/ism-service-advisor/SKILL.md` — intake, `quote`, `amend-quote`, `estimate`, `send-approval`, `decode-vin`, `vehicle-info`
+- `skills/ism-shop-dispatcher/SKILL.md` — `status`, `tech-overview`, `slots`, `intake-slots`, `book`, `reschedule`, `unscheduled`
+- `skills/ism-floor-technician/SKILL.md` — `job-status`, `toggle-service`, inspections, `add-supplement`, `checkout`
+- `skills/ism-parts-specialist/SKILL.md` — `check-stock`, `alternates`, `procure`, `receive-po`, Tesla & catalog ingestion
+- `skills/ism-shop-executive/SKILL.md` — floor telemetry, `list-docs`, `action-items`
 
 ## Operational Invariants
 
-1. **Enforce the authorization lock**: Never run `ism-agent-os job-status --action start` (or call `ism.api.agent.update_job_status` with `action="start"`) unless the Repair Order `approval_status` is `Approved` or `Partially Approved`. If the order is unapproved, run `ism-agent-os send-approval` first.
-2. **Delegate all math to Frappe**: Never calculate labor totals, parts markups, Fenton-Wilkinson durations, or 13% Ontario HST manually. Always run `ism-agent-os quote` or `ism-agent-os amend-quote` and report the server values.
-3. **Prevent dual-resource conflicts**: Always run `ism-agent-os slots` before `ism-agent-os book`. Never assign a bay or technician that is already booked or on leave.
-4. **Keep agent writes in draft**: Create quotes in `Draft Estimate` state (`docstatus=0`) and keep Purchase Orders created via `ism-agent-os procure` in Draft (`--submit` omitted) by default. Never submit invoices, submit POs (`--submit` / `--submit-po`), run `ism-agent-os checkout --confirm`, post ledger entries, or charge customer cards without explicit human confirmation.
-5. **Use curated CLI commands first**: Prefer curated `python -m tools.cli --json <command>` / `ism-agent-os <command>` commands (backed by `ism.api.agent.*`) over generic `list-docs` / `get-doc` / `create-doc` / `update-doc` / `call-method` REST calls for quotes, scheduling, vehicle intelligence (`decode-vin`, `search-vehicles`, `vehicle-info`, `link-vehicle-customer`), check-in inspections (`inspection-templates`, `apply-inspection`, `get-inspection`, `record-inspection`), parts (`ingest-parts`, `alternates`, `check-stock`, `procure`, `receive-po`), Tesla procedures (`fetch-tesla`, `import-tesla`, `ingest-tesla`), floor status, action items, and checkout. Use generic CLI REST commands or direct Frappe REST (`/api/resource/...`, `/api/method/...`) for bespoke queries or DocTypes not covered by curated wrappers.
-6. **Show deep links**: Include Desk, Print, or Approval links from `urls` in your reply. Pass `--summary` (`include_summary=true`) only when a human-formatted markdown `summary_card` is explicitly needed.
+1. **Mandatory Pre-Dispatch Summary & Required-Field Callback (ALL writes)**: Before executing ANY write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `resolve-action`, `apply-inspection`, `record-inspection`, `procure`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing writes):
+   - NEVER fabricate, guess, or substitute missing required fields (e.g. never invent `odometer_in=10000` or default `payment_method`).
+   - Run read-only lookups (`vehicle-info`, `slots`, `status`, `deferred`) and/or `python -m tools.cli --dry-run <cmd> ...` first.
+   - Return a standardized `### ISM Pre-Dispatch Summary` block to the user showing: Command, Target, Payload Fields, Missing Required Fields (`[MISSING — REQUIRED]` if absent), and Confirm Next Step.
+   - Wait for explicit user confirmation (and any missing required values) BEFORE executing the live write command. Once a user answers missing fields, present an updated `READY` summary before dispatching if any field changed.
+2. **Direct intent-to-command routing (read-only & after confirmation)**: **NEVER run `--help`, `-h`, or `Get-ChildItem skills/`**. Use exact CLI flags from Quick Command Index and skill files. Do NOT run redundant pre-checks (`status`, `slots`, `tech-overview`, `estimate`, or `get-doc`) when sufficient inputs are given.
+3. **Batch & composite calls**: `python -m tools.cli --json intake-slots` creates the draft quote and returns filtered slots in one call. For 2+ calls, run `python -m tools.cli --json batch --cmd "..." --cmd "..."` (alias: `ism-agent-os batch`; or `--file @cmds.json`). Wrap multi-word inner values in `'...'`.
+4. **Quote-free service & date flags (NEVER pass inline JSON on PowerShell)**:
+   - Use repeatable `--service "Title"` or `--service "Title::0.5"` on `quote` / `intake-slots`, and `--add-service "Title::0.3"` on `amend-quote`.
+   - Use `@path/to/payload.json` ONLY for `--parts-json` or `--remove-indices-json`.
+   - Always resolve natural-language dates (`today`, `tomorrow`, `friday`, `next monday`, `+2d`) and 12h/named times (`9am`, `2:30pm`, `noon`) into strict ISO `YYYY-MM-DD` and 24-hour `HH:MM:SS` before calling the CLI. If current date is unknown, run `status` (omitting `--date`) first to read the server `date`. For vague windows (`morning`, `afternoon`), query `slots` or `intake-slots` (`--min-time 08:00:00` or `--min-time 13:00:00`) instead of guessing a fixed booking time.
+5. **Scheduling & conflict handling**: Only run `slots` before `book` when availability is requested or date/time is omitted. On bay/tech conflict or ambiguous-bay 417, report conflict details and alternatives before re-dispatching.
+6. **Enforce the authorization lock**: Never run `job-status --action start` unless `approval_status` is `Approved` or `Partially Approved`. Never run `job-status --action complete` without `--odometer-out`.
+7. **Delegate all math to Frappe**: Never calculate labor totals, parts markups, Fenton-Wilkinson durations, or 13% Ontario HST manually.
+8. **Keep agent writes in draft**: Create quotes in `Draft Estimate` (`docstatus=0`) and POs in Draft (`--submit` omitted) unless explicitly confirmed. Never run `checkout --confirm` without `--payment-method`, `--odometer-out`, and explicit human confirmation.
+9. **Use curated CLI wrappers first & show deep links**: Prefer curated CLI subcommands over generic REST calls. Include Desk, Print, or Approval links from `urls` in replies. Pass `--summary` only when explicitly requested.
+
+## Quick Command Index (`python -m tools.cli --json <cmd>`)
+
+- `status [--date <YYYY-MM-DD>]`
+- `tech-overview [--date <YYYY-MM-DD>]`
+- `slots [--repair-order <RO>] [--duration <MIN>] [--date <YYYY-MM-DD>] [--days N] [--tags <Lift|Alignment Rack|HV Diagnostic>] [--bay <BAY>] [--technician <TECH>] [--min-time HH:MM[:SS]]`
+- `book --date <YYYY-MM-DD> --time <HH:MM[:SS]> [--repair-order <RO>] [--bay <BAY>] [--tech <TECH>] [--duration <MIN>] [--entry-type <Diagnostic|Repair>] [--provisional-customer <NAME>] [--provisional-vehicle <INFO>] [--notes <TEXT>]`
+- `unscheduled --repair-order <RO>`
+- `estimate --repair-order <RO>`
+- `quote --customer <NAME> --vehicle <VEH> --odometer-in <KM> (--service "Title::0.5" | --notes <TEXT>) [--parts-json @parts.json]`
+- `intake-slots --customer <NAME> --vehicle <VEH> --odometer-in <KM> (--service "Title::0.5" | --notes <TEXT>) [--date <YYYY-MM-DD>] [--days N] [--duration <MIN>] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>]`
+- `create-ro-from-entry --schedule-entry <SE> --odometer-in <KM>`
+- `amend-quote --repair-order <RO> [--add-service "Title::0.3"] [--remove-indices-json @indices.json] [--notes <TEXT>]`
+- `send-approval --repair-order <RO> [--medium sms|email|link] [--phone <NUM>] [--recipient <ADDR>]`
+- `job-status --repair-order <RO> --action <start|hold|park|complete> [--odometer-out <KM>] [--notes <TEXT>]`
+- `checkout --repair-order <RO> --payment-method <METHOD> --odometer-out <KM> [--paid-amount <AMT>] --confirm`
+- `decode-vin --vin <VIN>`
+- `vehicle-info --vehicle <VEH>`
+- `--dry-run <subcmd ...>` (preview `ISM Pre-Dispatch Summary` and check required fields without writing)
+- `batch --cmd "<subcmd ...>" --cmd "<subcmd ...>"` (wrap inner spaces in `'...'`)
 
 ## Valid Status Values
 
 - **Repair Order `status`**: `Checked In`, `Draft Estimate`, `Pending Authorization`, `Authorized - In Progress`, `Waiting on Parts`, `Work Completed`, `Billed / Paid`, `Closed / Released`, `Cancelled`.
 - **Repair Order `approval_status`**: `Estimating`, `Pending Approval`, `Approved`, `Partially Approved`, `Declined`.
-- **Schedule Entry `status`**: `Draft`, `Scheduled`, `In Progress`, `Completed`, `Cancelled`.
+- **Schedule Entry `status`**: `Draft`, `Scheduled`, `Confirmed`, `In Progress`, `Completed`, `No Show`, `Cancelled`.

@@ -93,6 +93,20 @@ class TestSkillsAndConfigs(unittest.TestCase):
 				offenders.append(path.relative_to(REPO_ROOT).as_posix())
 		self.assertEqual(offenders, [], f"Stale protocol references found in: {offenders}")
 
+	def test_direct_routing_and_batch_guidance_in_skills_and_rules(self) -> None:
+		rules_text = (REPO_ROOT / "rules" / "AGENTS.md").read_text(encoding="utf-8")
+		self.assertNotIn("Always run `ism-agent-os slots` before `ism-agent-os book`", rules_text)
+		self.assertIn("ism-agent-os batch", rules_text)
+		self.assertNotIn("<YYYY-MM-DD|tomorrow|monday>", rules_text)
+		self.assertIn("YYYY-MM-DD", rules_text)
+
+		for skill_name in ("ism-shop-dispatcher", "ism-service-advisor", "ism-floor-technician"):
+			skill_text = (REPO_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+			self.assertIn("Direct Intent-to-Command Routing", skill_text)
+			self.assertIn("ism-agent-os batch", skill_text)
+			self.assertNotIn("<YYYY-MM-DD|tomorrow|monday>", skill_text)
+			self.assertNotIn("<YYYY-MM-DD\\|tomorrow\\|monday>", skill_text)
+
 
 if __name__ == "__main__":
 	unittest.main()

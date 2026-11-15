@@ -8,30 +8,36 @@ description: >-
 
 # Floor Technician Operations
 
-Use this workflow to update active Repair Order status on the shop floor via the ISM Agent OS CLI (`python -m tools.cli --json ...` or `ism-agent-os ...`).
+**NEVER run `--help`, `-h`, or `Get-ChildItem skills/`**. The table below lists exact CLI flags—call `python -m tools.cli --json <cmd> ...` (alias: `ism-agent-os`) directly on turn 1 without redundant pre-checks (`status`/`slots`/`tech-overview`/`get-doc`). Target 1-2 CLI turns for simple requests and 3 max for multi-step workflows.
 
-## 1. Check-In Inspection & Start Work in Bay
+## Direct Intent-to-Command Routing
 
-1. Before entering the bay, inspect the Repair Order with `ism-agent-os get-doc --doctype "Repair Order" --name <RO>` if status is unknown, and check walkaround items with `ism-agent-os get-inspection --repair-order <RO>` (or apply a checklist with `ism-agent-os apply-inspection --repair-order <RO>` after listing `ism-agent-os inspection-templates`).
-2. Record check-in findings (`Pass`, `Attention`, `Fail`, `N/A`), notes, odometer, or concern via `ism-agent-os record-inspection --repair-order <RO> --items-json <JSON>`.
-3. Run `ism-agent-os job-status --repair-order <RO> --action start`.
-4. **Authorization Lock**: If the server rejects the call because `approval_status` is not `Approved` or `Partially Approved`, stop immediately. Notify the Service Advisor and run `ism-agent-os send-approval` if instructed. Never bypass the authorization lock.
+| User Intent | Direct Command |
+| :--- | :--- |
+| Start, hold, park, or complete an RO | `python -m tools.cli --json job-status --repair-order <RO> --action <start\|hold\|park\|complete> [--odometer-out <KM>] [--notes <TEXT>]` |
+| Check off (or reopen) completed service rows | `python -m tools.cli --json toggle-service --repair-order <RO> --service-row <ROW1> [<ROW2> ...] [--reopen]` |
+| Read check-in walkaround inspection | `python -m tools.cli --json get-inspection --repair-order <RO>` |
+| Record inspection findings, odometer, concern | `python -m tools.cli --json record-inspection --repair-order <RO> --items-json <@file\|JSON> [--odometer-in <KM>] [--concern <TEXT>] [--template <NAME>] [--auto-apply]` |
+| List or apply inspection template | `python -m tools.cli --json inspection-templates [--template <NAME>]` / `python -m tools.cli --json apply-inspection --repair-order <RO> [--template <NAME>]` |
+| Add mid-job supplement for approval | `python -m tools.cli --json add-supplement --repair-order <RO> --title <TITLE> --hours <HRS> [--parts-json <@file\|JSON>] [--notes <TEXT>]` |
+| Duplicate symmetrical LH/RH service row | `python -m tools.cli --json duplicate-side --repair-order <RO> --service-row <ROW>` |
+| Check stock for parts hold | `python -m tools.cli --json check-stock --repair-order <RO>` |
+| Log floor discrepancy / escalation | `python -m tools.cli --json create-action --title <TITLE> [--ref-doctype "Repair Order" --ref-name <RO>] [--details <TEXT>]` |
+| Checkout, collect payment, release vehicle | `python -m tools.cli --json checkout --repair-order <RO> --confirm [--payment-method <METHOD>] [--paid-amount <AMT>] [--odometer-out <KM>]` |
+| Multi-step floor actions in one process | `python -m tools.cli --json batch --cmd "job-status --repair-order <RO> --action hold" --cmd "check-stock --repair-order <RO>"` (or `--file @cmds.json`; alias: `ism-agent-os batch`) |
 
-## 2. Record Findings, Supplements, or Parts Holds
+## Routing Rules
 
-1. When missing parts block progress, run `ism-agent-os job-status --repair-order <RO> --action hold --notes "<part needed>"`.
-2. Next, run `ism-agent-os check-stock --repair-order <RO>` and notify the Parts Specialist if procurement is required.
-3. If teardown inspection discovers additional repairs needed, add a mid-job supplement via `ism-agent-os add-supplement` (`--repair-order`, `--title`, `--hours`, `--parts-json`, `--notes`)—this creates an `Estimating` row so the Service Advisor can send `ism-agent-os send-approval` before repair execution.
-4. If a floor discrepancy or safety blocker requires advisor/manager follow-up, log it via `ism-agent-os create-action`.
+1. **Zero `--help` or redundant pre-checks**: Use the exact flags in the table above on turn 1. Run `job-status --action start` directly when asked to start an RO; do not run `--help`, `status`, or `get-doc` first. The server enforces the authorization lock—if rejected because `approval_status` is not `Approved` or `Partially Approved`, stop immediately, notify the Service Advisor, and run `send-approval` only if instructed.
+2. **Batch multi-step floor updates**: Use `python -m tools.cli --json batch --cmd "..." --cmd "..."` (or `--file @cmds.json`) instead of PowerShell stdin pipes for chained actions (e.g., `job-status --action hold` + `check-stock`, or `toggle-service` + `job-status --action complete`). Pass multiple rows to `toggle-service --service-row <R1> <R2>` in one call.
+3. **Human confirmation for checkout**: Never run `checkout --confirm` without explicit human confirmation.
 
-## 3. Complete Services & Park / Finish Work
+## Required Fields & Pre-Dispatch Callback
 
-1. To check off approved operations while continuing bay work, run `ism-agent-os toggle-service --repair-order <RO> --service-row <ROW1> [<ROW2> ...]` in a single batched command (enforces the authorization lock per row).
-2. To return the vehicle to the lot temporarily between operations, run `ism-agent-os job-status --repair-order <RO> --action park`.
-3. Confirm all authorized operations and inspection notes are finished, ask for the final `odometer_out` reading and completion summary, and run `ism-agent-os job-status --repair-order <RO> --action complete --odometer-out <KM> --notes "<summary>"`.
-4. The server sets status to `Work Completed` and updates vehicle location to `Completed / Parked in Lot`.
-5. For customer billing and handover after operator confirmation, run `ism-agent-os checkout --repair-order <RO> --confirm` to invoice, collect payment, and release the vehicle cleanly.
+- **`job-status --action complete` required fields**: `--repair-order`, `--action complete`, and `--odometer-out` (`>= odometer_in`).
+- **`checkout` required fields**: `--repair-order`, `--payment-method` (no silent default), `--odometer-out` (`>= odometer_in`), and `--confirm`.
+- **Mandatory Callback**: Run `--dry-run` first, output `### ISM Pre-Dispatch Summary` (flagging any missing required fields), and wait for explicit user confirmation before executing any floor write or checkout.
 
 ## Verification
 
-- Verify `data.status` displays the expected new status (`Authorized - In Progress`, `Waiting on Parts`, or `Work Completed`).
+- Verify `success: true` and `data.status` reflects the target state (`Authorized - In Progress`, `Waiting on Parts`, `Work Completed`, or `Closed / Released`).
