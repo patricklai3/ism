@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import http.client
 import json
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
 from .config import IsmConfig
+
+_DEFAULT_URLOPEN = urllib.request.urlopen
+_MAX_POOL_PER_HOST = 8
 
 
 class IsmApiError(Exception):
@@ -26,6 +30,58 @@ class FrappeTransport:
 
 	def __init__(self, config: IsmConfig) -> None:
 		self.config = config
+		self._pool_lock = threading.Lock()
+		self._pool: dict[tuple[str, str, int], list[http.client.HTTPConnection]] = {}
+
+	def close(self) -> None:
+		"""Close all pooled HTTP(S) keep-alive connections."""
+		with self._pool_lock:
+			conns = [c for bucket in self._pool.values() for c in bucket]
+			self._pool.clear()
+		for conn in conns:
+			try:
+				conn.close()
+			except Exception:
+				pass
+
+	def _acquire_connection(self, scheme: str, host: str, port: int) -> http.client.HTTPConnection:
+		key = (scheme, host, port)
+		with self._pool_lock:
+			bucket = self._pool.get(key)
+			if bucket:
+				conn = bucket.pop()
+				conn.timeout = self.config.timeout
+				if conn.sock is not None:
+					conn.sock.settimeout(self.config.timeout)
+				return conn
+		if scheme == "https":
+			return http.client.HTTPSConnection(host, port, timeout=self.config.timeout)
+		return http.client.HTTPConnection(host, port, timeout=self.config.timeout)
+
+	def _release_connection(
+		self,
+		scheme: str,
+		host: str,
+		port: int,
+		conn: http.client.HTTPConnection,
+		reusable: bool,
+	) -> None:
+		if not reusable:
+			try:
+				conn.close()
+			except Exception:
+				pass
+			return
+		key = (scheme, host, port)
+		with self._pool_lock:
+			bucket = self._pool.setdefault(key, [])
+			if len(bucket) < _MAX_POOL_PER_HOST:
+				bucket.append(conn)
+				return
+		try:
+			conn.close()
+		except Exception:
+			pass
 
 	def call_rest_method(self, method: str, args: dict[str, Any]) -> Any:
 		"""Invoke a whitelisted Frappe method over POST /api/method/{method}."""
@@ -86,21 +142,60 @@ class FrappeTransport:
 			headers["X-Frappe-Site-Name"] = self.config.site
 
 		data = json.dumps(body).encode("utf-8") if body is not None else None
-		req = urllib.request.Request(url, data=data, headers=headers, method=http_method)
+		parsed = urllib.parse.urlsplit(url)
+		scheme = parsed.scheme.lower()
+		use_pool = urllib.request.urlopen is _DEFAULT_URLOPEN and scheme in ("http", "https") and bool(parsed.hostname)
+
+		if not use_pool:
+			req = urllib.request.Request(url, data=data, headers=headers, method=http_method)
+			for attempt in range(2):
+				try:
+					with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+						raw = resp.read().decode("utf-8")
+						return json.loads(raw) if raw else {}
+				except http.client.RemoteDisconnected as exc:
+					if attempt == 0:
+						continue
+					raise IsmApiError(f"Connection closed by {url}: {exc}", status_code=503) from exc
+				except urllib.error.HTTPError as exc:
+					raw_err = exc.read().decode("utf-8", errors="replace")
+					raise IsmApiError(_format_http_error(exc.code, raw_err), status_code=exc.code, details=raw_err) from exc
+				except urllib.error.URLError as exc:
+					raise IsmApiError(f"Connection failed to {url}: {exc.reason}", status_code=503) from exc
+			return {}
+
+		host = parsed.hostname or ""
+		port = parsed.port or (443 if scheme == "https" else 80)
+		path = parsed.path or "/"
+		if parsed.query:
+			path = f"{path}?{parsed.query}"
+
 		for attempt in range(2):
+			conn = self._acquire_connection(scheme, host, port)
 			try:
-				with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-					raw = resp.read().decode("utf-8")
-					return json.loads(raw) if raw else {}
-			except http.client.RemoteDisconnected as exc:
+				conn.request(http_method, path, body=data, headers=headers)
+				resp = conn.getresponse()
+				raw_bytes = resp.read()
+				conn_hdr = (resp.getheader("Connection") or "").lower()
+				reusable = (not resp.will_close) and (conn_hdr != "close")
+				self._release_connection(scheme, host, port, conn, reusable=reusable)
+
+				if resp.status >= 400:
+					raw_err = raw_bytes.decode("utf-8", errors="replace")
+					raise IsmApiError(_format_http_error(resp.status, raw_err), status_code=resp.status, details=raw_err)
+
+				raw = raw_bytes.decode("utf-8")
+				return json.loads(raw) if raw else {}
+			except (http.client.RemoteDisconnected, http.client.BadStatusLine, ConnectionResetError, BrokenPipeError) as exc:
+				self._release_connection(scheme, host, port, conn, reusable=False)
 				if attempt == 0:
 					continue
 				raise IsmApiError(f"Connection closed by {url}: {exc}", status_code=503) from exc
-			except urllib.error.HTTPError as exc:
-				raw_err = exc.read().decode("utf-8", errors="replace")
-				raise IsmApiError(_format_http_error(exc.code, raw_err), status_code=exc.code, details=raw_err) from exc
-			except urllib.error.URLError as exc:
-				raise IsmApiError(f"Connection failed to {url}: {exc.reason}", status_code=503) from exc
+			except IsmApiError:
+				raise
+			except (OSError, http.client.HTTPException) as exc:
+				self._release_connection(scheme, host, port, conn, reusable=False)
+				raise IsmApiError(f"Connection failed to {url}: {exc}", status_code=503) from exc
 		return {}
 
 

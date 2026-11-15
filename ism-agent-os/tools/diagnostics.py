@@ -65,6 +65,7 @@ def _check_e2e_draft_flow(client: IsmAgentClient) -> bool:
 		quote = client.create_quote(
 			customer_name="_TEST_ISM_AgentOS_Customer",
 			vehicle_identifier="5YJ3E1EBXNF123456",
+			odometer_in=42000,
 			services=[{"service_title": "Front Lateral Link Inspection", "labor_hours": 1.0}],
 			notes="ISM Agent OS E2E verification draft",
 		)

@@ -122,7 +122,7 @@ class Tools:
 		include_summary: bool = False,
 		target_date: str = "",
 	) -> str:
-		"""Find conflict-free bay and technician appointment slots."""
+		"""Find conflict-free bay and technician appointment slots (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
 		res = self._client().find_available_slots(
 			repair_order=repair_order or None,
 			duration_minutes=duration_minutes,
@@ -149,7 +149,7 @@ class Tools:
 		notes: str = "",
 		include_summary: bool = False,
 	) -> str:
-		"""Move an existing Schedule Entry to a new date, time, bay, or technician."""
+		"""Move an existing Schedule Entry to a new date, time, bay, or technician (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
 		res = self._client().reschedule_appointment(
 			schedule_entry=schedule_entry,
 			scheduled_date=scheduled_date or None,
@@ -181,11 +181,13 @@ class Tools:
 	def ism_create_ro_from_appointment(
 		self,
 		schedule_entry: str,
+		odometer_in: int,
 		include_summary: bool = False,
 	) -> str:
 		"""Create a Checked In Repair Order from a pre-intake Schedule Entry."""
 		res = self._client().create_ro_from_appointment(
 			schedule_entry=schedule_entry,
+			odometer_in=odometer_in,
 			include_summary=include_summary,
 		)
 		return _format(res)
@@ -224,7 +226,7 @@ class Tools:
 		provisional_vehicle_info: str = "",
 		include_summary: bool = False,
 	) -> str:
-		"""Book a linked or provisional bay + technician Schedule Entry and update the ambient calendar."""
+		"""Book a linked or provisional bay + technician Schedule Entry and update the ambient calendar (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
 		res = self._client().book_appointment(
 			repair_order=repair_order or None,
 			scheduled_date=scheduled_date,
@@ -245,7 +247,7 @@ class Tools:
 		date: str = "",
 		include_summary: bool = False,
 	) -> str:
-		"""Return active service bays, on-duty technicians, appointments, and active Repair Orders."""
+		"""Return active service bays, on-duty technicians, appointments, and active Repair Orders (optional date: ISO YYYY-MM-DD)."""
 		res = self._client().get_shop_floor_status(
 			date=date or None,
 			include_summary=include_summary,
@@ -538,7 +540,7 @@ class Tools:
 		date: str = "",
 		include_summary: bool = False,
 	) -> str:
-		"""Retrieve daily technician utilization, scheduled hours, and unassigned entries."""
+		"""Retrieve daily technician utilization, scheduled hours, and unassigned entries (optional date: ISO YYYY-MM-DD)."""
 		res = self._client().get_daily_tech_overview(
 			date=date or None,
 			include_summary=include_summary,
@@ -574,7 +576,7 @@ class Tools:
 	def ism_checkout_repair_order(
 		self,
 		repair_order: str,
-		payment_method: str = "Debit / Interac",
+		payment_method: Optional[str] = None,
 		paid_amount: Optional[float] = None,
 		odometer_out: Optional[int] = None,
 		confirm: bool = False,

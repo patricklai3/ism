@@ -39,6 +39,7 @@ def run_demo(client: IsmAgentClient, live: bool = False) -> None:
 	quote = client.create_quote(
 		customer_name="_TEST_ISM_Demo_Customer",
 		vehicle_identifier="5YJ3E1EBXNF123456",
+		odometer_in=42000,
 		services=[{"service_title": "Brake Inspection", "labor_hours": 1.0}],
 		notes="Demo intake via ISM Agent OS",
 		include_summary=True,

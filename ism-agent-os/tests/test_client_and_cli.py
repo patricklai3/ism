@@ -170,7 +170,7 @@ class TestIsmAgentClientAndTransport(unittest.TestCase):
 			(lambda: self.client.resolve_shop_action_item("SAI-1"), "ism.api.agent.resolve_shop_action_item"),
 			(lambda: self.client.reschedule_appointment("SE-0001", scheduled_date="2026-11-15"), "ism.api.agent.reschedule_appointment"),
 			(lambda: self.client.update_appointment_status("SE-0001", "Confirmed"), "ism.api.agent.update_appointment_status"),
-			(lambda: self.client.create_ro_from_appointment("SE-0001"), "ism.api.agent.create_ro_from_appointment"),
+			(lambda: self.client.create_ro_from_appointment("SE-0001", odometer_in=42000), "ism.api.agent.create_ro_from_appointment"),
 			(lambda: self.client.estimate_duration(repair_order="RO-1"), "ism.api.agent.estimate_duration"),
 		]
 		for call_fn, expected_method in routes:
@@ -235,6 +235,56 @@ class TestIsmAgentClientAndTransport(unittest.TestCase):
 			res = self.client.get_shop_floor_status()
 		self.assertEqual(calls, 2)
 		self.assertTrue(res["success"])
+
+	def test_http_client_keep_alive_pool_reuses_and_retries_once(self) -> None:
+		created = []
+
+		class _FakePoolResp:
+			def __init__(self, payload: dict, status: int = 200) -> None:
+				self._raw = json.dumps(payload).encode("utf-8")
+				self.status = status
+				self.will_close = False
+
+			def read(self) -> bytes:
+				return self._raw
+
+			def getheader(self, name: str, default: str | None = None) -> str | None:
+				return "keep-alive" if name.lower() == "connection" else default
+
+		class _FakeConn:
+			def __init__(self, host: str, port: int, timeout: float = 30) -> None:
+				self.host = host
+				self.port = port
+				self.timeout = timeout
+				self.sock = None
+				self.closed = False
+				self.reqs = 0
+				created.append(self)
+
+			def request(self, method: str, path: str, body=None, headers=None) -> None:
+				self.reqs += 1
+
+			def getresponse(self):
+				return _FakePoolResp({"message": {"success": True, "conn_idx": len(created)}})
+
+			def close(self) -> None:
+				self.closed = True
+
+		with patch("http.client.HTTPConnection", side_effect=_FakeConn):
+			r1 = self.client.get_shop_floor_status()
+			r2 = self.client.get_shop_floor_status()
+			self.assertEqual(len(created), 1)
+			self.assertEqual(created[0].reqs, 2)
+			self.assertTrue(r1["success"])
+			self.assertTrue(r2["success"])
+
+			# Simulate a stale pooled connection that drops on next request -> retries on fresh conn
+			created[0].getresponse = lambda: (_ for _ in ()).throw(http.client.RemoteDisconnected("drop"))  # type: ignore[method-assign]
+			r3 = self.client.get_shop_floor_status()
+			self.assertEqual(len(created), 2)
+			self.assertTrue(created[0].closed)
+			self.assertTrue(r3["success"])
+		self.client._tx.close()
 
 	def test_new_contract_payload_serialization(self) -> None:
 		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True}})) as mock_open:
@@ -618,6 +668,385 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 		with patch("tools.cli.run_diagnostics", return_value=True) as mock_diag:
 			self.assertEqual(cli.main(["verify-connection"]), 0)
 		mock_diag.assert_called_once()
+
+	def test_cli_batch_stdin_and_file_execution(self) -> None:
+		batch_payload = [
+			["status", "--date", "2026-11-15"],
+			"tech-overview --date 2026-11-15",
+			{"command": "slots", "args": {"duration": 30, "tags": ["Lift"]}},
+		]
+		fake_resp = _FakeHttpResponse({"message": {"success": True, "data": {"ok": True}}})
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdin", io.StringIO(json.dumps(batch_payload))), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "batch"])
+		self.assertEqual(code, 0)
+		parsed = json.loads(out.getvalue())
+		self.assertTrue(parsed["success"])
+		self.assertEqual(parsed["total"], 3)
+		self.assertEqual(parsed["succeeded"], 3)
+		self.assertEqual(parsed["failed"], 0)
+		self.assertEqual(mock_open.call_count, 3)
+
+		bom_payload = [["status", "--date", "2026-11-17"], ["tech-overview", "--date", "2026-11-16"]]
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdin", io.StringIO("\ufeff" + json.dumps(bom_payload))), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "batch"])
+		self.assertEqual(code, 0)
+		bom_parsed = json.loads(out.getvalue())
+		self.assertTrue(bom_parsed["success"])
+		self.assertEqual(bom_parsed["succeeded"], 2)
+		self.assertEqual(json.loads(mock_open.call_args_list[0][0][0].data.decode("utf-8"))["date"], "2026-11-17")
+		self.assertEqual(json.loads(mock_open.call_args_list[1][0][0].data.decode("utf-8"))["date"], "2026-11-16")
+
+		with tempfile.TemporaryDirectory() as tmp:
+			batch_file = Path(tmp) / "cmds.json"
+			batch_file.write_text(
+				json.dumps([
+					[
+						"quote",
+						"--customer",
+						"Jane Doe",
+						"--vehicle",
+						"5YJ3E1EBXNF123456",
+						"--odometer-in",
+						"42000",
+						"--company",
+						"Test Shop",
+						"--notes",
+						"Brake noise",
+					]
+				]),
+				encoding="utf-8",
+			)
+			with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+				patch("sys.stdout", new_callable=io.StringIO) as out:
+				code = cli.main(["--json", "batch", "--file", f"@{batch_file}"])
+		self.assertEqual(code, 0)
+		sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+		self.assertEqual(sent["company"], "Test Shop")
+		self.assertEqual(sent["notes"], "Brake noise")
+
+		parser = cli._build_parser()
+		with patch("sys.stderr", new_callable=io.StringIO):
+			with self.assertRaises(SystemExit):
+				parser.parse_args(["slots", "--target-date", "2026-11-15"])
+			with self.assertRaises(SystemExit):
+				parser.parse_args(["quote", "--customer", "Jane", "--vehicle", "VIN1", "--concern", "Noise"])
+
+	def test_cli_batch_cmd_and_powershell_unquoted_json_fallback(self) -> None:
+		fake_resp = _FakeHttpResponse({"message": {"success": True, "data": {"ok": True}}})
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main([
+				"--json",
+				"batch",
+				"--cmd",
+				"status --date 2026-11-17",
+				"--cmd",
+				"book --date 2026-11-17 --time 10:00 --bay 'Bay 1 - Main Lift' --notes 'Walk-in check'",
+			])
+		self.assertEqual(code, 0)
+		cmd_res = json.loads(out.getvalue())
+		self.assertTrue(cmd_res["success"])
+		self.assertEqual(cmd_res["succeeded"], 2)
+		self.assertEqual(json.loads(mock_open.call_args_list[0][0][0].data.decode("utf-8"))["date"], "2026-11-17")
+		book_sent = json.loads(mock_open.call_args_list[1][0][0].data.decode("utf-8"))
+		self.assertEqual(book_sent["scheduled_date"], "2026-11-17")
+		self.assertEqual(book_sent["start_time"], "10:00")
+		self.assertEqual(book_sent["service_bay"], "Bay 1 - Main Lift")
+		self.assertEqual(book_sent["notes"], "Walk-in check")
+
+		# PowerShell-stripped double quotes on batch positional array and nested JSON
+		ps_batch = (
+			"[[status,--date,2026-11-17],"
+			"[book,--date,2026-11-17,--time,10:00,--bay,Bay 1 - Main Lift],"
+			"[amend-quote,--repair-order,RO-2026-00011,--add-services-json,[{service_title:Tire Rotation,labor_hours:0.5}]]]"
+		)
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "batch", ps_batch])
+		self.assertEqual(code, 0)
+		ps_res = json.loads(out.getvalue())
+		self.assertTrue(ps_res["success"])
+		self.assertEqual(ps_res["succeeded"], 3)
+		self.assertEqual(json.loads(mock_open.call_args_list[1][0][0].data.decode("utf-8"))["start_time"], "10:00")
+		amend_sent = json.loads(mock_open.call_args_list[2][0][0].data.decode("utf-8"))
+		self.assertEqual(amend_sent["add_services"], [{"service_title": "Tire Rotation", "labor_hours": 0.5}])
+
+		# PowerShell-stripped --services-json with colon inside value and --remove-indices-json
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO):
+			code = cli.main([
+				"--json",
+				"quote",
+				"--customer",
+				"Jane Doe",
+				"--vehicle",
+				"5YJ3E1EA1PF200101",
+				"--odometer-in",
+				"42000",
+				"--services-json",
+				"[{service_title:Brake Check: LH/RH,labor_hours:0.5}]",
+			])
+		self.assertEqual(code, 0)
+		quote_sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+		self.assertEqual(quote_sent["services"], [{"service_title": "Brake Check: LH/RH", "labor_hours": 0.5}])
+
+		with patch("sys.stderr", new_callable=io.StringIO) as err:
+			code = cli.main(["--json", "batch", "--cmd", "status", "[[status]]"])
+		self.assertEqual(code, 1)
+		self.assertIn("Cannot combine --cmd", err.getvalue())
+
+	def test_cli_service_colon_hours_and_windows_backslash_batch_cmd(self) -> None:
+		fake_resp = _FakeHttpResponse({"message": {"success": True, "data": {"name": "RO-1"}}})
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO):
+			code = cli.main([
+				"--json",
+				"quote",
+				"--customer",
+				"Jane Doe",
+				"--vehicle",
+				"5YJ3E1EA1PF200101",
+				"--odometer-in",
+				"42000",
+				"--service",
+				"Brake Fluid Flush::1.0",
+				"--service",
+				"Front Brake Inspection",
+			])
+		self.assertEqual(code, 0)
+		quote_sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+		self.assertEqual(
+			quote_sent["services"],
+			[{"service_title": "Brake Fluid Flush", "labor_hours": 1.0}, "Front Brake Inspection"],
+		)
+
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main([
+				"--json",
+				"batch",
+				"--cmd",
+				"amend-quote --repair-order RO-1 --add-service 'Wiper Blade Replacement::0.3'",
+				"--cmd",
+				"send-approval --repair-order RO-1 --medium link",
+			])
+		self.assertEqual(code, 0)
+		batch_res = json.loads(out.getvalue())
+		self.assertTrue(batch_res["success"])
+		amend_sent = json.loads(mock_open.call_args_list[0][0][0].data.decode("utf-8"))
+		self.assertEqual(
+			amend_sent["add_services"],
+			[{"service_title": "Wiper Blade Replacement", "labor_hours": 0.3}],
+		)
+
+		with tempfile.TemporaryDirectory() as tmp:
+			payload_path = Path(tmp) / "add_services.json"
+			payload_path.write_text(
+				json.dumps([{"service_title": "Cabin Filter", "labor_hours": 0.4}]),
+				encoding="utf-8",
+			)
+			win_path = str(payload_path).replace("/", "\\")
+			with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+				patch("sys.stdout", new_callable=io.StringIO) as out:
+				code = cli.main([
+					"--json",
+					"batch",
+					"--cmd",
+					f"amend-quote --repair-order RO-1 --add-services-json @{win_path}",
+				])
+		self.assertEqual(code, 0)
+		win_res = json.loads(out.getvalue())
+		self.assertTrue(win_res["success"])
+		win_sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+		self.assertEqual(win_sent["add_services"], [{"service_title": "Cabin Filter", "labor_hours": 0.4}])
+
+	def test_cli_batch_error_handling_and_stop_on_error(self) -> None:
+		err_http = urllib.error.HTTPError(
+			"http://localhost:8000/api/method/x", 417, "Conflict", {}, io.BytesIO(b'{"message":"Bay conflict"}')
+		)
+		ok_resp = _FakeHttpResponse({"message": {"success": True, "data": {"ok": True}}})
+		payload = [["book", "--date", "2026-11-15", "--time", "09:00"], ["status", "--date", "2026-11-15"]]
+
+		with patch("urllib.request.urlopen", side_effect=[err_http, ok_resp]), \
+			patch("sys.stdin", io.StringIO(json.dumps(payload))), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "batch"])
+		self.assertEqual(code, 1)
+		res = json.loads(out.getvalue())
+		self.assertFalse(res["success"])
+		self.assertEqual(res["succeeded"], 1)
+		self.assertEqual(res["failed"], 1)
+		self.assertEqual(len(res["results"]), 2)
+		self.assertIn("Bay conflict", res["results"][0]["error"])
+
+		with patch("urllib.request.urlopen", side_effect=[err_http, ok_resp]), \
+			patch("sys.stdin", io.StringIO(json.dumps(payload))), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "batch", "--stop-on-error"])
+		self.assertEqual(code, 1)
+		res_stopped = json.loads(out.getvalue())
+		self.assertEqual(len(res_stopped["results"]), 1)
+		self.assertEqual(res_stopped["failed"], 1)
+
+		with patch("sys.stdin", io.StringIO(json.dumps([["batch"]]))), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "batch"])
+		self.assertEqual(code, 1)
+		self.assertIn("not allowed inside batch", json.loads(out.getvalue())["results"][0]["error"])
+
+	def test_cli_intake_slots_and_slots_bay_technician_filters(self) -> None:
+		fake_resp = _FakeHttpResponse({"message": {"success": True, "data": {"repair_order": "RO-1", "slots": []}}})
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO):
+			code = cli.main([
+				"--json",
+				"slots",
+				"--date",
+				"2026-11-17",
+				"--duration",
+				"60",
+				"--bay",
+				"Bay 1 - Main Lift",
+				"--technician",
+				"Marcus Vance",
+			])
+		self.assertEqual(code, 0)
+		sent_slots = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+		self.assertEqual(sent_slots["service_bay"], "Bay 1 - Main Lift")
+		self.assertEqual(sent_slots["technician"], "Marcus Vance")
+
+		with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO):
+			code = cli.main([
+				"--json",
+				"intake-slots",
+				"--customer",
+				"Sarah Jenkins",
+				"--vehicle",
+				"5YJ3E1EA1PF200101",
+				"--odometer-in",
+				"42000",
+				"--service",
+				"HEPA Cabin Air Filter Replacement",
+				"--date",
+				"2026-11-17",
+				"--bay",
+				"Bay 1 - Main Lift",
+				"--tech",
+				"HR-EMP-00004",
+				"--max-slots",
+				"5",
+			])
+		self.assertEqual(code, 0)
+		self.assertTrue(mock_open.call_args[0][0].full_url.endswith("ism.api.agent.intake_and_find_slots"))
+		sent_is = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+		self.assertEqual(sent_is["customer_name"], "Sarah Jenkins")
+		self.assertEqual(sent_is["vehicle_identifier"], "5YJ3E1EA1PF200101")
+		self.assertEqual(sent_is["services"], ["HEPA Cabin Air Filter Replacement"])
+		self.assertEqual(sent_is["service_bay"], "Bay 1 - Main Lift")
+		self.assertEqual(sent_is["technician"], "HR-EMP-00004")
+		self.assertEqual(sent_is["max_slots"], 5)
+
+		conflict_resp = _FakeHttpResponse({
+			"message": {
+				"success": False,
+				"message": "Bay 1 - Main Lift is already occupied.",
+				"data": {"status": "conflict", "conflict_type": "bay_conflict", "alternative_slots": []},
+			}
+		})
+		with patch("urllib.request.urlopen", return_value=conflict_resp), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "book", "--repair-order", "RO-1", "--date", "2026-11-15", "--time", "09:00"])
+		self.assertEqual(code, 1)
+		self.assertFalse(json.loads(out.getvalue())["success"])
+
+	def test_cli_dry_run_and_required_field_gate(self) -> None:
+		# --dry-run reports missing required fields cleanly without any HTTP call
+		with patch("urllib.request.urlopen") as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main([
+				"--json",
+				"--dry-run",
+				"quote",
+				"--customer",
+				"Rob",
+				"--vehicle",
+				"5YJ3E1EA1PF200101",
+				"--service",
+				"Lateral Link Diagnosis",
+			])
+		self.assertEqual(code, 0)
+		mock_open.assert_not_called()
+		dry_res = json.loads(out.getvalue())
+		self.assertTrue(dry_res["dry_run"])
+		self.assertFalse(dry_res["ready"])
+		self.assertIn("quote:--odometer-in", dry_res["missing_required"])
+		self.assertIn("[MISSING — REQUIRED]", dry_res["summary_card"])
+
+		# Live write calls fail fast before any HTTP call when required fields are missing
+		failing_cases = [
+			(["quote", "--customer", "Rob", "--vehicle", "5YJ3E1EA1PF200101", "--service", "Lateral Link"], "--odometer-in"),
+			(["quote", "--customer", "Rob", "--vehicle", "5YJ3E1EA1PF200101", "--odometer-in", "48250"], "at least one required"),
+			(["intake-slots", "--customer", "Rob", "--vehicle", "5YJ3E1EA1PF200101", "--service", "Alignment"], "--odometer-in"),
+			(["create-ro-from-entry", "--schedule-entry", "SE-00001"], "--odometer-in"),
+			(["job-status", "--repair-order", "RO-1", "--action", "complete"], "--odometer-out"),
+			(["checkout", "--repair-order", "RO-1", "--odometer-out", "48255", "--confirm"], "--payment-method"),
+			(["checkout", "--repair-order", "RO-1", "--payment-method", "Debit / Interac", "--confirm"], "--odometer-out"),
+			(["checkout", "--repair-order", "RO-1", "--payment-method", "Debit / Interac", "--odometer-out", "48255"], "--confirm"),
+			(["status", "--date", "tomorrow"], "ISO YYYY-MM-DD"),
+			(["slots", "--date", "2026-11-17", "--min-time", "9am"], "24-hour HH:MM or HH:MM:SS"),
+			(["book", "--date", "tomorrow", "--time", "10:00", "--repair-order", "RO-1"], "ISO YYYY-MM-DD"),
+			(["book", "--date", "2026-11-17", "--time", "9am", "--repair-order", "RO-1"], "24-hour HH:MM or HH:MM:SS"),
+			(["reschedule", "--schedule-entry", "SE-1", "--date", "friday"], "ISO YYYY-MM-DD"),
+		]
+		for argv_case, expected_text in failing_cases:
+			with patch("urllib.request.urlopen") as mock_open, \
+				patch("sys.stderr", new_callable=io.StringIO) as err:
+				code = cli.main(argv_case)
+			self.assertEqual(code, 1, f"Expected failure for {argv_case}")
+			mock_open.assert_not_called()
+			self.assertIn(expected_text, err.getvalue())
+
+		# --dry-run marks invalid NL date/time as [INVALID] and ready=False
+		with patch("urllib.request.urlopen") as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main([
+				"--json",
+				"--dry-run",
+				"book",
+				"--date",
+				"tomorrow",
+				"--time",
+				"9am",
+				"--repair-order",
+				"RO-1",
+			])
+		self.assertEqual(code, 0)
+		mock_open.assert_not_called()
+		invalid_dry = json.loads(out.getvalue())
+		self.assertFalse(invalid_dry["ready"])
+		self.assertIn("[INVALID: `tomorrow`]", invalid_dry["summary_card"])
+		self.assertIn("[INVALID: `9am`]", invalid_dry["summary_card"])
+
+		# Subcommand --dry-run placement and batch --dry-run both work offline
+		with patch("urllib.request.urlopen") as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main([
+				"batch",
+				"--dry-run",
+				"--cmd",
+				"quote --customer Rob --vehicle 5YJ3E1EA1PF200101 --odometer-in 48250 --service 'Lateral Link Diagnosis'",
+				"--cmd",
+				"send-approval --repair-order RO-1 --medium link",
+			])
+		self.assertEqual(code, 0)
+		mock_open.assert_not_called()
+		self.assertIn("### ISM Pre-Dispatch Summary", out.getvalue())
+		self.assertIn("READY", out.getvalue())
 
 
 if __name__ == "__main__":

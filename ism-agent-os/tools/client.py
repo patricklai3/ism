@@ -76,6 +76,8 @@ class IsmAgentClient:
 		start_date: Optional[str] = None,
 		days_ahead: int = 3,
 		equipment_tags: Optional[list[str] | str] = None,
+		service_bay: Optional[str] = None,
+		technician: Optional[str] = None,
 		include_resources: bool = False,
 		max_slots: Optional[int] = None,
 		include_past: bool = False,
@@ -83,7 +85,7 @@ class IsmAgentClient:
 		include_summary: bool = False,
 		target_date: Optional[str] = None,
 	) -> dict[str, Any]:
-		"""Query dual-resource capacity for available bay and tech slots."""
+		"""Query dual-resource capacity for available bay and tech slots (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
 		args = _drop_none({
 			"repair_order": repair_order,
 			"duration_minutes": duration_minutes,
@@ -91,6 +93,8 @@ class IsmAgentClient:
 			"target_date": target_date,
 			"days_ahead": days_ahead,
 			"equipment_tags": equipment_tags,
+			"service_bay": service_bay,
+			"technician": technician,
 			"include_resources": True if include_resources else None,
 			"max_slots": max_slots,
 			"include_past": True if include_past else None,
@@ -98,6 +102,62 @@ class IsmAgentClient:
 			"include_summary": True if include_summary else None,
 		})
 		return self.call_method("ism.api.agent.find_available_slots", args)
+
+	def intake_and_find_slots(
+		self,
+		customer_name: Optional[str] = None,
+		vehicle_identifier: Optional[str] = None,
+		services: Optional[list[Any] | str] = None,
+		parts: Optional[list[Any] | str] = None,
+		notes: Optional[str] = None,
+		customer_phone: Optional[str] = None,
+		customer_email: Optional[str] = None,
+		company: Optional[str] = None,
+		odometer_in: Optional[int] = None,
+		start_date: Optional[str] = None,
+		days_ahead: int = 3,
+		duration_minutes: Optional[int] = None,
+		equipment_tags: Optional[list[str] | str] = None,
+		service_bay: Optional[str] = None,
+		technician: Optional[str] = None,
+		max_slots: Optional[int] = None,
+		include_past: bool = False,
+		min_start_time: Optional[str] = None,
+		include_resources: bool = False,
+		include_summary: bool = False,
+		customer: Optional[str] = None,
+		vehicle: Optional[str] = None,
+		concern: Optional[str] = None,
+		target_date: Optional[str] = None,
+	) -> dict[str, Any]:
+		"""Create a Draft Estimate Repair Order and return candidate booking slots in one call (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
+		args = _drop_none({
+			"customer_name": customer_name,
+			"customer": customer,
+			"vehicle_identifier": vehicle_identifier,
+			"vehicle": vehicle,
+			"company": company or self.config.company or None,
+			"services": services,
+			"parts": parts,
+			"notes": notes,
+			"concern": concern,
+			"customer_phone": customer_phone,
+			"customer_email": customer_email,
+			"odometer_in": odometer_in,
+			"start_date": start_date,
+			"target_date": target_date,
+			"days_ahead": days_ahead,
+			"duration_minutes": duration_minutes,
+			"equipment_tags": equipment_tags,
+			"service_bay": service_bay,
+			"technician": technician,
+			"max_slots": max_slots,
+			"include_past": True if include_past else None,
+			"min_start_time": min_start_time,
+			"include_resources": True if include_resources else None,
+			"include_summary": True if include_summary else None,
+		})
+		return self.call_method("ism.api.agent.intake_and_find_slots", args)
 
 	def reschedule_appointment(
 		self,
@@ -110,7 +170,7 @@ class IsmAgentClient:
 		notes: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
-		"""Reschedule an existing Schedule Entry with bay and technician checks."""
+		"""Reschedule an existing Schedule Entry with bay and technician checks (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
 		args = _drop_none({
 			"schedule_entry": schedule_entry,
 			"scheduled_date": scheduled_date,
@@ -142,11 +202,13 @@ class IsmAgentClient:
 	def create_ro_from_appointment(
 		self,
 		schedule_entry: str,
+		odometer_in: int,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Create a Checked In Repair Order from a pre-intake Schedule Entry."""
 		args = _drop_none({
 			"schedule_entry": schedule_entry,
+			"odometer_in": odometer_in,
 			"include_summary": True if include_summary else None,
 		})
 		return self.call_method("ism.api.agent.create_ro_from_appointment", args)
@@ -185,7 +247,7 @@ class IsmAgentClient:
 		provisional_vehicle_info: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
-		"""Allocate a linked or provisional Schedule Entry and push realtime calendar update."""
+		"""Allocate a linked or provisional Schedule Entry and push realtime calendar update (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
 		args = _drop_none({
 			"repair_order": repair_order,
 			"scheduled_date": scheduled_date,
@@ -298,7 +360,7 @@ class IsmAgentClient:
 		return self.call_method("ism.api.agent.import_tesla_procedure", args)
 
 	def get_shop_floor_status(self, date: Optional[str] = None, include_summary: bool = False) -> dict[str, Any]:
-		"""Retrieve active bays, on-duty technicians, appointments, and ROs."""
+		"""Retrieve active bays, on-duty technicians, appointments, and ROs (optional date: ISO YYYY-MM-DD)."""
 		return self.call_method(
 			"ism.api.agent.get_shop_floor_status",
 			_drop_none({"date": date, "include_summary": True if include_summary else None}),
@@ -346,11 +408,9 @@ class IsmAgentClient:
 		items: Optional[list[Any] | str] = None,
 		company: Optional[str] = None,
 		include_summary: bool = False,
-		ro_name: Optional[str] = None,
 	) -> dict[str, Any]:
-		"""Canonical alias for get_parts_stock matching ism.api.agent.check_parts_stock."""
+		"""Check live warehouse stock and deficits for a Repair Order or items list."""
 		return self.get_parts_stock(
-			ro_name=ro_name,
 			company=company,
 			include_summary=include_summary,
 			repair_order=repair_order,
@@ -574,7 +634,7 @@ class IsmAgentClient:
 	def checkout_repair_order(
 		self,
 		repair_order: str,
-		payment_method: str = "Debit / Interac",
+		payment_method: Optional[str] = None,
 		paid_amount: Optional[float] = None,
 		odometer_out: Optional[int] = None,
 		confirm: bool = False,
