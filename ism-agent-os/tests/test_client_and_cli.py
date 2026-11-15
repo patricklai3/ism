@@ -1,18 +1,15 @@
-"""Tests for IsmConfig, FrappeTransport pure REST, IsmAgentClient, CLI, and Open WebUI parity."""
+"""Tests for IsmConfig, FrappeTransport pure REST, IsmAgentClient, and CLI."""
 
 from __future__ import annotations
 
 import argparse
-import ast
 import http.client
-import importlib
 import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
-import types
 import unittest
 import urllib.error
 from pathlib import Path
@@ -383,7 +380,7 @@ class TestIsmAgentClientAndTransport(unittest.TestCase):
 		self.assertEqual(json.loads(mock_open.call_args[0][0].data.decode("utf-8"))["service_row_ids"], ["r1", "r2"])
 
 
-class TestCliAndOpenWebUi(unittest.TestCase):
+class TestCli(unittest.TestCase):
 	def test_cli_subcommands_parse_and_legacy_subcommand_rejected(self) -> None:
 		parser = cli._build_parser()
 		for cmd in (
@@ -504,99 +501,6 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 		self.assertTrue(ok)
 		self.assertEqual(mock_open.call_count, 3)
 		self.assertIn("[2/4] Frappe REST API OK", out.getvalue())
-
-	def test_openwebui_parity(self) -> None:
-		expected_methods = [
-			"ism_create_quote",
-			"ism_amend_quote",
-			"ism_send_quote_for_approval",
-			"ism_find_available_slots",
-			"ism_book_appointment",
-			"ism_get_shop_floor_status",
-			"ism_update_job_status",
-			"ism_import_supplier_catalog",
-			"ism_import_tesla_procedure",
-			"ism_check_parts_stock",
-			"ism_submit_procurement_orders",
-			"ism_create_purchase_payment",
-			"ism_create_purchase_invoice",
-			"ism_fetch_tesla_manual",
-			"ism_get_tech_overview",
-			"ism_get_unscheduled_services",
-			"ism_receive_purchase_order",
-			"ism_checkout_repair_order",
-			"ism_toggle_service_completion",
-			"ism_add_supplement",
-			"ism_duplicate_service_for_opposite_side",
-			"ism_get_deferred_services",
-			"ism_add_deferred_services",
-			"ism_list_shop_action_items",
-			"ism_create_shop_action_item",
-			"ism_resolve_shop_action_item",
-			"ism_reschedule_appointment",
-			"ism_update_appointment_status",
-			"ism_create_ro_from_appointment",
-			"ism_estimate_duration",
-			"ism_get_component_alternates",
-			"ism_decode_vehicle_vin",
-			"ism_search_vehicles",
-			"ism_get_vehicle_intelligence",
-			"ism_link_vehicle_customer",
-			"ism_list_inspection_templates",
-			"ism_get_inspection_template",
-			"ism_apply_inspection_template",
-			"ism_get_check_in_inspection",
-			"ism_record_check_in_inspection",
-		]
-		ow_path = Path(__file__).resolve().parent.parent / "openwebui_tools.py"
-		tree = ast.parse(ow_path.read_text(encoding="utf-8"))
-		tools_cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Tools")
-		defined = {n.name for n in tools_cls.body if isinstance(n, ast.FunctionDef)}
-		for name in expected_methods:
-			self.assertIn(name, defined, f"openwebui_tools.Tools missing {name}")
-		slots_fn = next(
-			n for n in tools_cls.body if isinstance(n, ast.FunctionDef) and n.name == "ism_find_available_slots"
-		)
-		slots_arg_names = {a.arg for a in slots_fn.args.args}
-		self.assertIn("service_bay", slots_arg_names)
-		self.assertIn("technician", slots_arg_names)
-
-		try:
-			import openwebui_tools
-		except ImportError as exc:
-			self.skipTest(f"pydantic not installed: {exc}")
-
-		ow_tools = openwebui_tools.Tools()
-		for name in expected_methods:
-			self.assertTrue(hasattr(ow_tools, name), f"openwebui_tools.Tools missing {name}")
-
-		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True, "data": {"alternates": []}}})) as mock_open:
-			raw_out = ow_tools.ism_get_component_alternates(oem_part_number="1044341-00-D", slot_number=1)
-		self.assertTrue(json.loads(raw_out)["success"])
-		self.assertTrue(mock_open.call_args[0][0].full_url.endswith("ism.api.agent.get_component_alternates"))
-
-		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True, "data": {"vin": "5YJ3E1EBXNF123456"}}})) as mock_open:
-			vin_out = ow_tools.ism_decode_vehicle_vin(vin="5YJ3E1EBXNF123456")
-		self.assertTrue(json.loads(vin_out)["success"])
-		self.assertTrue(mock_open.call_args[0][0].full_url.endswith("ism.api.agent.decode_vehicle_vin"))
-
-		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True, "data": {"updated_count": 1}}})) as mock_open:
-			insp_out = ow_tools.ism_record_check_in_inspection(
-				repair_order="RO-1", items='[{"idx": 1, "status": "Pass"}]', odometer_in=42100
-			)
-		self.assertTrue(json.loads(insp_out)["success"])
-		sent_ow = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
-		self.assertEqual(sent_ow["items"], [{"idx": 1, "status": "Pass"}])
-
-		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True, "data": {}}})) as mock_open:
-			ow_tools.ism_check_parts_stock(repair_order="RO-1", items='[{"item_code":"P1","qty":1}]')
-		sent_stk = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
-		self.assertEqual(sent_stk["repair_order"], "RO-1")
-		self.assertEqual(sent_stk["items"], [{"item_code": "P1", "qty": 1}])
-
-		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True, "data": {}}})) as mock_open:
-			ow_tools.ism_toggle_service_completion(repair_order="RO-1", service_row_ids='["r1","r2"]')
-		self.assertEqual(json.loads(mock_open.call_args[0][0].data.decode("utf-8"))["service_row_ids"], ["r1", "r2"])
 
 	def test_cli_structured_ingest_parts_and_inspection_dispatch(self) -> None:
 		with tempfile.TemporaryDirectory() as tmp:
@@ -1115,84 +1019,6 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 		standalone_dry = json.loads(out.getvalue())
 		self.assertTrue(standalone_dry["ready"])
 		self.assertEqual(standalone_dry["missing_required"], [])
-
-	def test_openwebui_tools_runtime_with_pydantic_stub(self) -> None:
-		class _FieldSpec:
-			def __init__(self, default="", repr=True, description="") -> None:
-				self.default = default
-				self.repr = repr
-				self.description = description
-
-		class _FakeBaseModel:
-			def __init__(self, **kwargs) -> None:
-				specs = {}
-				for attr_name, attr_val in type(self).__dict__.items():
-					if isinstance(attr_val, _FieldSpec):
-						specs[attr_name] = attr_val
-						setattr(self, attr_name, kwargs.get(attr_name, attr_val.default))
-				self._field_specs = specs
-
-			def __repr__(self) -> str:
-				parts = [
-					f"{k}={getattr(self, k)!r}"
-					for k, spec in self._field_specs.items()
-					if spec.repr
-				]
-				return f"{type(self).__name__}({', '.join(parts)})"
-
-		fake_pydantic = types.ModuleType("pydantic")
-		fake_pydantic.BaseModel = _FakeBaseModel
-		fake_pydantic.Field = lambda default="", repr=True, description="", **_: _FieldSpec(
-			default=default, repr=repr, description=description
-		)
-
-		with patch.dict(sys.modules, {"pydantic": fake_pydantic}):
-			sys.modules.pop("openwebui_tools", None)
-			try:
-				ow_mod = importlib.import_module("openwebui_tools")
-				with ow_mod.Tools() as ow:
-					ow.valves.FRAPPE_API_SECRET = "super-secret-val"
-					self.assertNotIn("super-secret-val", repr(ow.valves))
-
-					c1 = ow._client()
-					c2 = ow._client()
-					self.assertIs(c1, c2)
-					with patch.object(c1, "close", wraps=c1.close) as mock_close:
-						ow.valves.FRAPPE_URL = "http://other.local:8000"
-						c3 = ow._client()
-					mock_close.assert_called_once()
-					self.assertIsNot(c3, c1)
-
-					fake_resp = _FakeHttpResponse({"message": {"success": True, "slots": []}})
-					with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open:
-						raw = ow.ism_find_available_slots(
-							equipment_tags="Two-Post Lift, Alignment Rack",
-							service_bay="Bay 2",
-							technician="EMP-001",
-						)
-					self.assertTrue(json.loads(raw)["success"])
-					sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
-					self.assertEqual(sent["equipment_tags"], ["Two-Post Lift", "Alignment Rack"])
-					self.assertEqual(sent["service_bay"], "Bay 2")
-					self.assertEqual(sent["technician"], "EMP-001")
-
-					bad_json_out = json.loads(ow.ism_create_quote(customer_name="Jane", services="{bad"))
-					self.assertFalse(bad_json_out["success"])
-					self.assertIn("error", bad_json_out)
-
-					http_err = urllib.error.HTTPError(
-						"http://other.local:8000/api/method/x",
-						500,
-						"Error",
-						{},
-						io.BytesIO(b'{"message":"boom"}'),
-					)
-					with patch("urllib.request.urlopen", side_effect=http_err):
-						api_err_out = json.loads(ow.ism_get_shop_floor_status())
-					self.assertFalse(api_err_out["success"])
-					self.assertIn("boom", api_err_out["error"])
-			finally:
-				sys.modules.pop("openwebui_tools", None)
 
 	def test_config_validation_and_transport_security_guards(self) -> None:
 		bad_cfg = IsmConfig(url="ftp://user:pw@evil.local\n", api_key="k\r1", api_secret="s1", site="bad\nsite")

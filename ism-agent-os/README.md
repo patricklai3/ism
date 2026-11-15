@@ -5,7 +5,7 @@
 ## Supported Agent Platforms
 
 - **Google Antigravity**: Load as a workspace plugin via `.agents/skills.json`, or open directly as a workspace (`AGENTS.md`, `rules/AGENTS.md`, `skills/*/SKILL.md`).
-- **Open WebUI / Custom Agents**: Import `openwebui_tools.py` or use `tools/client.py` (`IsmAgentClient`).
+- **Custom Agents**: Use `tools/cli.py` (`ism-agent-os`) or `tools/client.py` (`IsmAgentClient`).
 
 ## Quick Start
 
