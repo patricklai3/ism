@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 if __package__ and __package__.startswith("ism_agent_os"):
 	from ..client import IsmAgentClient
+	from ..config import validate_tesla_url as _validate_tesla_url
 else:
 	try:
 		from tools.client import IsmAgentClient
+		from tools.config import validate_tesla_url as _validate_tesla_url
 	except ImportError:
 		from ism_agent_os.client import IsmAgentClient
+		from ism_agent_os.config import validate_tesla_url as _validate_tesla_url
 
 try:
 	from ism.utils.tesla_manual import (
@@ -67,10 +71,11 @@ class TeslaManualParser:
 		_validate_tesla_url(url)
 
 		parsed = self.client.fetch_tesla_procedure(url, repair_order=repair_order)
-		normalized = self.normalize_procedure(parsed, url=url)
+		proc_payload = parsed.get("data") if isinstance(parsed, dict) and isinstance(parsed.get("data"), dict) else parsed
+		normalized = self.normalize_procedure(proc_payload if isinstance(proc_payload, dict) else {}, url=url)
 		title = normalized.get("title") or "Tesla Service Procedure"
 		code = normalized.get("correction_code") or None
-		frt = float(normalized.get("frt") or 1.0)
+		frt = float(normalized["frt"]) if normalized.get("frt") is not None else 0.0
 		model = model_override or normalized.get("applicable_model") or "Model 3"
 		resolved_parts = parts if parts is not None else (normalized.get("parts") or None)
 
@@ -106,15 +111,15 @@ class TeslaManualParser:
 			applicable_generation = shared.get("matched_generation") or ""
 			doc_guid = shared.get("doc_guid") or ""
 			year_hint = shared.get("year_hint") or ""
-
-		for seg in parts:
-			low = seg.lower()
-			if low in _MODEL_MAP and _shared_parse_manual_url is None:
-				model = _MODEL_MAP[low]
-			elif re.fullmatch(r"20\d{2}", seg) and not year_hint:
-				year_hint = f"{seg}+"
-			elif seg.upper().startswith("GUID-") and not doc_guid:
-				doc_guid = re.sub(r"\.html?$", "", seg, flags=re.IGNORECASE).upper()
+		else:
+			for seg in parts:
+				low = seg.lower()
+				if low in _MODEL_MAP:
+					model = _MODEL_MAP[low]
+				elif re.fullmatch(r"20\d{2}", seg) and not year_hint:
+					year_hint = f"{seg}+"
+				elif seg.upper().startswith("GUID-") and not doc_guid:
+					doc_guid = re.sub(r"\.html?$", "", seg, flags=re.IGNORECASE).upper()
 
 		return {
 			"model": model,
@@ -160,7 +165,7 @@ class TeslaManualParser:
 			{
 				"title": title,
 				"correction_code": cc,
-				"frt": float(frt_raw) if frt_raw else 1.0,
+				"frt": float(frt_raw) if frt_raw else 0.0,
 				"applicable_model": meta.get("model", "Model 3"),
 				"applicable_generation": meta.get("applicable_generation", ""),
 				"doc_guid": meta.get("doc_guid", ""),
@@ -190,7 +195,7 @@ class TeslaManualParser:
 			{
 				"title": title.strip(),
 				"correction_code": cc,
-				"frt": float(frt_raw) if frt_raw else 1.0,
+				"frt": float(frt_raw) if frt_raw else 0.0,
 				"applicable_model": meta.get("model", "Model 3"),
 				"applicable_generation": meta.get("applicable_generation", ""),
 				"doc_guid": meta.get("doc_guid", ""),
@@ -217,7 +222,7 @@ class TeslaManualParser:
 		if code:
 			title = re.sub(rf"^{re.escape(code)}\s*[-–—:]?\s*", "", title).strip() or "Tesla Service Procedure"
 
-		frt = float(norm.get("frt") or norm.get("labor_hours") or 1.0)
+		frt = _coerce_frt(norm)
 		model = str(norm.get("applicable_model") or norm.get("model") or url_meta.get("model") or "Model 3").strip()
 		generation = str(norm.get("applicable_generation") or url_meta.get("applicable_generation") or "").strip()
 		service_side = str(
@@ -247,10 +252,17 @@ class TeslaManualParser:
 		}
 
 
-def _validate_tesla_url(url: str) -> None:
-	parsed = urlparse(url)
-	if parsed.scheme != "https" or parsed.netloc not in ("service.tesla.com", "service.teslamotors.com"):
-		raise ValueError("URL must be an https:// link on service.tesla.com or service.teslamotors.com.")
+def _coerce_frt(norm: dict[str, Any]) -> float:
+	raw = norm.get("frt")
+	if raw is None or raw == "":
+		raw = norm.get("labor_hours")
+	if raw is None or raw == "" or isinstance(raw, bool):
+		return 0.0
+	try:
+		val = float(raw)
+	except (TypeError, ValueError):
+		return 0.0
+	return val if math.isfinite(val) and val >= 0.0 else 0.0
 
 
 def _first_match(text: str, patterns: list[str], multiline_dot: bool = True) -> str:
@@ -278,5 +290,14 @@ def _fallback_extract_oem_parts(text: str) -> list[dict[str, Any]]:
 	for pn in _OEM_PART_RE.findall(text or ""):
 		if pn not in seen:
 			seen.add(pn)
-			parts.append({"part_number": pn, "oem_part_number": pn, "part_name": f"Tesla OEM Part {pn}", "qty": 1, "side": "Both"})
+			parts.append({
+				"part_number": pn,
+				"oem_part_number": pn,
+				"part_name": f"Tesla OEM Part {pn}",
+				"qty": 1.0,
+				"rate": 0.0,
+				"side": "Both",
+				"part_source": "OEM",
+				"part_condition": "New",
+			})
 	return parts

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import re
 from typing import Any, Optional, Sequence, Union
 
@@ -168,7 +169,7 @@ def _iter_parsed_records(
 	if not lines:
 		return []
 
-	delimiter = _detect_delimiter(lines[0])
+	delimiter = _detect_delimiter("\n".join(lines[:10]))
 	rows = list(csv.reader(io.StringIO("\n".join(lines)), delimiter=delimiter))
 	if not rows:
 		return []
@@ -178,29 +179,52 @@ def _iter_parsed_records(
 	records: list[dict[str, str]] = []
 	for row in rows[start_idx:]:
 		cells = [c.strip() for c in row]
-		if not cells or not cells[0]:
+		if not any(cells):
 			continue
 		record = _extract_row(cells, col_map, default_source, normalized_condition)
+		if not record["part_num"].strip():
+			continue
 		record["condition"] = _normalize_condition_label(record["condition"])
 		records.append(record)
 	return records
 
 
-def _record_to_structured_item(record: dict[str, str]) -> dict[str, Any]:
-	part_num = record["part_num"].strip()
-	source = _normalize_source_label(record.get("source"))
-	oem_num = record.get("oem_num", "").strip()
-	return {
+def _build_structured_item(
+	mapped: dict[str, Any],
+	default_source: str = "Aftermarket",
+	default_condition: str = "New",
+) -> Optional[dict[str, Any]]:
+	part_num = str(mapped.get("part_num") or "").strip()
+	if not part_num:
+		return None
+
+	source_raw = mapped.get("source")
+	source = _normalize_source_label(source_raw if source_raw not in (None, "") else default_source)
+	cond_raw = mapped.get("condition")
+	condition = _normalize_condition_label(cond_raw if cond_raw not in (None, "") else default_condition)
+	oem_num = str(mapped.get("oem_num") or "").strip()
+	desc = str(mapped.get("description") or part_num).replace("|", "/").strip() or part_num
+
+	item: dict[str, Any] = {
 		"part_number": part_num,
-		"part_name": (record.get("description") or part_num).strip(),
+		"part_name": desc,
 		"part_source": source,
-		"part_condition": _normalize_condition_label(record.get("condition")),
-		"unit_rate": _parse_float(record.get("rate"), 0.0),
-		"valuation_rate": _parse_float(record.get("cost"), 0.0),
-		"qty": _parse_float(record.get("qty"), 1.0),
-		"revision": record.get("revision", "").strip(),
+		"part_condition": condition,
+		"unit_rate": _parse_float(mapped.get("rate"), 0.0),
+		"valuation_rate": _parse_float(mapped.get("cost"), 0.0),
+		"qty": _parse_float(mapped.get("qty"), 1.0),
+		"revision": str(mapped.get("revision") or "").strip(),
 		"oem_part_number": oem_num or (part_num if source == "OEM" else ""),
 	}
+	for extra in ("brand", "warranty_period", "stock_uom", "supplier", "supplier_part_no"):
+		val = mapped.get(extra)
+		if val is not None and str(val).strip():
+			item[extra] = str(val).strip()
+	return item
+
+
+def _record_to_structured_item(record: dict[str, str]) -> dict[str, Any]:
+	return _build_structured_item(record) or {}
 
 
 def _canonicalize_dict_row(
@@ -216,51 +240,44 @@ def _canonicalize_dict_row(
 		canonical_key = _HEADER_ALIASES.get(norm_key, norm_key)
 		if canonical_key not in mapped or mapped[canonical_key] == "":
 			mapped[canonical_key] = value
-
-	part_num = str(mapped.get("part_num") or "").strip()
-	if not part_num:
-		return None
-
-	source = _normalize_source_label(mapped.get("source") or default_source)
-	oem_num = str(mapped.get("oem_num") or "").strip()
-	desc = str(mapped.get("description") or part_num).replace("|", "/").strip() or part_num
-
-	item: dict[str, Any] = {
-		"part_number": part_num,
-		"part_name": desc,
-		"part_source": source,
-		"part_condition": _normalize_condition_label(str(mapped.get("condition") or default_condition)),
-		"unit_rate": _parse_float(mapped.get("rate"), 0.0),
-		"valuation_rate": _parse_float(mapped.get("cost"), 0.0),
-		"qty": _parse_float(mapped.get("qty"), 1.0),
-		"revision": str(mapped.get("revision") or "").strip(),
-		"oem_part_number": oem_num or (part_num if source == "OEM" else ""),
-	}
-	for extra in ("brand", "warranty_period", "stock_uom", "supplier", "supplier_part_no"):
-		val = mapped.get(extra)
-		if val is not None and str(val).strip():
-			item[extra] = str(val).strip()
-	return item
+	return _build_structured_item(mapped, default_source=default_source, default_condition=default_condition)
 
 
 def _normalize_source_label(value: Optional[str]) -> str:
 	return "OEM" if str(value or "").strip().upper().startswith("OEM") else "Aftermarket"
 
 
-def _normalize_condition_label(value: Optional[str]) -> str:
-	cleaned = (value or "New").strip().lower()
-	if cleaned == "used" or "use" in cleaned:
+_RECONDITIONED_TOKENS = frozenset(
+	{"reman", "remanufactured", "reconditioned", "rebuilt", "rec", "rcn", "reb"}
+)
+
+
+def _normalize_condition_label(value: Any) -> str:
+	cleaned = str(value if value is not None else "New").strip().lower()
+	if not cleaned:
+		return "New"
+	tokens = set(re.findall(r"[a-z0-9]+", cleaned))
+	if "used" in tokens:
 		return "Used"
-	if cleaned in ("reman", "remanufactured", "reconditioned", "rebuilt", "rec", "rcn", "reb") or any(
-		tok in cleaned for tok in ("rec", "rcn", "reb", "rem")
-	):
+	if tokens & _RECONDITIONED_TOKENS:
 		return "Reconditioned"
 	return "New"
 
 
-def _detect_delimiter(sample_line: str) -> str:
+def _detect_delimiter(sample_text: str) -> str:
+	sample = (sample_text or "").strip()
+	if not sample:
+		return ","
+	try:
+		dialect = csv.Sniffer().sniff(sample, delimiters="\t|;,")
+		if dialect.delimiter in ("\t", "|", ";", ","):
+			return dialect.delimiter
+	except csv.Error:
+		pass
+	unquoted = re.sub(r'"(?:""|[^"])*"', "", sample)
+	first_line = unquoted.splitlines()[0] if unquoted.splitlines() else unquoted
 	for delim in ("\t", "|", ";"):
-		if delim in sample_line:
+		if delim in first_line:
 			return delim
 	return ","
 
@@ -275,57 +292,59 @@ def _detect_header_map(first_row: list[str]) -> dict[str, int]:
 	return mapping if "part_num" in mapping else {}
 
 
+_POSITIONAL_COL_MAP = {
+	"part_num": 0,
+	"description": 1,
+	"source": 2,
+	"condition": 3,
+	"rate": 4,
+	"cost": 5,
+	"qty": 6,
+	"revision": 7,
+	"oem_num": 8,
+}
+
+
 def _extract_row(
 	cells: list[str],
 	col_map: dict[str, int],
 	default_source: str,
 	default_condition: str,
 ) -> dict[str, str]:
-	if col_map:
-		def get(field: str, fallback: str = "") -> str:
-			idx = col_map.get(field)
-			return cells[idx] if idx is not None and idx < len(cells) and cells[idx] else fallback
+	active_map = col_map or _POSITIONAL_COL_MAP
 
-		return {
-			"part_num": get("part_num"),
-			"description": get("description", get("part_num")).replace("|", "/"),
-			"source": get("source", default_source),
-			"condition": get("condition", default_condition),
-			"rate": _clean_number(get("rate", "0")),
-			"cost": _clean_number(get("cost", "0")),
-			"qty": _clean_number(get("qty", "1"), default="1"),
-			"revision": get("revision", ""),
-			"oem_num": get("oem_num", ""),
-		}
+	def get(field: str, fallback: str = "") -> str:
+		idx = active_map.get(field)
+		return cells[idx] if idx is not None and idx < len(cells) and cells[idx] else fallback
 
-	# Positional fallback matching ISM native column order
-	def pos(idx: int, fallback: str = "") -> str:
-		return cells[idx] if idx < len(cells) and cells[idx] else fallback
-
+	part_num = get("part_num")
 	return {
-		"part_num": pos(0),
-		"description": pos(1, pos(0)).replace("|", "/"),
-		"source": pos(2, default_source),
-		"condition": pos(3, default_condition),
-		"rate": _clean_number(pos(4, "0")),
-		"cost": _clean_number(pos(5, "0")),
-		"qty": _clean_number(pos(6, "1"), default="1"),
-		"revision": pos(7, ""),
-		"oem_num": pos(8, ""),
+		"part_num": part_num,
+		"description": get("description", part_num).replace("|", "/"),
+		"source": get("source", default_source),
+		"condition": get("condition", default_condition),
+		"rate": _clean_number(get("rate", "0")),
+		"cost": _clean_number(get("cost", "0")),
+		"qty": _clean_number(get("qty", "1"), default="1"),
+		"revision": get("revision", ""),
+		"oem_num": get("oem_num", ""),
 	}
 
 
 def _clean_number(raw: Any, default: str = "0") -> str:
+	if isinstance(raw, bool):
+		return default
 	if isinstance(raw, (int, float)):
-		return str(raw)
+		return str(raw) if math.isfinite(raw) else default
 	cleaned = re.sub(r"[,$\s]", "", str(raw or ""))
 	return cleaned or default
 
 
 def _parse_float(raw: Any, default: float = 0.0) -> float:
-	if raw is None or raw == "":
+	if raw is None or raw == "" or isinstance(raw, bool):
 		return default
 	try:
-		return float(_clean_number(raw, default=str(default)))
+		val = float(_clean_number(raw, default=str(default)))
 	except (ValueError, TypeError):
 		return default
+	return val if math.isfinite(val) else default

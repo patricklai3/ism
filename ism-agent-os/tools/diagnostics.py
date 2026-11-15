@@ -20,18 +20,17 @@ def run_diagnostics(config: IsmConfig, full_e2e: bool = False) -> bool:
 		for err in errors:
 			print(f"  - {err}")
 		return False
-	masked = config.api_secret[:4] + "..." if len(config.api_secret) > 4 else "***"
-	print(f"[1/4] Config OK (key={config.api_key}, secret={masked})")
+	print("[1/4] Config OK (key=***, secret=***)")
 
-	client = IsmAgentClient(config)
-	if not _check_rest_auth(client):
-		return False
-	if not _check_agent_facade(client):
-		return False
-	if not full_e2e:
-		print("[4/4] Write flow skipped (pass --full-e2e to test draft quote creation)")
-		return True
-	return _check_e2e_draft_flow(client)
+	with IsmAgentClient(config) as client:
+		if not _check_rest_auth(client):
+			return False
+		if not _check_agent_facade(client):
+			return False
+		if not full_e2e:
+			print("[4/4] Write flow skipped (pass --full-e2e to test draft quote creation)")
+			return True
+		return _check_e2e_draft_flow(client)
 
 
 def _check_rest_auth(client: IsmAgentClient) -> bool:
@@ -47,9 +46,9 @@ def _check_rest_auth(client: IsmAgentClient) -> bool:
 def _check_agent_facade(client: IsmAgentClient) -> bool:
 	try:
 		floor = client.get_shop_floor_status()
-		summary = floor.get("summary") or floor.get("data", {}).get("summary", {})
+		summary = floor.get("summary") or (floor.get("data") or {}).get("summary", {})
 		slots = client.find_available_slots(duration_minutes=60, days_ahead=2)
-		slot_count = len(slots.get("slots") or slots.get("data", {}).get("slots", []))
+		slot_count = len(slots.get("slots") or (slots.get("data") or {}).get("slots", []))
 		print(
 			f"[3/4] ISM Agent Facade OK — Bays: {summary.get('active_bays', '?')}, "
 			f"Techs: {summary.get('active_technicians', '?')}, Slots found: {slot_count}"
@@ -69,13 +68,13 @@ def _check_e2e_draft_flow(client: IsmAgentClient) -> bool:
 			services=[{"service_title": "Front Lateral Link Inspection", "labor_hours": 1.0}],
 			notes="ISM Agent OS E2E verification draft",
 		)
-		ro_name = quote.get("data", {}).get("name") or quote.get("repair_order")
+		ro_name = (quote.get("data") or {}).get("name") or quote.get("repair_order")
 		amend = client.amend_quote(ro_name, add_services=[{"service_title": "Alignment Check", "labor_hours": 0.5}])
 		approval = client.send_quote_for_approval(ro_name, communication_medium="link")
 		print(
 			f"[4/4] E2E Quote Flow OK — {ro_name}, "
-			f"services={amend.get('data', {}).get('total_services')}, "
-			f"approval_url={approval.get('urls', {}).get('approval', 'ready')}"
+			f"services={(amend.get('data') or {}).get('total_services')}, "
+			f"approval_url={(approval.get('urls') or {}).get('approval', 'ready')}"
 		)
 		return True
 	except IsmApiError as exc:

@@ -8,10 +8,10 @@ from typing import Any, Optional, Union
 from pydantic import BaseModel, Field
 
 try:
-	from ism_agent_os.client import IsmAgentClient
+	from ism_agent_os.client import IsmAgentClient, IsmApiError
 	from ism_agent_os.config import IsmConfig
 except ImportError:
-	from tools.client import IsmAgentClient
+	from tools.client import IsmAgentClient, IsmApiError
 	from tools.config import IsmConfig
 
 
@@ -21,14 +21,30 @@ class Tools:
 	class Valves(BaseModel):
 		FRAPPE_URL: str = Field(default="http://localhost:8000", description="Base URL of your Frappe site")
 		FRAPPE_API_KEY: str = Field(default="", description="Frappe Service Advisor API Key")
-		FRAPPE_API_SECRET: str = Field(default="", description="Frappe Service Advisor API Secret")
+		FRAPPE_API_SECRET: str = Field(default="", repr=False, description="Frappe Service Advisor API Secret")
 		FRAPPE_SITE: str = Field(default="", description="Optional Frappe multi-tenant site header")
 		ISM_COMPANY: str = Field(default="", description="Optional default Company name")
 
 	def __init__(self) -> None:
 		self.valves = self.Valves()
+		self._cached_cfg: Optional[tuple[str, str, str, str, str]] = None
+		self._cached_client: Optional[IsmAgentClient] = None
+
+	def _valves_key(self) -> tuple[str, str, str, str, str]:
+		return (
+			self.valves.FRAPPE_URL,
+			self.valves.FRAPPE_API_KEY,
+			self.valves.FRAPPE_API_SECRET,
+			self.valves.FRAPPE_SITE,
+			self.valves.ISM_COMPANY,
+		)
 
 	def _client(self) -> IsmAgentClient:
+		key = self._valves_key()
+		if self._cached_client is not None and self._cached_cfg == key:
+			return self._cached_client
+		if self._cached_client is not None:
+			self._cached_client.close()
 		cfg = IsmConfig(
 			url=self.valves.FRAPPE_URL,
 			api_key=self.valves.FRAPPE_API_KEY,
@@ -36,7 +52,45 @@ class Tools:
 			site=self.valves.FRAPPE_SITE,
 			company=self.valves.ISM_COMPANY,
 		)
-		return IsmAgentClient(cfg)
+		self._cached_client = IsmAgentClient(cfg)
+		self._cached_cfg = key
+		return self._cached_client
+
+	def close(self) -> None:
+		"""Close any cached IsmAgentClient connection pool."""
+		if self._cached_client is not None:
+			self._cached_client.close()
+			self._cached_client = None
+			self._cached_cfg = None
+
+	def __enter__(self) -> Tools:
+		return self
+
+	def __exit__(self, *_: Any) -> None:
+		self.close()
+
+	def _invoke(
+		self,
+		_method_name: str,
+		/,
+		*,
+		json_fields: tuple[str, ...] = (),
+		empty_list_fields: tuple[str, ...] = (),
+		csv_or_json_fields: tuple[str, ...] = (),
+		**kwargs: Any,
+	) -> str:
+		try:
+			call_kwargs = dict(kwargs)
+			for field_name in json_fields:
+				call_kwargs[field_name] = _parse_json_param(call_kwargs.get(field_name))
+			for field_name in empty_list_fields:
+				call_kwargs[field_name] = _parse_json_param(call_kwargs.get(field_name)) or []
+			for field_name in csv_or_json_fields:
+				call_kwargs[field_name] = _parse_list_or_csv_param(call_kwargs.get(field_name))
+			res = getattr(self._client(), _method_name)(**call_kwargs)
+			return _format(res)
+		except (IsmApiError, json.JSONDecodeError, ValueError, TypeError) as exc:
+			return _format({"success": False, "error": str(exc)})
 
 	def ism_create_quote(
 		self,
@@ -55,13 +109,15 @@ class Tools:
 		concern: str = "",
 	) -> str:
 		"""Create a Draft Estimate Repair Order with server-computed totals and 13% HST."""
-		res = self._client().create_quote(
+		return self._invoke(
+			"create_quote",
+			json_fields=("services", "parts"),
 			customer_name=customer_name or None,
 			customer=customer or None,
 			vehicle_identifier=vehicle_identifier or None,
 			vehicle=vehicle or None,
-			services=_parse_json_param(services),
-			parts=_parse_json_param(parts),
+			services=services,
+			parts=parts,
 			notes=notes or None,
 			concern=concern or None,
 			customer_phone=customer_phone or None,
@@ -70,7 +126,6 @@ class Tools:
 			odometer_in=odometer_in,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_amend_quote(
 		self,
@@ -81,14 +136,15 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Add or remove service operations on an unapproved Draft Estimate Repair Order."""
-		res = self._client().amend_quote(
+		return self._invoke(
+			"amend_quote",
+			json_fields=("add_services", "remove_service_indices"),
 			repair_order=repair_order,
-			add_services=_parse_json_param(add_services),
-			remove_service_indices=_parse_json_param(remove_service_indices),
+			add_services=add_services,
+			remove_service_indices=remove_service_indices,
 			notes=notes or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_send_quote_for_approval(
 		self,
@@ -99,14 +155,14 @@ class Tools:
 		recipient: str = "",
 	) -> str:
 		"""Generate a 48-hour customer approval link and dispatch it via SMS, email, or link."""
-		res = self._client().send_quote_for_approval(
+		return self._invoke(
+			"send_quote_for_approval",
 			repair_order=repair_order,
 			communication_medium=communication_medium,
 			phone_number=phone_number or None,
 			recipient=recipient or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_find_available_slots(
 		self,
@@ -121,22 +177,27 @@ class Tools:
 		min_start_time: str = "",
 		include_summary: bool = False,
 		target_date: str = "",
+		service_bay: str = "",
+		technician: str = "",
 	) -> str:
 		"""Find conflict-free bay and technician appointment slots (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
-		res = self._client().find_available_slots(
+		return self._invoke(
+			"find_available_slots",
+			csv_or_json_fields=("equipment_tags",),
 			repair_order=repair_order or None,
 			duration_minutes=duration_minutes,
 			start_date=start_date or None,
 			target_date=target_date or None,
 			days_ahead=days_ahead,
-			equipment_tags=_parse_json_param(equipment_tags),
+			equipment_tags=equipment_tags,
+			service_bay=service_bay or None,
+			technician=technician or None,
 			include_resources=include_resources,
 			max_slots=max_slots,
 			include_past=include_past,
 			min_start_time=min_start_time or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_reschedule_appointment(
 		self,
@@ -150,7 +211,8 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Move an existing Schedule Entry to a new date, time, bay, or technician (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
-		res = self._client().reschedule_appointment(
+		return self._invoke(
+			"reschedule_appointment",
 			schedule_entry=schedule_entry,
 			scheduled_date=scheduled_date or None,
 			start_time=start_time or None,
@@ -160,7 +222,6 @@ class Tools:
 			notes=notes or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_update_appointment_status(
 		self,
@@ -170,13 +231,13 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Transition a Schedule Entry status (Confirmed, In Progress, Completed, No Show, Cancelled)."""
-		res = self._client().update_appointment_status(
+		return self._invoke(
+			"update_appointment_status",
 			schedule_entry=schedule_entry,
 			status=status,
 			notes=notes or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_create_ro_from_appointment(
 		self,
@@ -185,12 +246,12 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Create a Checked In Repair Order from a pre-intake Schedule Entry."""
-		res = self._client().create_ro_from_appointment(
+		return self._invoke(
+			"create_ro_from_appointment",
 			schedule_entry=schedule_entry,
 			odometer_in=odometer_in,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_estimate_duration(
 		self,
@@ -202,15 +263,16 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Estimate probabilistic duration for a Repair Order or operations list."""
-		res = self._client().estimate_duration(
+		return self._invoke(
+			"estimate_duration",
+			json_fields=("operations",),
 			repair_order=repair_order or None,
-			operations=_parse_json_param(operations),
+			operations=operations,
 			percentile=percentile,
 			sigma=sigma,
 			buffer_minutes=buffer_minutes,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_book_appointment(
 		self,
@@ -227,7 +289,8 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Book a linked or provisional bay + technician Schedule Entry and update the ambient calendar (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
-		res = self._client().book_appointment(
+		return self._invoke(
+			"book_appointment",
 			repair_order=repair_order or None,
 			scheduled_date=scheduled_date,
 			start_time=start_time,
@@ -240,7 +303,6 @@ class Tools:
 			provisional_vehicle_info=provisional_vehicle_info or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_get_shop_floor_status(
 		self,
@@ -248,11 +310,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Return active service bays, on-duty technicians, appointments, and active Repair Orders (optional date: ISO YYYY-MM-DD)."""
-		res = self._client().get_shop_floor_status(
+		return self._invoke(
+			"get_shop_floor_status",
 			date=date or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_update_job_status(
 		self,
@@ -263,14 +325,14 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Execute a floor status transition (start, hold, or complete) with authorization checks."""
-		res = self._client().update_job_status(
+		return self._invoke(
+			"update_job_status",
 			repair_order=repair_order,
 			action=action,
 			odometer_out=odometer_out,
 			notes=notes or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_import_supplier_catalog(
 		self,
@@ -283,8 +345,10 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Bulk ingest structured part items or delimited supplier text into the Frappe Item catalog."""
-		res = self._client().import_supplier_catalog(
-			items=_parse_json_param(items),
+		return self._invoke(
+			"import_supplier_catalog",
+			json_fields=("items",),
+			items=items,
 			raw_text=raw_text or None,
 			supplier=supplier or None,
 			default_source=default_source,
@@ -292,7 +356,6 @@ class Tools:
 			service_package=service_package or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_get_component_alternates(
 		self,
@@ -304,7 +367,8 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Find compatible OEM, aftermarket, or used alternate parts with stock info."""
-		res = self._client().get_component_alternates(
+		return self._invoke(
+			"get_component_alternates",
 			service_package=service_package or None,
 			component_slot=component_slot or None,
 			slot_number=slot_number,
@@ -312,7 +376,6 @@ class Tools:
 			item_code=item_code or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_import_tesla_procedure(
 		self,
@@ -332,15 +395,17 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Save a Tesla procedure as a Service Package or import it onto a Repair Order."""
-		res = self._client().import_tesla_procedure(
+		return self._invoke(
+			"import_tesla_procedure",
+			json_fields=("parts", "data"),
 			procedure_title=procedure_title or None,
 			correction_code=correction_code or None,
 			labor_hours=labor_hours,
 			model=model,
-			parts=_parse_json_param(parts),
+			parts=parts,
 			repair_order=repair_order or None,
 			url=url or None,
-			data=_parse_json_param(data),
+			data=data,
 			on_conflict=on_conflict,
 			force=force,
 			side=side or None,
@@ -348,7 +413,6 @@ class Tools:
 			advisor_notes=advisor_notes or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_check_parts_stock(
 		self,
@@ -359,13 +423,14 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Check live stock availability, committed quantities, and deficits for a Repair Order or items."""
-		res = self._client().check_parts_stock(
+		return self._invoke(
+			"check_parts_stock",
+			json_fields=("items",),
 			repair_order=(repair_order or ro_name) or None,
-			items=_parse_json_param(items),
+			items=items,
 			company=company or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_submit_procurement_orders(
 		self,
@@ -380,10 +445,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Create and submit (by default) Purchase Orders or RFQs, optionally linked to an RO or paid upfront."""
-		parsed_parts = _parse_json_param(parts_data) or []
-		res = self._client().submit_procurement_orders(
+		return self._invoke(
+			"submit_procurement_orders",
+			empty_list_fields=("parts_data",),
 			repair_order=repair_order or None,
-			parts_data=parsed_parts,
+			parts_data=parts_data,
 			submit=submit,
 			company=company or None,
 			payment_method=payment_method or None,
@@ -392,7 +458,6 @@ class Tools:
 			reference_date=reference_date or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_fetch_tesla_manual(
 		self,
@@ -402,13 +467,13 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Fetch and parse a service.tesla.com procedure URL with optional compatibility check."""
-		res = self._client().fetch_tesla_procedure(
+		return self._invoke(
+			"fetch_tesla_procedure",
 			url=url,
 			repair_order=repair_order or None,
 			vehicle=vehicle or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_decode_vehicle_vin(
 		self,
@@ -416,8 +481,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Decode a 17-character Tesla VIN and resolve recommended manual URL."""
-		res = self._client().decode_vehicle_vin(vin=vin, include_summary=include_summary)
-		return _format(res)
+		return self._invoke(
+			"decode_vehicle_vin",
+			vin=vin,
+			include_summary=include_summary,
+		)
 
 	def ism_search_vehicles(
 		self,
@@ -428,14 +496,14 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Search Repair Vehicles by VIN, license plate, customer, or model."""
-		res = self._client().search_vehicles(
+		return self._invoke(
+			"search_vehicles",
 			query=query or None,
 			customer=customer or None,
 			model=model or None,
 			limit=limit,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_get_vehicle_intelligence(
 		self,
@@ -444,12 +512,12 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Retrieve VIN decode, owners, service history, and deferred work for a vehicle."""
-		res = self._client().get_vehicle_intelligence(
+		return self._invoke(
+			"get_vehicle_intelligence",
 			vehicle=vehicle,
 			history_limit=history_limit,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_link_vehicle_customer(
 		self,
@@ -460,14 +528,14 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Link a Customer as primary owner or additional contact on a Repair Vehicle."""
-		res = self._client().link_vehicle_customer(
+		return self._invoke(
+			"link_vehicle_customer",
 			vehicle=vehicle,
 			customer=customer,
 			is_primary=is_primary,
 			relationship=relationship or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_list_inspection_templates(
 		self,
@@ -475,11 +543,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""List available check-in Inspection Templates."""
-		res = self._client().list_inspection_templates(
+		return self._invoke(
+			"list_inspection_templates",
 			include_inactive=include_inactive,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_get_inspection_template(
 		self,
@@ -487,11 +555,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Retrieve a check-in Inspection Template and its checklist items."""
-		res = self._client().get_inspection_template(
+		return self._invoke(
+			"get_inspection_template",
 			template_name=template_name or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_apply_inspection_template(
 		self,
@@ -501,13 +569,13 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Populate check-in inspection items on a Repair Order from a template."""
-		res = self._client().apply_inspection_template(
+		return self._invoke(
+			"apply_inspection_template",
 			repair_order=repair_order,
 			template_name=template_name or None,
 			replace_existing=replace_existing,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_get_check_in_inspection(
 		self,
@@ -515,11 +583,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Retrieve check-in inspection items and summary counts for a Repair Order."""
-		res = self._client().get_check_in_inspection(
+		return self._invoke(
+			"get_check_in_inspection",
 			repair_order=repair_order,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_record_check_in_inspection(
 		self,
@@ -533,9 +601,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Record check-in walkaround results, odometer reading, and customer concern."""
-		res = self._client().record_check_in_inspection(
+		return self._invoke(
+			"record_check_in_inspection",
+			json_fields=("items",),
 			repair_order=repair_order,
-			items=_parse_json_param(items),
+			items=items,
 			odometer_in=odometer_in,
 			odometer=odometer,
 			customer_concern=customer_concern or None,
@@ -543,7 +613,6 @@ class Tools:
 			auto_apply_template=auto_apply_template,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_get_tech_overview(
 		self,
@@ -551,11 +620,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Retrieve daily technician utilization, scheduled hours, and unassigned entries (optional date: ISO YYYY-MM-DD)."""
-		res = self._client().get_daily_tech_overview(
+		return self._invoke(
+			"get_daily_tech_overview",
 			date=date or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_get_unscheduled_services(
 		self,
@@ -563,11 +632,11 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Return approved services on a Repair Order not yet allocated to a Schedule Entry."""
-		res = self._client().get_unscheduled_services(
+		return self._invoke(
+			"get_unscheduled_services",
 			repair_order=repair_order,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_receive_purchase_order(
 		self,
@@ -577,13 +646,13 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Submit PO (if still Draft) and post Purchase Receipt for a Purchase Order or Purchase Invoice."""
-		res = self._client().receive_purchase_order(
+		return self._invoke(
+			"receive_purchase_order",
 			purchase_order=purchase_order or None,
 			submit_po=submit_po,
 			purchase_invoice=purchase_invoice or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_create_purchase_payment(
 		self,
@@ -596,7 +665,8 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Submit a supplier Payment Entry against a Purchase Order or Purchase Invoice."""
-		res = self._client().create_purchase_payment(
+		return self._invoke(
+			"create_purchase_payment",
 			payment_method=payment_method,
 			purchase_order=purchase_order or None,
 			purchase_invoice=purchase_invoice or None,
@@ -605,7 +675,6 @@ class Tools:
 			reference_date=reference_date or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_create_purchase_invoice(
 		self,
@@ -620,11 +689,12 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Submit a Purchase Invoice (PO-linked or standalone) with optional stock update and advance attachment."""
-		parsed_parts = _parse_json_param(parts_data) if parts_data is not None else None
-		res = self._client().create_purchase_invoice(
+		return self._invoke(
+			"create_purchase_invoice",
+			json_fields=("parts_data",),
 			purchase_order=purchase_order or None,
 			supplier=supplier or None,
-			parts_data=parsed_parts,
+			parts_data=parts_data,
 			update_stock=update_stock,
 			company=company or None,
 			bill_no=bill_no or None,
@@ -632,7 +702,6 @@ class Tools:
 			attach_advances=attach_advances,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_checkout_repair_order(
 		self,
@@ -644,7 +713,8 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Invoice, collect payment, complete schedule entries, and release a Repair Order."""
-		res = self._client().checkout_repair_order(
+		return self._invoke(
+			"checkout_repair_order",
 			repair_order=repair_order,
 			payment_method=payment_method,
 			paid_amount=paid_amount,
@@ -652,7 +722,6 @@ class Tools:
 			confirm=confirm,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_toggle_service_completion(
 		self,
@@ -663,19 +732,15 @@ class Tools:
 		service_row_ids: Optional[Union[list[str], str]] = None,
 	) -> str:
 		"""Toggle completion status on one or more approved service rows."""
-		parsed_ids = (
-			_parse_json_param(service_row_ids)
-			if isinstance(service_row_ids, str) and service_row_ids.lstrip().startswith("[")
-			else service_row_ids
-		)
-		res = self._client().toggle_service_completion(
+		return self._invoke(
+			"toggle_service_completion",
+			csv_or_json_fields=("service_row_ids",),
 			repair_order=repair_order,
 			service_row_id=service_row_id or None,
-			service_row_ids=parsed_ids,
+			service_row_ids=service_row_ids,
 			is_completed=is_completed,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_add_supplement(
 		self,
@@ -689,17 +754,18 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Add a mid-job supplemental operation in Estimating state for customer approval."""
-		res = self._client().add_supplement(
+		return self._invoke(
+			"add_supplement",
+			json_fields=("parts",),
 			repair_order=repair_order,
 			service_title=service_title,
 			category=category,
 			labor_hours=labor_hours,
 			labor_rate=labor_rate,
-			parts=_parse_json_param(parts),
+			parts=parts,
 			notes=notes or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_duplicate_service_for_opposite_side(
 		self,
@@ -708,12 +774,12 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Duplicate a symmetrical LH or RH service row for the opposite side."""
-		res = self._client().duplicate_service_for_opposite_side(
+		return self._invoke(
+			"duplicate_service_for_opposite_side",
 			repair_order=repair_order,
 			service_row_id=service_row_id,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_get_deferred_services(
 		self,
@@ -722,12 +788,12 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Check open previously declined/deferred services for a vehicle or Repair Order."""
-		res = self._client().get_deferred_services(
+		return self._invoke(
+			"get_deferred_services",
 			repair_order=repair_order or None,
 			vehicle=vehicle or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_add_deferred_services(
 		self,
@@ -736,12 +802,13 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Add previously declined/deferred services onto a Repair Order."""
-		res = self._client().add_deferred_services(
+		return self._invoke(
+			"add_deferred_services",
+			empty_list_fields=("deferred_items",),
 			repair_order=repair_order,
-			deferred_items=_parse_json_param(deferred_items) or [],
+			deferred_items=deferred_items,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_list_shop_action_items(
 		self,
@@ -753,7 +820,8 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""List Shop Action Items matching optional filters."""
-		res = self._client().list_shop_action_items(
+		return self._invoke(
+			"list_shop_action_items",
 			status=status,
 			reference_doctype=reference_doctype or None,
 			reference_name=reference_name or None,
@@ -761,7 +829,6 @@ class Tools:
 			limit=limit,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_create_shop_action_item(
 		self,
@@ -775,7 +842,8 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Create a Shop Action Item escalation."""
-		res = self._client().create_shop_action_item(
+		return self._invoke(
+			"create_shop_action_item",
 			title=title,
 			category=category,
 			priority=priority,
@@ -785,7 +853,6 @@ class Tools:
 			details=details or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 	def ism_resolve_shop_action_item(
 		self,
@@ -794,12 +861,12 @@ class Tools:
 		include_summary: bool = False,
 	) -> str:
 		"""Resolve an open Shop Action Item with notes."""
-		res = self._client().resolve_shop_action_item(
+		return self._invoke(
+			"resolve_shop_action_item",
 			action_item=action_item,
 			resolution_notes=resolution_notes or None,
 			include_summary=include_summary,
 		)
-		return _format(res)
 
 
 def _parse_json_param(value: Any) -> Any:
@@ -811,6 +878,26 @@ def _parse_json_param(value: Any) -> Any:
 			return None
 		return json.loads(stripped)
 	return value
+
+
+def _parse_list_or_csv_param(value: Any) -> Optional[list[str]]:
+	if value is None:
+		return None
+	if isinstance(value, (list, tuple)):
+		return [str(v).strip() for v in value if str(v).strip()]
+	if isinstance(value, str):
+		stripped = value.strip()
+		if not stripped:
+			return None
+		if stripped[0] in "[{\"":
+			parsed = json.loads(stripped)
+			if isinstance(parsed, str):
+				return [p.strip() for p in parsed.split(",") if p.strip()]
+			if not isinstance(parsed, list):
+				raise ValueError("Expected a JSON array or comma-separated string.")
+			return [str(v).strip() for v in parsed if str(v).strip()]
+		return [p.strip() for p in stripped.split(",") if p.strip()]
+	raise ValueError("Expected a list or comma-separated string.")
 
 
 def _format(res: Any) -> str:

@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
+import argparse
 import ast
 import http.client
+import importlib
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
+import types
 import unittest
 import urllib.error
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from scripts.demo_shop_flow import run_demo
 from scripts.verify_connection import verify
-from tools import cli
+from tools import cli, transport as transport_mod
 from tools.client import IsmAgentClient, IsmApiError
 from tools.config import IsmConfig
+from tools.diagnostics import run_diagnostics
 
 
 class _FakeHttpResponse:
@@ -547,11 +554,17 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 		defined = {n.name for n in tools_cls.body if isinstance(n, ast.FunctionDef)}
 		for name in expected_methods:
 			self.assertIn(name, defined, f"openwebui_tools.Tools missing {name}")
+		slots_fn = next(
+			n for n in tools_cls.body if isinstance(n, ast.FunctionDef) and n.name == "ism_find_available_slots"
+		)
+		slots_arg_names = {a.arg for a in slots_fn.args.args}
+		self.assertIn("service_bay", slots_arg_names)
+		self.assertIn("technician", slots_arg_names)
 
 		try:
 			import openwebui_tools
-		except ImportError:
-			return
+		except ImportError as exc:
+			self.skipTest(f"pydantic not installed: {exc}")
 
 		ow_tools = openwebui_tools.Tools()
 		for name in expected_methods:
@@ -1102,6 +1115,268 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 		standalone_dry = json.loads(out.getvalue())
 		self.assertTrue(standalone_dry["ready"])
 		self.assertEqual(standalone_dry["missing_required"], [])
+
+	def test_openwebui_tools_runtime_with_pydantic_stub(self) -> None:
+		class _FieldSpec:
+			def __init__(self, default="", repr=True, description="") -> None:
+				self.default = default
+				self.repr = repr
+				self.description = description
+
+		class _FakeBaseModel:
+			def __init__(self, **kwargs) -> None:
+				specs = {}
+				for attr_name, attr_val in type(self).__dict__.items():
+					if isinstance(attr_val, _FieldSpec):
+						specs[attr_name] = attr_val
+						setattr(self, attr_name, kwargs.get(attr_name, attr_val.default))
+				self._field_specs = specs
+
+			def __repr__(self) -> str:
+				parts = [
+					f"{k}={getattr(self, k)!r}"
+					for k, spec in self._field_specs.items()
+					if spec.repr
+				]
+				return f"{type(self).__name__}({', '.join(parts)})"
+
+		fake_pydantic = types.ModuleType("pydantic")
+		fake_pydantic.BaseModel = _FakeBaseModel
+		fake_pydantic.Field = lambda default="", repr=True, description="", **_: _FieldSpec(
+			default=default, repr=repr, description=description
+		)
+
+		with patch.dict(sys.modules, {"pydantic": fake_pydantic}):
+			sys.modules.pop("openwebui_tools", None)
+			try:
+				ow_mod = importlib.import_module("openwebui_tools")
+				with ow_mod.Tools() as ow:
+					ow.valves.FRAPPE_API_SECRET = "super-secret-val"
+					self.assertNotIn("super-secret-val", repr(ow.valves))
+
+					c1 = ow._client()
+					c2 = ow._client()
+					self.assertIs(c1, c2)
+					with patch.object(c1, "close", wraps=c1.close) as mock_close:
+						ow.valves.FRAPPE_URL = "http://other.local:8000"
+						c3 = ow._client()
+					mock_close.assert_called_once()
+					self.assertIsNot(c3, c1)
+
+					fake_resp = _FakeHttpResponse({"message": {"success": True, "slots": []}})
+					with patch("urllib.request.urlopen", return_value=fake_resp) as mock_open:
+						raw = ow.ism_find_available_slots(
+							equipment_tags="Two-Post Lift, Alignment Rack",
+							service_bay="Bay 2",
+							technician="EMP-001",
+						)
+					self.assertTrue(json.loads(raw)["success"])
+					sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+					self.assertEqual(sent["equipment_tags"], ["Two-Post Lift", "Alignment Rack"])
+					self.assertEqual(sent["service_bay"], "Bay 2")
+					self.assertEqual(sent["technician"], "EMP-001")
+
+					bad_json_out = json.loads(ow.ism_create_quote(customer_name="Jane", services="{bad"))
+					self.assertFalse(bad_json_out["success"])
+					self.assertIn("error", bad_json_out)
+
+					http_err = urllib.error.HTTPError(
+						"http://other.local:8000/api/method/x",
+						500,
+						"Error",
+						{},
+						io.BytesIO(b'{"message":"boom"}'),
+					)
+					with patch("urllib.request.urlopen", side_effect=http_err):
+						api_err_out = json.loads(ow.ism_get_shop_floor_status())
+					self.assertFalse(api_err_out["success"])
+					self.assertIn("boom", api_err_out["error"])
+			finally:
+				sys.modules.pop("openwebui_tools", None)
+
+	def test_config_validation_and_transport_security_guards(self) -> None:
+		bad_cfg = IsmConfig(url="ftp://user:pw@evil.local\n", api_key="k\r1", api_secret="s1", site="bad\nsite")
+		errs = bad_cfg.validate()
+		self.assertTrue(any("newline" in e for e in errs))
+
+		bad_scheme = IsmConfig(url="file:///etc/passwd", api_key="k", api_secret="s")
+		self.assertTrue(any("http://" in e for e in bad_scheme.validate()))
+
+		bad_userinfo = IsmConfig(url="https://user:secret@shop.local", api_key="k", api_secret="s")
+		self.assertTrue(any("userinfo" in e for e in bad_userinfo.validate()))
+
+		client = IsmAgentClient(IsmConfig(url="http://localhost:8000", api_key="k", api_secret="s", company="ISM Corp"))
+		with self.assertRaises(IsmApiError) as unpatched_ctx:
+			client._tx.request_json("file:///etc/hosts", "GET")
+		self.assertEqual(unpatched_ctx.exception.status_code, 400)
+		with patch("urllib.request.urlopen") as mock_open:
+			for bad_url in ("file:///etc/hosts", "ftp://example.com/a", "http://user:pw@localhost:8000/api"):
+				with self.assertRaises(IsmApiError) as ctx:
+					client._tx.request_json(bad_url, "GET")
+				self.assertEqual(ctx.exception.status_code, 400)
+			mock_open.assert_not_called()
+
+		for bad_method in ("frappe.ping/../../etc", "bad method", "a..b"):
+			with self.assertRaises(IsmApiError) as ctx:
+				client.call_method(bad_method)
+			self.assertEqual(ctx.exception.status_code, 400)
+
+		with patch(
+			"urllib.request.urlopen",
+			side_effect=urllib.error.URLError("timed out"),
+		):
+			with self.assertRaises(IsmApiError) as ctx:
+				client._tx.request_json("http://localhost:8000/api/method/x?token=secret123", "GET")
+		self.assertNotIn("secret123", str(ctx.exception))
+
+		bad_json_resp = _FakeHttpResponse({})
+		bad_json_resp._raw = b"<html>\xffbad-json"
+		with patch("urllib.request.urlopen", return_value=bad_json_resp):
+			with self.assertRaises(IsmApiError) as ctx:
+				client._tx.request_json("http://localhost:8000/api/method/x", "GET")
+		self.assertIn("Invalid JSON response", str(ctx.exception))
+
+		list_err_msg = transport_mod._format_http_error(
+			400,
+			json.dumps({"_server_messages": [json.dumps({"message": "List message 1"})]}),
+		)
+		self.assertEqual(list_err_msg, "HTTP 400: List message 1")
+		str_err_msg = transport_mod._format_http_error(
+			400,
+			json.dumps({"_server_messages": json.dumps([json.dumps({"message": "Str message 1"})])}),
+		)
+		self.assertEqual(str_err_msg, "HTTP 400: Str message 1")
+
+		with client:
+			with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True}})) as mock_open:
+				client.submit_procurement_orders(parts_data=[])
+				po_sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+				self.assertEqual(po_sent["company"], "ISM Corp")
+
+				client.create_purchase_invoice(purchase_order="PO-1")
+				pi_sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+				self.assertEqual(pi_sent["company"], "ISM Corp")
+
+			for bad_tesla in ("https://service.tesla.com@evil.com/x.html", "http://service.tesla.com/x.html"):
+				with self.assertRaises(ValueError):
+					client.fetch_tesla_procedure(bad_tesla)
+				with self.assertRaises(ValueError):
+					client.fetch_tesla_manual(bad_tesla)
+
+	def test_diagnostics_secret_redaction_and_null_data_resilience(self) -> None:
+		cfg = IsmConfig(url="http://localhost:8000", api_key="SUPERKEY99", api_secret="TOPSECRET77")
+		responses = [
+			{"message": "advisor@example.com"},
+			{"message": {"success": True, "data": None}},
+			{"message": {"success": True, "data": None}},
+			{"message": {"success": True, "data": None, "repair_order": "RO-NULL-1"}},
+			{"message": {"success": True, "data": None}},
+			{"message": {"success": True, "urls": None}},
+		]
+		with patch("urllib.request.urlopen", side_effect=[_FakeHttpResponse(r) for r in responses]), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			ok = run_diagnostics(cfg, full_e2e=True)
+		self.assertTrue(ok)
+		stdout_text = out.getvalue()
+		self.assertNotIn("SUPERKEY", stdout_text)
+		self.assertNotIn("TOPSECRET", stdout_text)
+		self.assertNotIn("TOPS...", stdout_text)
+		self.assertIn("key=***, secret=***", stdout_text)
+
+		mock_demo_client = MagicMock()
+		mock_demo_client.get_shop_floor_status.return_value = {"summary_card": "Floor OK"}
+		mock_demo_client.create_quote.return_value = {"data": None, "repair_order": "RO-DEMO-1"}
+		mock_demo_client.find_available_slots.return_value = {"summary_card": "Slots OK"}
+		with patch("sys.stdout", new_callable=io.StringIO):
+			run_demo(mock_demo_client, live=True)
+		mock_demo_client.find_available_slots.assert_called_once_with(
+			repair_order="RO-DEMO-1", days_ahead=3, include_summary=True
+		)
+
+	def test_cli_batch_success_false_container_validation_and_edge_cases(self) -> None:
+		# Batch treats success=False response as failure, stops on --stop-on-error, exits 1
+		responses = [
+			_FakeHttpResponse({"message": {"success": False, "error": "Slot conflict"}}),
+			_FakeHttpResponse({"message": {"success": True}}),
+		]
+		with patch("urllib.request.urlopen", side_effect=responses) as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main([
+				"--json",
+				"batch",
+				"--stop-on-error",
+				"--cmd",
+				"book --date 2026-11-15 --time 09:00 --repair-order RO-1",
+				"--cmd",
+				"status",
+			])
+		self.assertEqual(code, 1)
+		self.assertEqual(mock_open.call_count, 1)
+		batch_out = json.loads(out.getvalue())
+		self.assertFalse(batch_out["success"])
+		self.assertFalse(batch_out["results"][0]["ok"])
+		self.assertEqual(batch_out["results"][0]["error"], "Slot conflict")
+
+		# Container type validation rejects dict/list mismatches before HTTP calls
+		bad_containers = [
+			["quote", "--customer", "Rob", "--vehicle", "VIN1", "--odometer-in", "100", "--services-json", '{"bad":1}'],
+			["check-stock", "--items-json", '{"bad":1}'],
+			["create-doc", "--doctype", "ToDo", "--data-json", '["bad"]'],
+			["call-method", "--method", "frappe.ping", "--args-json", '["bad"]'],
+		]
+		for argv_case in bad_containers:
+			with patch("urllib.request.urlopen") as mock_open, \
+				patch("sys.stderr", new_callable=io.StringIO) as err:
+				code = cli.main(argv_case)
+			self.assertEqual(code, 1, argv_case)
+			mock_open.assert_not_called()
+			self.assertIn("Expected JSON", err.getvalue())
+
+		# Missing import-tesla targets and whitespace-only values fail validation cleanly
+		self.assertTrue(
+			any("--url/--data-json/--title" in e for e in cli.validate_write_command_args(argparse.Namespace(command="import-tesla")))
+		)
+		self.assertTrue(
+			any("--customer" in e for e in cli.validate_write_command_args(
+				argparse.Namespace(command="quote", customer="   ", vehicle="V1", odometer_in=10, service=["   "])
+			))
+		)
+		ns_bad_int = argparse.Namespace(command="create-ro-from-entry", schedule_entry="SE-1", odometer_in="not-int")
+		errs = cli.validate_write_command_args(ns_bad_int)
+		self.assertTrue(any("non-negative integer" in e for e in errs))
+
+		# list-docs merges dict --filters-json with --filter and splits on earliest operator
+		merged_filters = cli._parse_filters_opt('{"status": "Open"}', ["note=a!=b"])
+		self.assertEqual(merged_filters, [["status", "=", "Open"], ["note", "=", "a!=b"]])
+
+		# ingest-parts handles UTF-8 BOM and rejects empty item files cleanly
+		with tempfile.TemporaryDirectory() as tmp:
+			bom_csv = Path(tmp) / "bom.csv"
+			bom_csv.write_bytes(b"\xef\xbb\xbfPart#,Description,Rate\nP1,Sensor,$10.00\n")
+			with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True}})), \
+				patch("sys.stdout", new_callable=io.StringIO):
+				self.assertEqual(cli.main(["--json", "ingest-parts", str(bom_csv)]), 0)
+
+			empty_json = Path(tmp) / "empty.json"
+			empty_json.write_text("[]", encoding="utf-8")
+			with patch("urllib.request.urlopen") as mock_open, \
+				patch("sys.stderr", new_callable=io.StringIO) as err:
+				code = cli.main(["--json", "ingest-parts", str(empty_json)])
+			self.assertEqual(code, 1)
+			mock_open.assert_not_called()
+			self.assertIn("No valid parts", err.getvalue())
+
+		# Direct script invocation works cleanly
+		repo_dir = Path(__file__).resolve().parent.parent
+		proc = subprocess.run(
+			[sys.executable, str(repo_dir / "tools" / "cli.py"), "--json", "--dry-run", "status"],
+			cwd=str(repo_dir),
+			capture_output=True,
+			text=True,
+			check=False,
+		)
+		self.assertEqual(proc.returncode, 0, proc.stderr)
+		self.assertTrue(json.loads(proc.stdout)["dry_run"])
 
 
 if __name__ == "__main__":

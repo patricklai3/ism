@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import threading
 import urllib.error
 import urllib.parse
@@ -14,6 +15,7 @@ from .config import IsmConfig
 
 _DEFAULT_URLOPEN = urllib.request.urlopen
 _MAX_POOL_PER_HOST = 8
+_METHOD_NAME_RE = re.compile(r"^[A-Za-z0-9_.]+$")
 
 
 class IsmApiError(Exception):
@@ -85,6 +87,8 @@ class FrappeTransport:
 
 	def call_rest_method(self, method: str, args: dict[str, Any]) -> Any:
 		"""Invoke a whitelisted Frappe method over POST /api/method/{method}."""
+		if not isinstance(method, str) or not _METHOD_NAME_RE.fullmatch(method) or ".." in method:
+			raise IsmApiError(f"Invalid REST method path: {method!r}", status_code=400)
 		res = self.request_json(f"{self.config.base_url}/api/method/{method}", "POST", args)
 		if isinstance(res, dict) and "message" in res:
 			return res["message"]
@@ -131,6 +135,21 @@ class FrappeTransport:
 
 	def request_json(self, url: str, http_method: str, body: Optional[dict[str, Any]] = None) -> dict[str, Any]:
 		"""Send an authenticated JSON request with keep-alive retry on stale connections."""
+		safe_url = _sanitize_url_for_log(url)
+		try:
+			parsed = urllib.parse.urlsplit(url)
+		except ValueError as exc:
+			raise IsmApiError(f"Unsupported or invalid request URL: {safe_url}", status_code=400) from exc
+		scheme = parsed.scheme.lower()
+		if (
+			scheme not in ("http", "https")
+			or not parsed.hostname
+			or parsed.username is not None
+			or parsed.password is not None
+			or "@" in parsed.netloc
+		):
+			raise IsmApiError(f"Unsupported or invalid request URL: {safe_url}", status_code=400)
+
 		headers = {
 			"Accept": "application/json",
 			"Content-Type": "application/json",
@@ -142,26 +161,24 @@ class FrappeTransport:
 			headers["X-Frappe-Site-Name"] = self.config.site
 
 		data = json.dumps(body).encode("utf-8") if body is not None else None
-		parsed = urllib.parse.urlsplit(url)
-		scheme = parsed.scheme.lower()
-		use_pool = urllib.request.urlopen is _DEFAULT_URLOPEN and scheme in ("http", "https") and bool(parsed.hostname)
+		use_pool = urllib.request.urlopen is _DEFAULT_URLOPEN
 
 		if not use_pool:
 			req = urllib.request.Request(url, data=data, headers=headers, method=http_method)
 			for attempt in range(2):
 				try:
 					with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-						raw = resp.read().decode("utf-8")
-						return json.loads(raw) if raw else {}
+						status = getattr(resp, "status", 200) or 200
+						return _decode_json_body(resp.read(), status, safe_url)
 				except http.client.RemoteDisconnected as exc:
 					if attempt == 0:
 						continue
-					raise IsmApiError(f"Connection closed by {url}: {exc}", status_code=503) from exc
+					raise IsmApiError(f"Connection closed by {safe_url}: {exc}", status_code=503) from exc
 				except urllib.error.HTTPError as exc:
 					raw_err = exc.read().decode("utf-8", errors="replace")
 					raise IsmApiError(_format_http_error(exc.code, raw_err), status_code=exc.code, details=raw_err) from exc
 				except urllib.error.URLError as exc:
-					raise IsmApiError(f"Connection failed to {url}: {exc.reason}", status_code=503) from exc
+					raise IsmApiError(f"Connection failed to {safe_url}: {exc.reason}", status_code=503) from exc
 			return {}
 
 		host = parsed.hostname or ""
@@ -184,18 +201,17 @@ class FrappeTransport:
 					raw_err = raw_bytes.decode("utf-8", errors="replace")
 					raise IsmApiError(_format_http_error(resp.status, raw_err), status_code=resp.status, details=raw_err)
 
-				raw = raw_bytes.decode("utf-8")
-				return json.loads(raw) if raw else {}
+				return _decode_json_body(raw_bytes, resp.status, safe_url)
 			except (http.client.RemoteDisconnected, http.client.BadStatusLine, ConnectionResetError, BrokenPipeError) as exc:
 				self._release_connection(scheme, host, port, conn, reusable=False)
 				if attempt == 0:
 					continue
-				raise IsmApiError(f"Connection closed by {url}: {exc}", status_code=503) from exc
+				raise IsmApiError(f"Connection closed by {safe_url}: {exc}", status_code=503) from exc
 			except IsmApiError:
 				raise
 			except (OSError, http.client.HTTPException) as exc:
 				self._release_connection(scheme, host, port, conn, reusable=False)
-				raise IsmApiError(f"Connection failed to {url}: {exc}", status_code=503) from exc
+				raise IsmApiError(f"Connection failed to {safe_url}: {exc}", status_code=503) from exc
 		return {}
 
 
@@ -203,18 +219,68 @@ def _encode_part(value: str) -> str:
 	return urllib.parse.quote(value, safe="")
 
 
+def _sanitize_url_for_log(url: str) -> str:
+	"""Strip embedded userinfo, query parameters, and fragment from a URL for safe error messages."""
+	try:
+		parsed = urllib.parse.urlsplit(url)
+	except ValueError:
+		return "<invalid-url>"
+	if not parsed.netloc:
+		return urllib.parse.urlunsplit((parsed.scheme, "", parsed.path, "", ""))
+	host_port = parsed.netloc.rsplit("@", 1)[-1]
+	return urllib.parse.urlunsplit((parsed.scheme, host_port, parsed.path, "", ""))
+
+
+def _decode_json_body(raw_bytes: bytes, status_code: int, safe_url: str) -> dict[str, Any]:
+	"""Decode UTF-8 response bytes with replacement and parse JSON into an API error on failure."""
+	raw = raw_bytes.decode("utf-8", errors="replace")
+	if not raw:
+		return {}
+	try:
+		return json.loads(raw)
+	except json.JSONDecodeError as exc:
+		raise IsmApiError(
+			f"Invalid JSON response (HTTP {status_code}) from {safe_url}: {exc.msg}",
+			status_code=status_code,
+			details=raw,
+		) from exc
+
+
+def _extract_server_messages(server_messages: Any) -> list[str]:
+	msgs = json.loads(server_messages) if isinstance(server_messages, str) else server_messages
+	if not isinstance(msgs, list):
+		return []
+	extracted: list[str] = []
+	for item in msgs:
+		if isinstance(item, str):
+			try:
+				inner = json.loads(item)
+			except json.JSONDecodeError:
+				extracted.append(item)
+			else:
+				extracted.append(str(inner.get("message", item)) if isinstance(inner, dict) else str(inner))
+		elif isinstance(item, dict):
+			extracted.append(str(item.get("message", item)))
+		else:
+			extracted.append(str(item))
+	return extracted
+
+
 def _format_http_error(status_code: int, raw_body: str) -> str:
 	try:
 		parsed = json.loads(raw_body)
 		if isinstance(parsed, dict):
 			if parsed.get("_server_messages"):
-				msgs = json.loads(parsed["_server_messages"])
-				extracted = [json.loads(m).get("message", m) if isinstance(m, str) else str(m) for m in msgs]
-				return f"HTTP {status_code}: " + "; ".join(extracted)
+				try:
+					extracted = _extract_server_messages(parsed["_server_messages"])
+				except (json.JSONDecodeError, TypeError, ValueError):
+					extracted = []
+				if extracted:
+					return f"HTTP {status_code}: " + "; ".join(extracted)
 			if parsed.get("exception"):
 				return f"HTTP {status_code}: {parsed['exception']}"
 			if parsed.get("message"):
 				return f"HTTP {status_code}: {parsed['message']}"
-	except Exception:
+	except (json.JSONDecodeError, TypeError, ValueError):
 		pass
 	return f"HTTP {status_code}: {raw_body[:300]}"

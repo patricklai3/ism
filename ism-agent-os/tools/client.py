@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .config import IsmConfig
-from .transport import FrappeTransport, IsmApiError
+from .config import IsmConfig, validate_tesla_url
+from .transport import FrappeTransport, IsmApiError  # noqa: F401
+
+__all__ = ["IsmAgentClient", "IsmApiError"]
 
 
 class IsmAgentClient:
@@ -14,6 +16,28 @@ class IsmAgentClient:
 	def __init__(self, config: Optional[IsmConfig] = None) -> None:
 		self.config = config or IsmConfig.from_env()
 		self._tx = FrappeTransport(self.config)
+
+	def close(self) -> None:
+		"""Close any pooled HTTP connections held by the underlying transport."""
+		self._tx.close()
+
+	def __enter__(self) -> IsmAgentClient:
+		return self
+
+	def __exit__(self, *_: Any) -> None:
+		self.close()
+
+	def _call_agent(
+		self,
+		endpoint: str,
+		include_summary: bool = False,
+		**kwargs: Any,
+	) -> dict[str, Any]:
+		"""Invoke an ism.api.agent endpoint, stripping None values."""
+		args = _drop_none(kwargs)
+		if include_summary:
+			args["include_summary"] = True
+		return self.call_method(f"ism.api.agent.{endpoint}", args)
 
 	# --- Curated ISM Agent Facade Methods ---
 
@@ -34,22 +58,22 @@ class IsmAgentClient:
 		concern: Optional[str] = None,
 	) -> dict[str, Any]:
 		"""Create a Draft Estimate Repair Order with deterministic totals."""
-		args = _drop_none({
-			"customer_name": customer_name,
-			"customer": customer,
-			"vehicle_identifier": vehicle_identifier,
-			"vehicle": vehicle,
-			"company": company or self.config.company or None,
-			"services": services,
-			"parts": parts,
-			"notes": notes,
-			"concern": concern,
-			"customer_phone": customer_phone,
-			"customer_email": customer_email,
-			"odometer_in": odometer_in,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.create_quote", args)
+		return self._call_agent(
+			"create_quote",
+			include_summary=include_summary,
+			customer_name=customer_name,
+			customer=customer,
+			vehicle_identifier=vehicle_identifier,
+			vehicle=vehicle,
+			company=company or self.config.company or None,
+			services=services,
+			parts=parts,
+			notes=notes,
+			concern=concern,
+			customer_phone=customer_phone,
+			customer_email=customer_email,
+			odometer_in=odometer_in,
+		)
 
 	def amend_quote(
 		self,
@@ -60,14 +84,14 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Amend services or notes on an unapproved Repair Order."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"add_services": add_services,
-			"remove_service_indices": remove_service_indices,
-			"notes": notes,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.amend_quote", args)
+		return self._call_agent(
+			"amend_quote",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			add_services=add_services,
+			remove_service_indices=remove_service_indices,
+			notes=notes,
+		)
 
 	def find_available_slots(
 		self,
@@ -86,22 +110,22 @@ class IsmAgentClient:
 		target_date: Optional[str] = None,
 	) -> dict[str, Any]:
 		"""Query dual-resource capacity for available bay and tech slots (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"duration_minutes": duration_minutes,
-			"start_date": start_date,
-			"target_date": target_date,
-			"days_ahead": days_ahead,
-			"equipment_tags": equipment_tags,
-			"service_bay": service_bay,
-			"technician": technician,
-			"include_resources": True if include_resources else None,
-			"max_slots": max_slots,
-			"include_past": True if include_past else None,
-			"min_start_time": min_start_time,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.find_available_slots", args)
+		return self._call_agent(
+			"find_available_slots",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			duration_minutes=duration_minutes,
+			start_date=start_date,
+			target_date=target_date,
+			days_ahead=days_ahead,
+			equipment_tags=equipment_tags,
+			service_bay=service_bay,
+			technician=technician,
+			include_resources=True if include_resources else None,
+			max_slots=max_slots,
+			include_past=True if include_past else None,
+			min_start_time=min_start_time,
+		)
 
 	def intake_and_find_slots(
 		self,
@@ -131,33 +155,33 @@ class IsmAgentClient:
 		target_date: Optional[str] = None,
 	) -> dict[str, Any]:
 		"""Create a Draft Estimate Repair Order and return candidate booking slots in one call (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
-		args = _drop_none({
-			"customer_name": customer_name,
-			"customer": customer,
-			"vehicle_identifier": vehicle_identifier,
-			"vehicle": vehicle,
-			"company": company or self.config.company or None,
-			"services": services,
-			"parts": parts,
-			"notes": notes,
-			"concern": concern,
-			"customer_phone": customer_phone,
-			"customer_email": customer_email,
-			"odometer_in": odometer_in,
-			"start_date": start_date,
-			"target_date": target_date,
-			"days_ahead": days_ahead,
-			"duration_minutes": duration_minutes,
-			"equipment_tags": equipment_tags,
-			"service_bay": service_bay,
-			"technician": technician,
-			"max_slots": max_slots,
-			"include_past": True if include_past else None,
-			"min_start_time": min_start_time,
-			"include_resources": True if include_resources else None,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.intake_and_find_slots", args)
+		return self._call_agent(
+			"intake_and_find_slots",
+			include_summary=include_summary,
+			customer_name=customer_name,
+			customer=customer,
+			vehicle_identifier=vehicle_identifier,
+			vehicle=vehicle,
+			company=company or self.config.company or None,
+			services=services,
+			parts=parts,
+			notes=notes,
+			concern=concern,
+			customer_phone=customer_phone,
+			customer_email=customer_email,
+			odometer_in=odometer_in,
+			start_date=start_date,
+			target_date=target_date,
+			days_ahead=days_ahead,
+			duration_minutes=duration_minutes,
+			equipment_tags=equipment_tags,
+			service_bay=service_bay,
+			technician=technician,
+			max_slots=max_slots,
+			include_past=True if include_past else None,
+			min_start_time=min_start_time,
+			include_resources=True if include_resources else None,
+		)
 
 	def reschedule_appointment(
 		self,
@@ -171,17 +195,17 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Reschedule an existing Schedule Entry with bay and technician checks (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
-		args = _drop_none({
-			"schedule_entry": schedule_entry,
-			"scheduled_date": scheduled_date,
-			"start_time": start_time,
-			"duration_minutes": duration_minutes,
-			"service_bay": service_bay,
-			"technician": technician,
-			"notes": notes,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.reschedule_appointment", args)
+		return self._call_agent(
+			"reschedule_appointment",
+			include_summary=include_summary,
+			schedule_entry=schedule_entry,
+			scheduled_date=scheduled_date,
+			start_time=start_time,
+			duration_minutes=duration_minutes,
+			service_bay=service_bay,
+			technician=technician,
+			notes=notes,
+		)
 
 	def update_appointment_status(
 		self,
@@ -191,13 +215,13 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Transition a Schedule Entry status (Confirmed, No Show, Cancelled, etc.)."""
-		args = _drop_none({
-			"schedule_entry": schedule_entry,
-			"status": status,
-			"notes": notes,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.update_appointment_status", args)
+		return self._call_agent(
+			"update_appointment_status",
+			include_summary=include_summary,
+			schedule_entry=schedule_entry,
+			status=status,
+			notes=notes,
+		)
 
 	def create_ro_from_appointment(
 		self,
@@ -206,12 +230,12 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Create a Checked In Repair Order from a pre-intake Schedule Entry."""
-		args = _drop_none({
-			"schedule_entry": schedule_entry,
-			"odometer_in": odometer_in,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.create_ro_from_appointment", args)
+		return self._call_agent(
+			"create_ro_from_appointment",
+			include_summary=include_summary,
+			schedule_entry=schedule_entry,
+			odometer_in=odometer_in,
+		)
 
 	def estimate_duration(
 		self,
@@ -223,15 +247,15 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Estimate probabilistic shop duration for a Repair Order or operations list."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"operations": operations,
-			"percentile": percentile,
-			"sigma": sigma,
-			"buffer_minutes": buffer_minutes,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.estimate_duration", args)
+		return self._call_agent(
+			"estimate_duration",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			operations=operations,
+			percentile=percentile,
+			sigma=sigma,
+			buffer_minutes=buffer_minutes,
+		)
 
 	def book_appointment(
 		self,
@@ -248,20 +272,20 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Allocate a linked or provisional Schedule Entry and push realtime calendar update (dates: ISO YYYY-MM-DD, times: 24h HH:MM[:SS])."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"scheduled_date": scheduled_date,
-			"start_time": start_time,
-			"service_bay": service_bay,
-			"technician": technician,
-			"entry_type": entry_type,
-			"notes": notes,
-			"estimated_duration": estimated_duration,
-			"provisional_customer_name": provisional_customer_name,
-			"provisional_vehicle_info": provisional_vehicle_info,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.book_appointment", args)
+		return self._call_agent(
+			"book_appointment",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			scheduled_date=scheduled_date,
+			start_time=start_time,
+			service_bay=service_bay,
+			technician=technician,
+			entry_type=entry_type,
+			notes=notes,
+			estimated_duration=estimated_duration,
+			provisional_customer_name=provisional_customer_name,
+			provisional_vehicle_info=provisional_vehicle_info,
+		)
 
 	def send_quote_for_approval(
 		self,
@@ -272,14 +296,14 @@ class IsmAgentClient:
 		recipient: Optional[str] = None,
 	) -> dict[str, Any]:
 		"""Generate approval token and optionally send SMS/email link."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"communication_medium": communication_medium,
-			"phone_number": phone_number,
-			"recipient": recipient,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.send_quote_for_approval", args)
+		return self._call_agent(
+			"send_quote_for_approval",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			communication_medium=communication_medium,
+			phone_number=phone_number,
+			recipient=recipient,
+		)
 
 	def import_supplier_catalog(
 		self,
@@ -292,16 +316,16 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Bulk ingest structured items or delimited supplier catalog text into Item master."""
-		args = _drop_none({
-			"items": items,
-			"raw_text": raw_text,
-			"supplier": supplier,
-			"default_source": default_source,
-			"default_condition": default_condition,
-			"service_package": service_package,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.import_supplier_catalog", args)
+		return self._call_agent(
+			"import_supplier_catalog",
+			include_summary=include_summary,
+			items=items,
+			raw_text=raw_text,
+			supplier=supplier,
+			default_source=default_source,
+			default_condition=default_condition,
+			service_package=service_package,
+		)
 
 	def get_component_alternates(
 		self,
@@ -313,15 +337,15 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Find compatible OEM, aftermarket, or used alternate parts with stock info."""
-		args = _drop_none({
-			"service_package": service_package,
-			"component_slot": component_slot,
-			"slot_number": slot_number,
-			"oem_part_number": oem_part_number,
-			"item_code": item_code,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.get_component_alternates", args)
+		return self._call_agent(
+			"get_component_alternates",
+			include_summary=include_summary,
+			service_package=service_package,
+			component_slot=component_slot,
+			slot_number=slot_number,
+			oem_part_number=oem_part_number,
+			item_code=item_code,
+		)
 
 	def import_tesla_procedure(
 		self,
@@ -341,29 +365,30 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Save a Tesla service manual procedure as a Service Package or import onto a Repair Order."""
-		args = _drop_none({
-			"procedure_title": procedure_title,
-			"correction_code": correction_code,
-			"labor_hours": labor_hours,
-			"model": model,
-			"parts": parts,
-			"repair_order": repair_order,
-			"url": url,
-			"data": data,
-			"on_conflict": on_conflict,
-			"force": True if force else None,
-			"side": side,
-			"is_supplement": 1 if is_supplement else None,
-			"advisor_notes": advisor_notes,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.import_tesla_procedure", args)
+		return self._call_agent(
+			"import_tesla_procedure",
+			include_summary=include_summary,
+			procedure_title=procedure_title,
+			correction_code=correction_code,
+			labor_hours=labor_hours,
+			model=model,
+			parts=parts,
+			repair_order=repair_order,
+			url=url,
+			data=data,
+			on_conflict=on_conflict,
+			force=True if force else None,
+			side=side,
+			is_supplement=1 if is_supplement else None,
+			advisor_notes=advisor_notes,
+		)
 
 	def get_shop_floor_status(self, date: Optional[str] = None, include_summary: bool = False) -> dict[str, Any]:
 		"""Retrieve active bays, on-duty technicians, appointments, and ROs (optional date: ISO YYYY-MM-DD)."""
-		return self.call_method(
-			"ism.api.agent.get_shop_floor_status",
-			_drop_none({"date": date, "include_summary": True if include_summary else None}),
+		return self._call_agent(
+			"get_shop_floor_status",
+			include_summary=include_summary,
+			date=date,
 		)
 
 	def update_job_status(
@@ -375,14 +400,14 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Transition Repair Order status (start, hold, complete) with guardrails."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"action": action,
-			"odometer_out": odometer_out,
-			"notes": notes,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.update_job_status", args)
+		return self._call_agent(
+			"update_job_status",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			action=action,
+			odometer_out=odometer_out,
+			notes=notes,
+		)
 
 	# --- Extended ISM Agent Facade Methods ---
 
@@ -394,13 +419,13 @@ class IsmAgentClient:
 		repair_order: Optional[str] = None,
 		items: Optional[list[Any] | str] = None,
 	) -> dict[str, Any]:
-		args = _drop_none({
-			"repair_order": repair_order or ro_name,
-			"items": items,
-			"company": company or self.config.company or None,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.check_parts_stock", args)
+		return self._call_agent(
+			"check_parts_stock",
+			include_summary=include_summary,
+			repair_order=repair_order or ro_name,
+			items=items,
+			company=company or self.config.company or None,
+		)
 
 	def check_parts_stock(
 		self,
@@ -429,18 +454,18 @@ class IsmAgentClient:
 		reference_date: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
-		args = _drop_none({
-			"repair_order": repair_order,
-			"parts_data": parts_data if parts_data is not None else [],
-			"submit": bool(submit),
-			"company": company,
-			"payment_method": payment_method,
-			"paid_amount": paid_amount,
-			"reference_no": reference_no,
-			"reference_date": reference_date,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.submit_procurement_orders", args)
+		return self._call_agent(
+			"submit_procurement_orders",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			parts_data=parts_data if parts_data is not None else [],
+			submit=bool(submit),
+			company=company or self.config.company or None,
+			payment_method=payment_method,
+			paid_amount=paid_amount,
+			reference_no=reference_no,
+			reference_date=reference_date,
+		)
 
 	def fetch_tesla_procedure(
 		self,
@@ -450,13 +475,14 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Fetch and parse a Tesla service manual URL with optional vehicle compatibility check."""
-		args = _drop_none({
-			"url": url,
-			"repair_order": repair_order,
-			"vehicle": vehicle,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.fetch_tesla_manual", args)
+		validate_tesla_url(url)
+		return self._call_agent(
+			"fetch_tesla_manual",
+			include_summary=include_summary,
+			url=url,
+			repair_order=repair_order,
+			vehicle=vehicle,
+		)
 
 	def fetch_tesla_manual(
 		self,
@@ -475,8 +501,11 @@ class IsmAgentClient:
 
 	def decode_vehicle_vin(self, vin: str, include_summary: bool = False) -> dict[str, Any]:
 		"""Decode a 17-character Tesla VIN and resolve recommended service manual URL."""
-		args = _drop_none({"vin": vin, "include_summary": True if include_summary else None})
-		return self.call_method("ism.api.agent.decode_vehicle_vin", args)
+		return self._call_agent(
+			"decode_vehicle_vin",
+			include_summary=include_summary,
+			vin=vin,
+		)
 
 	def search_vehicles(
 		self,
@@ -487,14 +516,14 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Search Repair Vehicles by VIN, license plate, customer, or model."""
-		args = _drop_none({
-			"query": query,
-			"customer": customer,
-			"model": model,
-			"limit": limit,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.search_vehicles", args)
+		return self._call_agent(
+			"search_vehicles",
+			include_summary=include_summary,
+			query=query,
+			customer=customer,
+			model=model,
+			limit=limit,
+		)
 
 	def get_vehicle_intelligence(
 		self,
@@ -503,12 +532,12 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Retrieve VIN decode, owners, service history, and open deferred services for a vehicle."""
-		args = _drop_none({
-			"vehicle": vehicle,
-			"history_limit": history_limit,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.get_vehicle_intelligence", args)
+		return self._call_agent(
+			"get_vehicle_intelligence",
+			include_summary=include_summary,
+			vehicle=vehicle,
+			history_limit=history_limit,
+		)
 
 	def link_vehicle_customer(
 		self,
@@ -519,14 +548,14 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Link a Customer as primary owner or additional contact on a Repair Vehicle."""
-		args = _drop_none({
-			"vehicle": vehicle,
-			"customer": customer,
-			"is_primary": True if is_primary else None,
-			"relationship": relationship,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.link_vehicle_customer", args)
+		return self._call_agent(
+			"link_vehicle_customer",
+			include_summary=include_summary,
+			vehicle=vehicle,
+			customer=customer,
+			is_primary=True if is_primary else None,
+			relationship=relationship,
+		)
 
 	def list_inspection_templates(
 		self,
@@ -534,11 +563,11 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""List available check-in Inspection Templates."""
-		args = _drop_none({
-			"include_inactive": True if include_inactive else None,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.list_inspection_templates", args)
+		return self._call_agent(
+			"list_inspection_templates",
+			include_summary=include_summary,
+			include_inactive=True if include_inactive else None,
+		)
 
 	def get_inspection_template(
 		self,
@@ -546,11 +575,11 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Fetch a check-in Inspection Template with its checklist items."""
-		args = _drop_none({
-			"template_name": template_name,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.get_inspection_template", args)
+		return self._call_agent(
+			"get_inspection_template",
+			include_summary=include_summary,
+			template_name=template_name,
+		)
 
 	def apply_inspection_template(
 		self,
@@ -560,13 +589,13 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Populate check-in inspection items on a Repair Order from a template."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"template_name": template_name,
-			"replace_existing": True if replace_existing else None,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.apply_inspection_template", args)
+		return self._call_agent(
+			"apply_inspection_template",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			template_name=template_name,
+			replace_existing=True if replace_existing else None,
+		)
 
 	def get_check_in_inspection(
 		self,
@@ -574,11 +603,11 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Retrieve the check-in inspection items and summary counts for a Repair Order."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.get_check_in_inspection", args)
+		return self._call_agent(
+			"get_check_in_inspection",
+			include_summary=include_summary,
+			repair_order=repair_order,
+		)
 
 	def record_check_in_inspection(
 		self,
@@ -592,25 +621,28 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Record check-in walkaround item results, odometer reading, and customer concern."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"items": items,
-			"odometer_in": odometer_in,
-			"odometer": odometer,
-			"customer_concern": customer_concern,
-			"template_name": template_name,
-			"auto_apply_template": True if auto_apply_template else None,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.record_check_in_inspection", args)
+		return self._call_agent(
+			"record_check_in_inspection",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			items=items,
+			odometer_in=odometer_in,
+			odometer=odometer,
+			customer_concern=customer_concern,
+			template_name=template_name,
+			auto_apply_template=True if auto_apply_template else None,
+		)
 
 	def get_daily_tech_overview(
 		self,
 		date: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
-		args = _drop_none({"date": date, "include_summary": True if include_summary else None})
-		return self.call_method("ism.api.agent.get_tech_overview", args)
+		return self._call_agent(
+			"get_tech_overview",
+			include_summary=include_summary,
+			date=date,
+		)
 
 	def get_tech_overview(
 		self,
@@ -621,11 +653,11 @@ class IsmAgentClient:
 		return self.get_daily_tech_overview(date=date, include_summary=include_summary)
 
 	def get_unscheduled_services(self, repair_order: str, include_summary: bool = False) -> dict[str, Any]:
-		args = _drop_none({
-			"repair_order": repair_order,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.get_unscheduled_services", args)
+		return self._call_agent(
+			"get_unscheduled_services",
+			include_summary=include_summary,
+			repair_order=repair_order,
+		)
 
 	def receive_purchase_order(
 		self,
@@ -635,13 +667,13 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Submit PO (if still Draft) and receive items via Purchase Receipt."""
-		args = _drop_none({
-			"purchase_order": purchase_order,
-			"purchase_invoice": purchase_invoice,
-			"submit_po": bool(submit_po),
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.receive_purchase_order", args)
+		return self._call_agent(
+			"receive_purchase_order",
+			include_summary=include_summary,
+			purchase_order=purchase_order,
+			purchase_invoice=purchase_invoice,
+			submit_po=bool(submit_po),
+		)
 
 	def create_purchase_payment(
 		self,
@@ -654,16 +686,16 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Submit a supplier Payment Entry against a Purchase Order (advance) or Purchase Invoice."""
-		args = _drop_none({
-			"purchase_order": purchase_order,
-			"purchase_invoice": purchase_invoice,
-			"payment_method": payment_method,
-			"paid_amount": paid_amount,
-			"reference_no": reference_no,
-			"reference_date": reference_date,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.create_purchase_payment", args)
+		return self._call_agent(
+			"create_purchase_payment",
+			include_summary=include_summary,
+			purchase_order=purchase_order,
+			purchase_invoice=purchase_invoice,
+			payment_method=payment_method,
+			paid_amount=paid_amount,
+			reference_no=reference_no,
+			reference_date=reference_date,
+		)
 
 	def create_purchase_invoice(
 		self,
@@ -678,18 +710,18 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Submit a Purchase Invoice (PO-linked or standalone) with optional stock update and advance attachment."""
-		args = _drop_none({
-			"purchase_order": purchase_order,
-			"supplier": supplier,
-			"parts_data": parts_data,
-			"update_stock": bool(update_stock),
-			"company": company,
-			"bill_no": bill_no,
-			"bill_date": bill_date,
-			"attach_advances": bool(attach_advances),
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.create_purchase_invoice", args)
+		return self._call_agent(
+			"create_purchase_invoice",
+			include_summary=include_summary,
+			purchase_order=purchase_order,
+			supplier=supplier,
+			parts_data=parts_data,
+			update_stock=bool(update_stock),
+			company=company or self.config.company or None,
+			bill_no=bill_no,
+			bill_date=bill_date,
+			attach_advances=bool(attach_advances),
+		)
 
 	def checkout_repair_order(
 		self,
@@ -701,15 +733,15 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Invoice, collect payment, complete schedule entries, and release a Repair Order."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"payment_method": payment_method,
-			"paid_amount": paid_amount,
-			"odometer_out": odometer_out,
-			"confirm": True if confirm else None,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.checkout_repair_order", args)
+		return self._call_agent(
+			"checkout_repair_order",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			payment_method=payment_method,
+			paid_amount=paid_amount,
+			odometer_out=odometer_out,
+			confirm=True if confirm else None,
+		)
 
 	def toggle_service_completion(
 		self,
@@ -727,14 +759,14 @@ class IsmAgentClient:
 			rows = [str(r).strip() for r in target if str(r).strip()]
 		else:
 			rows = [p.strip() for p in str(target).split(",") if p.strip()]
-		args = _drop_none({
-			"repair_order": repair_order,
-			"service_row_id": rows[0] if len(rows) == 1 else None,
-			"service_row_ids": rows if len(rows) > 1 else None,
-			"is_completed": bool(is_completed),
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.toggle_service_completion", args)
+		return self._call_agent(
+			"toggle_service_completion",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			service_row_id=rows[0] if len(rows) == 1 else None,
+			service_row_ids=rows if len(rows) > 1 else None,
+			is_completed=bool(is_completed),
+		)
 
 	def add_supplement(
 		self,
@@ -748,17 +780,17 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Add a mid-job supplemental operation in Estimating status for customer approval."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"service_title": service_title,
-			"category": category,
-			"labor_hours": labor_hours,
-			"labor_rate": labor_rate,
-			"parts": parts,
-			"notes": notes,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.add_supplement", args)
+		return self._call_agent(
+			"add_supplement",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			service_title=service_title,
+			category=category,
+			labor_hours=labor_hours,
+			labor_rate=labor_rate,
+			parts=parts,
+			notes=notes,
+		)
 
 	def duplicate_service_for_opposite_side(
 		self,
@@ -767,12 +799,12 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Duplicate a symmetrical LH or RH service row for the opposite side."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"service_row_id": service_row_id,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.duplicate_service_for_opposite_side", args)
+		return self._call_agent(
+			"duplicate_service_for_opposite_side",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			service_row_id=service_row_id,
+		)
 
 	def get_deferred_services(
 		self,
@@ -781,12 +813,12 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Fetch open previously declined/deferred services for a vehicle or Repair Order."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"vehicle": vehicle,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.get_deferred_services", args)
+		return self._call_agent(
+			"get_deferred_services",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			vehicle=vehicle,
+		)
 
 	def add_deferred_services(
 		self,
@@ -795,12 +827,12 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Add previously deferred service items onto a Repair Order."""
-		args = _drop_none({
-			"repair_order": repair_order,
-			"deferred_items": deferred_items,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.add_deferred_services", args)
+		return self._call_agent(
+			"add_deferred_services",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			deferred_items=deferred_items,
+		)
 
 	def list_shop_action_items(
 		self,
@@ -812,15 +844,15 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""List Shop Action Items matching filters."""
-		args = _drop_none({
-			"status": status,
-			"reference_doctype": reference_doctype,
-			"reference_name": reference_name,
-			"category": category,
-			"limit": limit,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.list_shop_action_items", args)
+		return self._call_agent(
+			"list_shop_action_items",
+			include_summary=include_summary,
+			status=status,
+			reference_doctype=reference_doctype,
+			reference_name=reference_name,
+			category=category,
+			limit=limit,
+		)
 
 	def create_shop_action_item(
 		self,
@@ -834,17 +866,17 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Create a Shop Action Item escalation."""
-		args = _drop_none({
-			"title": title,
-			"category": category,
-			"priority": priority,
-			"reference_doctype": reference_doctype,
-			"reference_name": reference_name,
-			"item_code": item_code,
-			"details": details,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.create_shop_action_item", args)
+		return self._call_agent(
+			"create_shop_action_item",
+			include_summary=include_summary,
+			title=title,
+			category=category,
+			priority=priority,
+			reference_doctype=reference_doctype,
+			reference_name=reference_name,
+			item_code=item_code,
+			details=details,
+		)
 
 	def resolve_shop_action_item(
 		self,
@@ -853,12 +885,12 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Mark a Shop Action Item as Resolved."""
-		args = _drop_none({
-			"action_item": action_item,
-			"resolution_notes": resolution_notes,
-			"include_summary": True if include_summary else None,
-		})
-		return self.call_method("ism.api.agent.resolve_shop_action_item", args)
+		return self._call_agent(
+			"resolve_shop_action_item",
+			include_summary=include_summary,
+			action_item=action_item,
+			resolution_notes=resolution_notes,
+		)
 
 	# --- Generic Frappe Operations ---
 

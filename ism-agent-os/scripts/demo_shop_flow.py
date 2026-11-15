@@ -44,7 +44,7 @@ def run_demo(client: IsmAgentClient, live: bool = False) -> None:
 		notes="Demo intake via ISM Agent OS",
 		include_summary=True,
 	)
-	ro_name = quote.get("data", {}).get("name") or quote.get("repair_order")
+	ro_name = (quote.get("data") or {}).get("name") or quote.get("repair_order")
 	print(quote.get("summary_card", quote))
 
 	slots_res = client.find_available_slots(repair_order=ro_name, days_ahead=3, include_summary=True)
@@ -55,8 +55,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 	parser = argparse.ArgumentParser(description="ISM Agent OS shop flow demo")
 	parser.add_argument("--live", action="store_true", help="Execute calls against Frappe")
 	args = parser.parse_args(argv)
-	client = IsmAgentClient(IsmConfig.from_env())
-	run_demo(client, live=args.live)
+	with IsmAgentClient(IsmConfig.from_env()) as client:
+		run_demo(client, live=args.live)
 	return 0
 
 

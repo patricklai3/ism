@@ -6,6 +6,39 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
+from urllib.parse import urlparse, urlsplit
+
+TESLA_ALLOWED_HOSTS = ("service.tesla.com", "service.teslamotors.com")
+
+
+def validate_tesla_url(url: str) -> None:
+	"""Validate that a Tesla service manual URL is safe to fetch."""
+	if not isinstance(url, str) or not url.strip():
+		raise ValueError(
+			"URL must be an https:// link on service.tesla.com or service.teslamotors.com."
+		)
+	cleaned = url.strip()
+	if any(ch in cleaned for ch in ("\r", "\n")) or any(ch.isspace() for ch in cleaned):
+		raise ValueError(
+			"URL must be an https:// link on service.tesla.com or service.teslamotors.com."
+		)
+	try:
+		parsed = urlparse(cleaned)
+	except ValueError as exc:
+		raise ValueError(
+			"URL must be an https:// link on service.tesla.com or service.teslamotors.com."
+		) from exc
+	host = (parsed.hostname or "").lower()
+	if (
+		parsed.scheme.lower() != "https"
+		or parsed.username is not None
+		or parsed.password is not None
+		or "@" in parsed.netloc
+		or host not in TESLA_ALLOWED_HOSTS
+	):
+		raise ValueError(
+			"URL must be an https:// link on service.tesla.com or service.teslamotors.com."
+		)
 
 
 @dataclass(frozen=True)
@@ -32,12 +65,34 @@ class IsmConfig:
 	def validate(self) -> list[str]:
 		"""Return a list of configuration errors, or empty list when valid."""
 		errors: list[str] = []
-		if not self.url:
+		if not self.url or not self.url.strip():
 			errors.append("FRAPPE_URL is required.")
+		elif "\n" not in self.url and "\r" not in self.url:
+			try:
+				parsed = urlsplit(self.url.strip())
+			except ValueError:
+				errors.append("FRAPPE_URL is not a valid URL.")
+			else:
+				if parsed.scheme.lower() not in ("http", "https"):
+					errors.append("FRAPPE_URL must use http:// or https://.")
+				if not parsed.hostname:
+					errors.append("FRAPPE_URL must include a valid hostname.")
+				if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+					errors.append("FRAPPE_URL must not contain embedded userinfo credentials.")
+
 		if not self.api_key:
 			errors.append("FRAPPE_API_KEY is missing.")
 		if not self.api_secret:
 			errors.append("FRAPPE_API_SECRET is missing.")
+
+		for field_name, field_value in (
+			("FRAPPE_URL", self.url),
+			("FRAPPE_API_KEY", self.api_key),
+			("FRAPPE_API_SECRET", self.api_secret),
+			("FRAPPE_SITE", self.site),
+		):
+			if field_value and ("\n" in field_value or "\r" in field_value):
+				errors.append(f"{field_name} contains invalid newline characters.")
 		return errors
 
 	@classmethod
