@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "C:\\Users\\real2\\AppData\\Local\\codegraph\\current\\bin\\codegraph.cmd",
+      "args": [
+        "serve",
+        "--mcp"
+      ]
+    },
+    "frappe": {
+      "command": "C:\\Windows\\py.exe",
+      "args": [
+        "-3",
+        "C:\\Users\\real2\\.gemini\\config\\scripts\\frappe_mcp_bridge.py"
+      ],
+      "env": {
+        "FRAPPE_URL": "http://localhost:8000",
+        "FRAPPE_API_KEY": "<YOUR_FRAPPE_API_KEY>",
+        "FRAPPE_API_SECRET": "<YOUR_FRAPPE_API_SECRET>"
+      }
+    }
+  }
+}

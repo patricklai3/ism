@@ -1,0 +1,33 @@
+# Local secrets & workspace agent config
+.agents/mcp_config.json
+.env
+.env.*
+!.env.example
+
+# Python caches, environments & packaging
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.py~
+.pytest_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+
+# Tooling, indexes & logs
+.codegraph/
+node_modules/
+ism-frappe/logs/
+ism-frappe/scripts/.tunnel-config.json
+ism-agent-os/scripts/eval_results/
+
+# OS & editors
+.DS_Store
+Thumbs.db
+.vscode/
+.vs/
+.idea/

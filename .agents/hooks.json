@@ -1,0 +1,32 @@
+{
+  "enforce-ast-outline": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "read_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python d:\\ism\\.agents\\scripts\\enforce_token_tools.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "enforce-ism-write-gate": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python d:\\ism\\.agents\\scripts\\enforce_ism_write_gate.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
