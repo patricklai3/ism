@@ -112,6 +112,18 @@ class TestIsmAgentClientAndTransport(unittest.TestCase):
 				"ism.api.agent.submit_procurement_orders",
 			),
 			(
+				lambda: self.client.submit_procurement_orders(parts_data=[{"item_code": "P1", "qty": 1, "supplier": "S1"}]),
+				"ism.api.agent.submit_procurement_orders",
+			),
+			(
+				lambda: self.client.create_purchase_payment(purchase_order="PO-1", payment_method="Cash", paid_amount=100.0),
+				"ism.api.agent.create_purchase_payment",
+			),
+			(
+				lambda: self.client.create_purchase_invoice(purchase_order="PO-1", update_stock=True, bill_no="INV-1"),
+				"ism.api.agent.create_purchase_invoice",
+			),
+			(
 				lambda: self.client.fetch_tesla_procedure(
 					"https://service.tesla.com/docs/x.html", repair_order="RO-1", vehicle="VEH-1"
 				),
@@ -181,6 +193,17 @@ class TestIsmAgentClientAndTransport(unittest.TestCase):
 			req_obj = mock_open.call_args[0][0]
 			self.assertEqual(req_obj.full_url, f"http://localhost:8000/api/method/{expected_method}")
 			self.assertTrue(res["success"])
+
+		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True, "data": {}}})) as mock_open:
+			self.client.submit_procurement_orders(parts_data=[{"item_code": "P1", "qty": 1, "supplier": "S1"}])
+			payload_default = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+		self.assertIs(payload_default["submit"], True)
+		self.assertNotIn("repair_order", payload_default)
+
+		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True, "data": {}}})) as mock_open:
+			self.client.submit_procurement_orders(parts_data=[{"item_code": "P1", "qty": 1, "supplier": "S1"}], submit=False)
+			payload_draft = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+		self.assertIs(payload_draft["submit"], False)
 
 	def test_generic_rest_crud_routes_directly(self) -> None:
 		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"data": [{"name": "RO-1"}]})) as mock_open:
@@ -358,7 +381,13 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 		parser = cli._build_parser()
 		for cmd in (
 			["test"],
+			["procure", "--parts-json", '[{"item_code":"P1","qty":1,"supplier":"S1"}]'],
+			["procure", "--parts-json", '[{"item_code":"P1","qty":1,"supplier":"S1"}]', "--payment-method", "Credit Card", "--paid-amount", "169.50"],
+			["pay-purchase", "--purchase-order", "PO-1", "--payment-method", "Debit / Interac"],
+			["purchase-invoice", "--purchase-order", "PO-1", "--update-stock", "--bill-no", "B-101"],
+			["purchase-invoice", "--supplier", "Sup1", "--parts-json", '[{"item_code":"P1","qty":1}]'],
 			["receive-po", "--purchase-order", "PO-1", "--submit-po"],
+			["receive-po", "--purchase-invoice", "ACC-PINV-1"],
 			["checkout", "--repair-order", "RO-1", "--confirm", "--odometer-out", "42150"],
 			["check-stock", "--repair-order", "RO-1"],
 			["check-stock", "--items-json", '["P1"]'],
@@ -482,6 +511,8 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 			"ism_import_tesla_procedure",
 			"ism_check_parts_stock",
 			"ism_submit_procurement_orders",
+			"ism_create_purchase_payment",
+			"ism_create_purchase_invoice",
 			"ism_fetch_tesla_manual",
 			"ism_get_tech_overview",
 			"ism_get_unscheduled_services",
@@ -1002,6 +1033,14 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 			(["book", "--date", "tomorrow", "--time", "10:00", "--repair-order", "RO-1"], "ISO YYYY-MM-DD"),
 			(["book", "--date", "2026-11-17", "--time", "9am", "--repair-order", "RO-1"], "24-hour HH:MM or HH:MM:SS"),
 			(["reschedule", "--schedule-entry", "SE-1", "--date", "friday"], "ISO YYYY-MM-DD"),
+			(["procure", "--parts-json", '[{"item_code":"P1","qty":1,"supplier":"S1"}]', "--paid-amount", "150"], "--payment-method"),
+			(["procure", "--parts-json", '[{"item_code":"P1","qty":1,"supplier":"S1"}]', "--draft", "--payment-method", "Cash"], "--draft"),
+			(["pay-purchase", "--purchase-order", "PO-1"], "--payment-method"),
+			(["pay-purchase", "--payment-method", "Cash"], "--purchase-order or --purchase-invoice"),
+			(["purchase-invoice"], "--supplier (or --purchase-order)"),
+			(["receive-po"], "--purchase-order or --purchase-invoice"),
+			(["pay-purchase", "--purchase-order", "PO-1", "--payment-method", "Cash", "--reference-date", "today"], "ISO YYYY-MM-DD"),
+			(["purchase-invoice", "--purchase-order", "PO-1", "--bill-date", "yesterday"], "ISO YYYY-MM-DD"),
 		]
 		for argv_case, expected_text in failing_cases:
 			with patch("urllib.request.urlopen") as mock_open, \
@@ -1047,6 +1086,22 @@ class TestCliAndOpenWebUi(unittest.TestCase):
 		mock_open.assert_not_called()
 		self.assertIn("### ISM Pre-Dispatch Summary", out.getvalue())
 		self.assertIn("READY", out.getvalue())
+
+		# Standalone procure --dry-run is ready without --repair-order
+		with patch("urllib.request.urlopen") as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main([
+				"--json",
+				"--dry-run",
+				"procure",
+				"--parts-json",
+				'[{"item_code":"OEM-P1-NEW","qty":1,"supplier":"PartsBin"}]',
+			])
+		self.assertEqual(code, 0)
+		mock_open.assert_not_called()
+		standalone_dry = json.loads(out.getvalue())
+		self.assertTrue(standalone_dry["ready"])
+		self.assertEqual(standalone_dry["missing_required"], [])
 
 
 if __name__ == "__main__":

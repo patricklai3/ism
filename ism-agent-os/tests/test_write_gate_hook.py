@@ -65,6 +65,8 @@ class TestIsmWriteGateHook(unittest.TestCase):
 			"python -m tools.cli --json create-ro-from-entry --schedule-entry SE-1",
 			"python -m tools.cli --json job-status --repair-order RO-1 --action complete",
 			"python -m tools.cli --json checkout --repair-order RO-1 --odometer-out 48260 --confirm",
+			"python -m tools.cli --json pay-purchase --purchase-order PO-1",
+			"python -m tools.cli --json purchase-invoice",
 			"python -m tools.cli --json batch --cmd \"status\" --cmd \"quote --customer Rob --vehicle VIN1 --service Brake\"",
 		]
 		for cmd in cases:
@@ -219,3 +221,36 @@ class TestIsmWriteGateHook(unittest.TestCase):
 			})
 			self.assertEqual(decision, "deny")
 			self.assertIn("[INVALID]", reason)
+
+	def test_allows_standalone_procure_pay_and_invoice_after_summary(self) -> None:
+		cases = [
+			(
+				"python -m tools.cli --json procure --parts-json '[{\"item_code\":\"P1\",\"qty\":1,\"supplier\":\"S1\"}]'",
+				"### ISM Pre-Dispatch Summary\n- **Command**: `procure`\n- **Status**: `READY`",
+			),
+			(
+				"python -m tools.cli --json pay-purchase --purchase-order PO-1 --payment-method Cash",
+				"### ISM Pre-Dispatch Summary\n- **Command**: `pay-purchase`\n- **Status**: `READY`",
+			),
+			(
+				"python -m tools.cli --json purchase-invoice --purchase-order PO-1 --update-stock",
+				"### ISM Pre-Dispatch Summary\n- **Command**: `purchase-invoice`\n- **Status**: `READY`",
+			),
+		]
+		with tempfile.TemporaryDirectory() as tmp:
+			for idx, (cmd, summary) in enumerate(cases, start=1):
+				sub_dir = Path(tmp) / f"case_{idx}"
+				sub_dir.mkdir(parents=True, exist_ok=True)
+				sub_p = _write_transcript(
+					str(sub_dir),
+					entries=[
+						{"step_index": 1, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Execute"},
+						{"step_index": 2, "type": "PLANNER_RESPONSE", "source": "MODEL", "content": summary},
+						{"step_index": 3, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Confirmed"},
+					],
+				)
+				decision, reason = hook_mod.evaluate_hook_payload({
+					"toolCall": {"name": "run_command", "args": {"CommandLine": cmd}},
+					"transcriptPath": sub_p,
+				})
+				self.assertEqual(decision, "allow", f"Expected allow for {cmd}: {reason}")

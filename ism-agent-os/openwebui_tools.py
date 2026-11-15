@@ -369,17 +369,27 @@ class Tools:
 
 	def ism_submit_procurement_orders(
 		self,
-		repair_order: str,
-		parts_data: Union[list[dict[str, Any]], str],
-		submit: bool = False,
+		repair_order: str = "",
+		parts_data: Union[list[dict[str, Any]], str, None] = None,
+		submit: bool = True,
+		company: str = "",
+		payment_method: str = "",
+		paid_amount: Optional[float] = None,
+		reference_no: str = "",
+		reference_date: str = "",
 		include_summary: bool = False,
 	) -> str:
-		"""Create Purchase Orders (Draft by default) or RFQs grouped by supplier."""
+		"""Create and submit (by default) Purchase Orders or RFQs, optionally linked to an RO or paid upfront."""
 		parsed_parts = _parse_json_param(parts_data) or []
 		res = self._client().submit_procurement_orders(
-			repair_order=repair_order,
+			repair_order=repair_order or None,
 			parts_data=parsed_parts,
 			submit=submit,
+			company=company or None,
+			payment_method=payment_method or None,
+			paid_amount=paid_amount,
+			reference_no=reference_no or None,
+			reference_date=reference_date or None,
 			include_summary=include_summary,
 		)
 		return _format(res)
@@ -561,14 +571,65 @@ class Tools:
 
 	def ism_receive_purchase_order(
 		self,
-		purchase_order: str,
-		submit_po: bool = False,
+		purchase_order: str = "",
+		submit_po: bool = True,
+		purchase_invoice: str = "",
 		include_summary: bool = False,
 	) -> str:
-		"""Submit (when confirmed) and post Purchase Receipt for a Purchase Order."""
+		"""Submit PO (if still Draft) and post Purchase Receipt for a Purchase Order or Purchase Invoice."""
 		res = self._client().receive_purchase_order(
-			purchase_order=purchase_order,
+			purchase_order=purchase_order or None,
 			submit_po=submit_po,
+			purchase_invoice=purchase_invoice or None,
+			include_summary=include_summary,
+		)
+		return _format(res)
+
+	def ism_create_purchase_payment(
+		self,
+		payment_method: str,
+		purchase_order: str = "",
+		purchase_invoice: str = "",
+		paid_amount: Optional[float] = None,
+		reference_no: str = "",
+		reference_date: str = "",
+		include_summary: bool = False,
+	) -> str:
+		"""Submit a supplier Payment Entry against a Purchase Order or Purchase Invoice."""
+		res = self._client().create_purchase_payment(
+			payment_method=payment_method,
+			purchase_order=purchase_order or None,
+			purchase_invoice=purchase_invoice or None,
+			paid_amount=paid_amount,
+			reference_no=reference_no or None,
+			reference_date=reference_date or None,
+			include_summary=include_summary,
+		)
+		return _format(res)
+
+	def ism_create_purchase_invoice(
+		self,
+		purchase_order: str = "",
+		supplier: str = "",
+		parts_data: Optional[Union[list[dict[str, Any]], str]] = None,
+		update_stock: bool = False,
+		company: str = "",
+		bill_no: str = "",
+		bill_date: str = "",
+		attach_advances: bool = True,
+		include_summary: bool = False,
+	) -> str:
+		"""Submit a Purchase Invoice (PO-linked or standalone) with optional stock update and advance attachment."""
+		parsed_parts = _parse_json_param(parts_data) if parts_data is not None else None
+		res = self._client().create_purchase_invoice(
+			purchase_order=purchase_order or None,
+			supplier=supplier or None,
+			parts_data=parsed_parts,
+			update_stock=update_stock,
+			company=company or None,
+			bill_no=bill_no or None,
+			bill_date=bill_date or None,
+			attach_advances=attach_advances,
 			include_summary=include_summary,
 		)
 		return _format(res)

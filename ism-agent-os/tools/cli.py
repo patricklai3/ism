@@ -135,12 +135,20 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 		"fields": ("repair_order", "odometer_in", "concern", "template", "auto_apply", "items_json"),
 	},
 	"procure": {
-		"target": "ism.api.agent.submit_procurement_orders -> Purchase Order / RFQ",
-		"fields": ("repair_order", "parts_json", "submit"),
+		"target": "ism.api.agent.submit_procurement_orders -> Purchase Order / RFQ (+ optional Payment Entry)",
+		"fields": ("repair_order", "parts_json", "company", "draft", "payment_method", "paid_amount", "reference_no", "reference_date"),
 	},
 	"receive-po": {
 		"target": "ism.api.agent.receive_purchase_order -> Purchase Receipt",
-		"fields": ("purchase_order", "submit_po"),
+		"fields": ("purchase_order", "purchase_invoice", "submit_po"),
+	},
+	"pay-purchase": {
+		"target": "ism.api.agent.create_purchase_payment -> Supplier Payment Entry",
+		"fields": ("purchase_order", "purchase_invoice", "payment_method", "paid_amount", "reference_no", "reference_date"),
+	},
+	"purchase-invoice": {
+		"target": "ism.api.agent.create_purchase_invoice -> Purchase Invoice",
+		"fields": ("purchase_order", "supplier", "parts_json", "update_stock", "bill_no", "bill_date", "company", "no_attach_advances"),
 	},
 	"ingest-parts": {
 		"target": "SupplierCatalogSanitizer + import_supplier_catalog -> Item",
@@ -235,6 +243,11 @@ def validate_temporal_args(args: argparse.Namespace) -> list[str]:
 	min_time_val = getattr(args, "min_time", None)
 	if _has_value(min_time_val) and not _is_valid_iso_time(min_time_val):
 		errors.append("--min-time (must be 24-hour HH:MM or HH:MM:SS)")
+
+	for flag_name, attr_name in (("--reference-date", "reference_date"), ("--bill-date", "bill_date")):
+		val = getattr(args, attr_name, None)
+		if _has_value(val) and not _is_valid_iso_date(val):
+			errors.append(f"{flag_name} (must be ISO YYYY-MM-DD)")
 	return errors
 
 
@@ -325,6 +338,36 @@ def validate_write_command_args(args: argparse.Namespace) -> list[str]:
 		odo = getattr(args, "odometer_in", None)
 		if odo is not None and (isinstance(odo, bool) or int(odo) < 0):
 			missing.append("--odometer-in (must be >= 0)")
+	elif cmd == "procure":
+		if not _has_value(getattr(args, "parts_json", None)):
+			missing.append("--parts-json")
+		has_pay_extras = any(
+			_has_value(getattr(args, f, None))
+			for f in ("paid_amount", "reference_no", "reference_date")
+		)
+		has_pay_method = _has_value(getattr(args, "payment_method", None))
+		if has_pay_extras and not has_pay_method:
+			missing.append("--payment-method")
+		if bool(getattr(args, "draft", False)) and (has_pay_method or has_pay_extras):
+			missing.append("--draft (cannot record payment against a Draft PO)")
+	elif cmd == "receive-po":
+		if not _has_value(getattr(args, "purchase_order", None)) and not _has_value(
+			getattr(args, "purchase_invoice", None)
+		):
+			missing.append("--purchase-order or --purchase-invoice")
+	elif cmd == "pay-purchase":
+		if not _has_value(getattr(args, "purchase_order", None)) and not _has_value(
+			getattr(args, "purchase_invoice", None)
+		):
+			missing.append("--purchase-order or --purchase-invoice")
+		if not _has_value(getattr(args, "payment_method", None)):
+			missing.append("--payment-method")
+	elif cmd == "purchase-invoice":
+		if not _has_value(getattr(args, "purchase_order", None)):
+			if not _has_value(getattr(args, "supplier", None)):
+				missing.append("--supplier (or --purchase-order)")
+			if not _has_value(getattr(args, "parts_json", None)):
+				missing.append("--parts-json (or --purchase-order)")
 	missing.extend(validate_temporal_args(args))
 	return missing
 
@@ -1039,11 +1082,39 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 	"procure": lambda a, c, s: c.submit_procurement_orders(
 		repair_order=a.repair_order,
 		parts_data=_parse_json_opt(a.parts_json, []),
-		submit=bool(a.submit),
+		submit=not bool(a.draft),
+		company=a.company,
+		payment_method=a.payment_method,
+		paid_amount=a.paid_amount,
+		reference_no=a.reference_no,
+		reference_date=a.reference_date,
 		include_summary=s,
 	),
 	"receive-po": lambda a, c, s: c.receive_purchase_order(
-		purchase_order=a.purchase_order, submit_po=bool(a.submit_po), include_summary=s
+		purchase_order=a.purchase_order,
+		submit_po=True,
+		purchase_invoice=a.purchase_invoice,
+		include_summary=s,
+	),
+	"pay-purchase": lambda a, c, s: c.create_purchase_payment(
+		purchase_order=a.purchase_order,
+		purchase_invoice=a.purchase_invoice,
+		payment_method=a.payment_method,
+		paid_amount=a.paid_amount,
+		reference_no=a.reference_no,
+		reference_date=a.reference_date,
+		include_summary=s,
+	),
+	"purchase-invoice": lambda a, c, s: c.create_purchase_invoice(
+		purchase_order=a.purchase_order,
+		supplier=a.supplier,
+		parts_data=_parse_json_opt(a.parts_json),
+		update_stock=bool(a.update_stock),
+		company=a.company,
+		bill_no=a.bill_no,
+		bill_date=a.bill_date,
+		attach_advances=not bool(a.no_attach_advances),
+		include_summary=s,
 	),
 	"checkout": lambda a, c, s: c.checkout_repair_order(
 		repair_order=a.repair_order,
@@ -1504,14 +1575,39 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 	p_stk.add_argument("--items-json", help="JSON array of item dicts/codes (or @file.json)")
 	p_stk.add_argument("--company")
 
-	p_po = sub.add_parser("procure", help="Create Draft POs/RFQs (or submit with --submit)")
-	p_po.add_argument("--repair-order", required=True)
+	p_po = sub.add_parser("procure", help="Create and submit POs/RFQs (standalone inventory or linked to an RO)")
+	p_po.add_argument("--repair-order")
 	p_po.add_argument("--parts-json", required=True)
-	p_po.add_argument("--submit", action="store_true")
+	p_po.add_argument("--company")
+	p_po.add_argument("--draft", action="store_true", help="Keep created POs/RFQs in Draft instead of submitting")
+	p_po.add_argument("--submit", action="store_true", help="Deprecated no-op alias (submitting is now the default)")
+	p_po.add_argument("--payment-method", help="Submit an advance Payment Entry against each created PO")
+	p_po.add_argument("--paid-amount", type=float, help="Advance amount paid (defaults to PO grand_total)")
+	p_po.add_argument("--reference-no", help="Bank/cheque/card transaction reference")
+	p_po.add_argument("--reference-date", help="Transaction reference date (YYYY-MM-DD)")
 
-	p_rcv = sub.add_parser("receive-po", help="Submit (with --submit-po) and receive PO via Purchase Receipt")
-	p_rcv.add_argument("--purchase-order", required=True)
-	p_rcv.add_argument("--submit-po", action="store_true")
+	p_rcv = sub.add_parser("receive-po", help="Submit PO if Draft and post Purchase Receipt for PO or un-received Purchase Invoice")
+	p_rcv.add_argument("--purchase-order")
+	p_rcv.add_argument("--purchase-invoice")
+	p_rcv.add_argument("--submit-po", action="store_true", help="Deprecated no-op alias (submitting is now the default)")
+
+	p_pay = sub.add_parser("pay-purchase", help="Submit a supplier Payment Entry against a Purchase Order or Purchase Invoice")
+	p_pay.add_argument("--purchase-order")
+	p_pay.add_argument("--purchase-invoice")
+	p_pay.add_argument("--payment-method")
+	p_pay.add_argument("--paid-amount", type=float)
+	p_pay.add_argument("--reference-no")
+	p_pay.add_argument("--reference-date")
+
+	p_pinv = sub.add_parser("purchase-invoice", help="Create and submit a Purchase Invoice (attaching PO advances, optionally updating stock)")
+	p_pinv.add_argument("--purchase-order")
+	p_pinv.add_argument("--supplier")
+	p_pinv.add_argument("--parts-json")
+	p_pinv.add_argument("--update-stock", action="store_true", help="Check Update Stock when invoice arrives with physical goods")
+	p_pinv.add_argument("--bill-no")
+	p_pinv.add_argument("--bill-date")
+	p_pinv.add_argument("--company")
+	p_pinv.add_argument("--no-attach-advances", action="store_true", help="Do not pull advance payments from linked Purchase Order")
 
 	p_parts = sub.add_parser("ingest-parts", help="Sanitize and import supplier catalog file as structured JSON")
 	p_parts.add_argument("file")

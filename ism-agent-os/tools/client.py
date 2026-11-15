@@ -419,15 +419,25 @@ class IsmAgentClient:
 
 	def submit_procurement_orders(
 		self,
-		repair_order: str,
-		parts_data: list[dict[str, Any]],
-		submit: bool = False,
+		repair_order: Optional[str] = None,
+		parts_data: Optional[list[dict[str, Any]]] = None,
+		submit: bool = True,
+		company: Optional[str] = None,
+		payment_method: Optional[str] = None,
+		paid_amount: Optional[float] = None,
+		reference_no: Optional[str] = None,
+		reference_date: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		args = _drop_none({
 			"repair_order": repair_order,
-			"parts_data": parts_data,
-			"submit": True if submit else None,
+			"parts_data": parts_data if parts_data is not None else [],
+			"submit": bool(submit),
+			"company": company,
+			"payment_method": payment_method,
+			"paid_amount": paid_amount,
+			"reference_no": reference_no,
+			"reference_date": reference_date,
 			"include_summary": True if include_summary else None,
 		})
 		return self.call_method("ism.api.agent.submit_procurement_orders", args)
@@ -619,17 +629,67 @@ class IsmAgentClient:
 
 	def receive_purchase_order(
 		self,
-		purchase_order: str,
-		submit_po: bool = False,
+		purchase_order: Optional[str] = None,
+		submit_po: bool = True,
+		purchase_invoice: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
-		"""Submit (when confirmed) and receive a Purchase Order via Purchase Receipt."""
+		"""Submit PO (if still Draft) and receive items via Purchase Receipt."""
 		args = _drop_none({
 			"purchase_order": purchase_order,
-			"submit_po": True if submit_po else None,
+			"purchase_invoice": purchase_invoice,
+			"submit_po": bool(submit_po),
 			"include_summary": True if include_summary else None,
 		})
 		return self.call_method("ism.api.agent.receive_purchase_order", args)
+
+	def create_purchase_payment(
+		self,
+		payment_method: str,
+		purchase_order: Optional[str] = None,
+		purchase_invoice: Optional[str] = None,
+		paid_amount: Optional[float] = None,
+		reference_no: Optional[str] = None,
+		reference_date: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Submit a supplier Payment Entry against a Purchase Order (advance) or Purchase Invoice."""
+		args = _drop_none({
+			"purchase_order": purchase_order,
+			"purchase_invoice": purchase_invoice,
+			"payment_method": payment_method,
+			"paid_amount": paid_amount,
+			"reference_no": reference_no,
+			"reference_date": reference_date,
+			"include_summary": True if include_summary else None,
+		})
+		return self.call_method("ism.api.agent.create_purchase_payment", args)
+
+	def create_purchase_invoice(
+		self,
+		purchase_order: Optional[str] = None,
+		supplier: Optional[str] = None,
+		parts_data: Optional[list[dict[str, Any]]] = None,
+		update_stock: bool = False,
+		company: Optional[str] = None,
+		bill_no: Optional[str] = None,
+		bill_date: Optional[str] = None,
+		attach_advances: bool = True,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Submit a Purchase Invoice (PO-linked or standalone) with optional stock update and advance attachment."""
+		args = _drop_none({
+			"purchase_order": purchase_order,
+			"supplier": supplier,
+			"parts_data": parts_data,
+			"update_stock": bool(update_stock),
+			"company": company,
+			"bill_no": bill_no,
+			"bill_date": bill_date,
+			"attach_advances": bool(attach_advances),
+			"include_summary": True if include_summary else None,
+		})
+		return self.call_method("ism.api.agent.create_purchase_invoice", args)
 
 	def checkout_repair_order(
 		self,

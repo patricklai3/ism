@@ -7,12 +7,12 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `skills/ism-service-advisor/SKILL.md` — intake, `quote`, `amend-quote`, `estimate`, `send-approval`, `decode-vin`, `vehicle-info`
 - `skills/ism-shop-dispatcher/SKILL.md` — `status`, `tech-overview`, `slots`, `intake-slots`, `book`, `reschedule`, `unscheduled`
 - `skills/ism-floor-technician/SKILL.md` — `job-status`, `toggle-service`, inspections, `add-supplement`, `checkout`
-- `skills/ism-parts-specialist/SKILL.md` — `check-stock`, `alternates`, `procure`, `receive-po`, Tesla & catalog ingestion
+- `skills/ism-parts-specialist/SKILL.md` — `check-stock`, `alternates`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, Tesla & catalog ingestion
 - `skills/ism-shop-executive/SKILL.md` — floor telemetry, `list-docs`, `action-items`
 
 ## Operational Invariants
 
-1. **Mandatory Pre-Dispatch Summary & Required-Field Callback (ALL writes)**: Before executing ANY write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `resolve-action`, `apply-inspection`, `record-inspection`, `procure`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing writes):
+1. **Mandatory Pre-Dispatch Summary & Required-Field Callback (ALL writes)**: Before executing ANY write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `resolve-action`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing writes):
    - NEVER fabricate, guess, or substitute missing required fields (e.g. never invent `odometer_in=10000` or default `payment_method`).
    - Run read-only lookups (`vehicle-info`, `slots`, `status`, `deferred`) and/or `python -m tools.cli --dry-run <cmd> ...` first.
    - Return a standardized `### ISM Pre-Dispatch Summary` block to the user showing: Command, Target, Payload Fields, Missing Required Fields (`[MISSING — REQUIRED]` if absent), and Confirm Next Step.
@@ -26,7 +26,7 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 5. **Scheduling & conflict handling**: Only run `slots` before `book` when availability is requested or date/time is omitted. On bay/tech conflict or ambiguous-bay 417, report conflict details and alternatives before re-dispatching.
 6. **Enforce the authorization lock**: Never run `job-status --action start` unless `approval_status` is `Approved` or `Partially Approved`. Never run `job-status --action complete` without `--odometer-out`.
 7. **Delegate all math to Frappe**: Never calculate labor totals, parts markups, Fenton-Wilkinson durations, or 13% Ontario HST manually.
-8. **Keep agent writes in draft**: Create quotes in `Draft Estimate` (`docstatus=0`) and POs in Draft (`--submit` omitted) unless explicitly confirmed. Never run `checkout --confirm` without `--payment-method`, `--odometer-out`, and explicit human confirmation.
+8. **Submit submittable documents after confirmation**: Quotes (`Repair Order`) start in `Draft Estimate` until customer approval, whereas all Frappe submittable documents (`Purchase Order`, `Request for Quotation`, `Purchase Receipt`, `Purchase Invoice`, `Payment Entry`, `Sales Invoice`) are submitted immediately upon live execution after `### ISM Pre-Dispatch Summary` confirmation. Never leave submittable documents in Draft or ask the user whether to keep them in Draft vs Submit unless they explicitly ask for `--draft`. Never run `checkout --confirm` without `--payment-method`, `--odometer-out`, and explicit human confirmation.
 9. **Use curated CLI wrappers first & show deep links**: Prefer curated CLI subcommands over generic REST calls. Include Desk, Print, or Approval links from `urls` in replies. Pass `--summary` only when explicitly requested.
 
 ## Quick Command Index (`python -m tools.cli --json <cmd>`)
@@ -43,6 +43,10 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `amend-quote --repair-order <RO> [--add-service "Title::0.3"] [--remove-indices-json @indices.json] [--notes <TEXT>]`
 - `send-approval --repair-order <RO> [--medium sms|email|link] [--phone <NUM>] [--recipient <ADDR>]`
 - `job-status --repair-order <RO> --action <start|hold|park|complete> [--odometer-out <KM>] [--notes <TEXT>]`
+- `procure [--repair-order <RO>] --parts-json <@file|JSON> [--company <CO>] [--payment-method <METHOD>] [--paid-amount <AMT>] [--reference-no <REF>] [--reference-date <YYYY-MM-DD>] [--draft]`
+- `pay-purchase (--purchase-order <PO> | --purchase-invoice <PI>) --payment-method <METHOD> [--paid-amount <AMT>] [--reference-no <REF>] [--reference-date <YYYY-MM-DD>]`
+- `purchase-invoice (--purchase-order <PO> | --supplier <SUP> --parts-json <@file|JSON>) [--update-stock] [--bill-no <NO>] [--bill-date <YYYY-MM-DD>]`
+- `receive-po (--purchase-order <PO> | --purchase-invoice <PI>)`
 - `checkout --repair-order <RO> --payment-method <METHOD> --odometer-out <KM> [--paid-amount <AMT>] --confirm`
 - `decode-vin --vin <VIN>`
 - `vehicle-info --vehicle <VEH>`
