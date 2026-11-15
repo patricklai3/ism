@@ -1,0 +1,12 @@
+{
+  "name": "ism-agent-os",
+  "displayName": "ISM Agent OS",
+  "version": "1.0.0",
+  "description": "Agent Operating System for automotive repair facilities running Frappe with ISM installed.",
+  "author": "ISM Engineering",
+  "suggestedPrompts": [
+    "Show today's shop floor status and available booking slots",
+    "Create a draft repair quote for a customer and Tesla Model 3",
+    "Ingest a supplier parts catalog CSV or Tesla service manual URL"
+  ]
+}

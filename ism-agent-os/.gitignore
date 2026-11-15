@@ -1,0 +1,25 @@
+# Secrets & local config
+.env
+.env.*
+!.env.example
+
+# Python caches & packaging
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.venv/
+venv/
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Eval round outputs
+scripts/eval_results/

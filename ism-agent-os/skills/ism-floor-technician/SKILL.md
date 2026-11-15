@@ -1,0 +1,43 @@
+---
+name: ism-floor-technician
+description: >-
+  Executes shop floor Repair Order transitions including starting bay work, placing jobs
+  on hold for parts, and recording completion with odometer out. Use when a technician
+  starts, pauses, or finishes work on a vehicle.
+---
+
+# Floor Technician Operations
+
+**NEVER run `--help`, `-h`, or `Get-ChildItem skills/`**. The table below lists exact CLI flags—call `python -m tools.cli --json <cmd> ...` (alias: `ism-agent-os`) directly on turn 1 without redundant pre-checks (`status`/`slots`/`tech-overview`/`get-doc`). Target 1-2 CLI turns for simple requests and 3 max for multi-step workflows.
+
+## Direct Intent-to-Command Routing
+
+| User Intent | Direct Command |
+| :--- | :--- |
+| Start, hold, park, or complete an RO | `python -m tools.cli --json job-status --repair-order <RO> --action <start\|hold\|park\|complete> [--odometer-out <KM>] [--notes <TEXT>]` |
+| Check off (or reopen) completed service rows | `python -m tools.cli --json toggle-service --repair-order <RO> --service-row <ROW1> [<ROW2> ...] [--reopen]` |
+| Read check-in walkaround inspection | `python -m tools.cli --json get-inspection --repair-order <RO>` |
+| Record inspection findings, odometer, concern | `python -m tools.cli --json record-inspection --repair-order <RO> --items-json <@file\|JSON> [--odometer-in <KM>] [--concern <TEXT>] [--template <NAME>] [--auto-apply]` |
+| List or apply inspection template | `python -m tools.cli --json inspection-templates [--template <NAME>]` / `python -m tools.cli --json apply-inspection --repair-order <RO> [--template <NAME>]` |
+| Add mid-job supplement for approval | `python -m tools.cli --json add-supplement --repair-order <RO> --title <TITLE> --hours <HRS> [--parts-json <@file\|JSON>] [--notes <TEXT>]` |
+| Duplicate symmetrical LH/RH service row | `python -m tools.cli --json duplicate-side --repair-order <RO> --service-row <ROW>` |
+| Check stock for parts hold | `python -m tools.cli --json check-stock --repair-order <RO>` |
+| Log floor discrepancy / escalation | `python -m tools.cli --json create-action --title <TITLE> [--ref-doctype "Repair Order" --ref-name <RO>] [--details <TEXT>]` |
+| Checkout, collect payment, release vehicle | `python -m tools.cli --json checkout --repair-order <RO> --confirm [--payment-method <METHOD>] [--paid-amount <AMT>] [--odometer-out <KM>]` |
+| Multi-step floor actions in one process | `python -m tools.cli --json batch --cmd "job-status --repair-order <RO> --action hold" --cmd "check-stock --repair-order <RO>"` (or `--file @cmds.json`; alias: `ism-agent-os batch`) |
+
+## Routing Rules
+
+1. **Zero `--help` or redundant pre-checks**: Use the exact flags in the table above on turn 1. Run `job-status --action start` directly when asked to start an RO; do not run `--help`, `status`, or `get-doc` first. The server enforces the authorization lock—if rejected because `approval_status` is not `Approved` or `Partially Approved`, stop immediately, notify the Service Advisor, and run `send-approval` only if instructed.
+2. **Batch multi-step floor updates**: Use `python -m tools.cli --json batch --cmd "..." --cmd "..."` (or `--file @cmds.json`) instead of PowerShell stdin pipes for chained actions (e.g., `job-status --action hold` + `check-stock`, or `toggle-service` + `job-status --action complete`). Pass multiple rows to `toggle-service --service-row <R1> <R2>` in one call.
+3. **Human confirmation for checkout**: Never run `checkout --confirm` without explicit human confirmation.
+
+## Required Fields & Pre-Dispatch Callback
+
+- **`job-status --action complete` required fields**: `--repair-order`, `--action complete`, and `--odometer-out` (`>= odometer_in`).
+- **`checkout` required fields**: `--repair-order`, `--payment-method` (no silent default), `--odometer-out` (`>= odometer_in`), and `--confirm`.
+- **Mandatory Callback**: Run `--dry-run` first, output `### ISM Pre-Dispatch Summary` (flagging any missing required fields), and wait for explicit user confirmation before executing any floor write or checkout.
+
+## Verification
+
+- Verify `success: true` and `data.status` reflects the target state (`Authorized - In Progress`, `Waiting on Parts`, `Work Completed`, or `Closed / Released`).

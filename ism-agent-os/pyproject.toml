@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ism-agent-os"
+version = "1.0.0"
+description = "Autonomous Agent Operating System for Frappe sites with ISM installed."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+openwebui = ["pydantic>=2.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+ism-agent-os = "ism_agent_os.cli:main"
+
+[tool.setuptools]
+packages = ["ism_agent_os", "ism_agent_os.ingestion"]
+
+[tool.setuptools.package-dir]
+ism_agent_os = "tools"
+"ism_agent_os.ingestion" = "ingestion"
