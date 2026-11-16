@@ -49,6 +49,13 @@ class TestSupplierCatalogSanitizer(unittest.TestCase):
 		normalized = SupplierCatalogSanitizer().normalize_text(raw, default_source="OEM", default_condition="Reman")
 		self.assertIn("| OEM | Reconditioned |", normalized)
 
+	def test_ingest_requires_service_package(self) -> None:
+		mock_client = MagicMock()
+		raw = "Part#,Description,Rate\nP1,Part One,$10.00\n"
+		with self.assertRaisesRegex(ValueError, "service_package is required"):
+			SupplierCatalogSanitizer().ingest(mock_client, raw, supplier="Tesla")
+		mock_client.import_supplier_catalog.assert_not_called()
+
 
 class TestTeslaManualParser(unittest.TestCase):
 	def test_parse_url_metadata(self) -> None:

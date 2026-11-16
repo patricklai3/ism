@@ -316,6 +316,15 @@ class IsmAgentClient:
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Bulk ingest structured items or delimited supplier catalog text into Item master."""
+		pkg = (service_package or "").strip()
+		if not pkg:
+			row_list = [items] if isinstance(items, dict) else (items if isinstance(items, list) else [])
+			has_row_pkg = bool(row_list) and all(
+				isinstance(r, dict) and bool(r.get("service_package") or r.get("service_packages"))
+				for r in row_list
+			)
+			if not has_row_pkg:
+				raise ValueError("service_package is required when importing supplier catalog parts.")
 		return self._call_agent(
 			"import_supplier_catalog",
 			include_summary=include_summary,

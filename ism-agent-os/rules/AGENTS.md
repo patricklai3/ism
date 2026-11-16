@@ -18,7 +18,7 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
    - Return a standardized `### ISM Pre-Dispatch Summary` block to the user showing: Command, Target, Payload Fields, Missing Required Fields (`[MISSING — REQUIRED]` if absent), and Confirm Next Step.
    - Wait for explicit user confirmation (and any missing required values) BEFORE executing the live write command. Once a user answers missing fields, present an updated `READY` summary before dispatching if any field changed.
 2. **Direct intent-to-command routing (read-only & after confirmation)**: **NEVER run `--help`, `-h`, or `Get-ChildItem skills/`**. Use exact CLI flags from Quick Command Index and skill files. Do NOT run redundant pre-checks (`status`, `slots`, `tech-overview`, `estimate`, or `get-doc`) when sufficient inputs are given.
-3. **Batch & composite calls**: `python -m tools.cli --json intake-slots` creates the draft quote and returns filtered slots in one call. For 2+ calls, run `python -m tools.cli --json batch --cmd "..." --cmd "..."` (alias: `ism-agent-os batch`; or `--file @cmds.json`). Wrap multi-word inner values in `'...'`.
+3. **Batch & composite calls**: `python -m tools.cli --json intake-slots` creates the draft quote and returns filtered slots in one call. For 2+ calls, run `python -m tools.cli --json batch --cmd "..." --cmd "..."` (alias: `ism-agent-os batch`; or `--file @cmds.json`). Wrap multi-word inner values in `'...'`. When creating a quote, amending it, and sending approval, run `quote` first, then ALWAYS combine `amend-quote` and `send-approval` in ONE `batch --cmd "amend-quote ..." --cmd "send-approval ..."` call (never two separate CLI calls).
 4. **Quote-free service & date flags (NEVER pass inline JSON on PowerShell)**:
    - Use repeatable `--service "Title"` or `--service "Title::0.5"` on `quote` / `intake-slots`, and `--add-service "Title::0.3"` on `amend-quote`.
    - Use `@path/to/payload.json` ONLY for `--parts-json` or `--remove-indices-json`.
@@ -27,7 +27,7 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 6. **Enforce the authorization lock**: Never run `job-status --action start` unless `approval_status` is `Approved` or `Partially Approved`. Never run `job-status --action complete` without `--odometer-out`.
 7. **Delegate all math to Frappe**: Never calculate labor totals, parts markups, Fenton-Wilkinson durations, or 13% Ontario HST manually.
 8. **Submit submittable documents after confirmation**: Quotes (`Repair Order`) start in `Draft Estimate` until customer approval, whereas all Frappe submittable documents (`Purchase Order`, `Request for Quotation`, `Purchase Receipt`, `Purchase Invoice`, `Payment Entry`, `Sales Invoice`) are submitted immediately upon live execution after `### ISM Pre-Dispatch Summary` confirmation. Never leave submittable documents in Draft or ask the user whether to keep them in Draft vs Submit unless they explicitly ask for `--draft`. Never run `checkout --confirm` without `--payment-method`, `--odometer-out`, and explicit human confirmation.
-9. **Use curated CLI wrappers first & show deep links**: Prefer curated CLI subcommands over generic REST calls. Include Desk, Print, or Approval links from `urls` in replies. Pass `--summary` only when explicitly requested.
+9. **Use curated CLI wrappers first & show deep links**: Prefer curated CLI subcommands over generic REST calls. Include Desk, Calendar, Print, or Approval links from `urls` in replies. Pass `--summary` only when explicitly requested.
 
 ## Quick Command Index (`python -m tools.cli --json <cmd>`)
 
@@ -44,6 +44,7 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `send-approval --repair-order <RO> [--medium sms|email|link] [--phone <NUM>] [--recipient <ADDR>]`
 - `job-status --repair-order <RO> --action <start|hold|park|complete> [--odometer-out <KM>] [--notes <TEXT>]`
 - `procure [--repair-order <RO>] --parts-json <@file|JSON> [--company <CO>] [--payment-method <METHOD>] [--paid-amount <AMT>] [--reference-no <REF>] [--reference-date <YYYY-MM-DD>] [--draft]`
+- `ingest-parts <file> --service-package <PKG> [--supplier <SUP>] [--source <OEM|Aftermarket>] [--condition <New|Used|Reconditioned>]`
 - `pay-purchase (--purchase-order <PO> | --purchase-invoice <PI>) --payment-method <METHOD> [--paid-amount <AMT>] [--reference-no <REF>] [--reference-date <YYYY-MM-DD>]`
 - `purchase-invoice (--purchase-order <PO> | --supplier <SUP> --parts-json <@file|JSON>) [--update-stock] [--bill-no <NO>] [--bill-date <YYYY-MM-DD>]`
 - `receive-po (--purchase-order <PO> | --purchase-invoice <PI>)`

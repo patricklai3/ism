@@ -144,6 +144,13 @@ class SupplierCatalogSanitizer:
 		if not items:
 			return []
 
+		pkg = (service_package or "").strip()
+		if not pkg and not all(
+			isinstance(it, dict) and bool(it.get("service_package") or it.get("service_packages"))
+			for it in items
+		):
+			raise ValueError("service_package is required when ingesting supplier catalog parts.")
+
 		results: list[dict[str, Any]] = []
 		step = max(1, chunk_size)
 		for start in range(0, len(items), step):
@@ -216,10 +223,12 @@ def _build_structured_item(
 		"revision": str(mapped.get("revision") or "").strip(),
 		"oem_part_number": oem_num or (part_num if source == "OEM" else ""),
 	}
-	for extra in ("brand", "warranty_period", "stock_uom", "supplier", "supplier_part_no"):
+	for extra in ("brand", "warranty_period", "stock_uom", "supplier", "supplier_part_no", "service_package"):
 		val = mapped.get(extra)
 		if val is not None and str(val).strip():
 			item[extra] = str(val).strip()
+	if mapped.get("service_packages"):
+		item["service_packages"] = mapped["service_packages"]
 	return item
 
 

@@ -229,7 +229,7 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	"ingest-parts": {
 		"target": "SupplierCatalogSanitizer + import_supplier_catalog -> Item",
 		"fields": ("file", "supplier", "source", "condition", "service_package"),
-		"required": (("file", "file"),),
+		"required": (("file", "file"), ("service_package", "--service-package")),
 	},
 	"import-tesla": {
 		"target": "ism.api.agent.import_tesla_procedure -> Service Package / Repair Order",

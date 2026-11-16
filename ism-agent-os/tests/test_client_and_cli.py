@@ -209,6 +209,17 @@ class TestIsmAgentClientAndTransport(unittest.TestCase):
 			payload_draft = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
 		self.assertIs(payload_draft["submit"], False)
 
+		with self.assertRaisesRegex(ValueError, "service_package is required"):
+			self.client.import_supplier_catalog(items=[{"part_number": "P1", "part_name": "Pad"}], supplier="Acme")
+
+		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True, "data": {}}})) as mock_open:
+			res_row_pkg = self.client.import_supplier_catalog(
+				items=[{"part_number": "P1", "part_name": "Pad", "service_package": "SP-1"}],
+				supplier="Acme",
+			)
+		self.assertTrue(res_row_pkg["success"])
+		self.assertEqual(mock_open.call_count, 1)
+
 	def test_generic_rest_crud_routes_directly(self) -> None:
 		with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"data": [{"name": "RO-1"}]})) as mock_open:
 			docs = self.client.list_documents("Repair Order", limit=5)
@@ -1175,19 +1186,34 @@ class TestCli(unittest.TestCase):
 		merged_filters = cli._parse_filters_opt('{"status": "Open"}', ["note=a!=b"])
 		self.assertEqual(merged_filters, [["status", "=", "Open"], ["note", "=", "a!=b"]])
 
-		# ingest-parts handles UTF-8 BOM and rejects empty item files cleanly
+		# ingest-parts requires --service-package, handles UTF-8 BOM, and rejects empty item files cleanly
 		with tempfile.TemporaryDirectory() as tmp:
 			bom_csv = Path(tmp) / "bom.csv"
 			bom_csv.write_bytes(b"\xef\xbb\xbfPart#,Description,Rate\nP1,Sensor,$10.00\n")
+			with patch("urllib.request.urlopen") as mock_open, \
+				patch("sys.stdout", new_callable=io.StringIO) as out:
+				self.assertEqual(cli.main(["--json", "--dry-run", "ingest-parts", str(bom_csv)]), 0)
+			mock_open.assert_not_called()
+			dry_res = json.loads(out.getvalue())
+			self.assertFalse(dry_res["ready"])
+			self.assertEqual(dry_res["missing_required"], ["ingest-parts:--service-package"])
+
+			with patch("urllib.request.urlopen") as mock_open, \
+				patch("sys.stderr", new_callable=io.StringIO) as err:
+				code = cli.main(["--json", "ingest-parts", str(bom_csv)])
+			self.assertEqual(code, 1)
+			mock_open.assert_not_called()
+			self.assertIn("--service-package", err.getvalue())
+
 			with patch("urllib.request.urlopen", return_value=_FakeHttpResponse({"message": {"success": True}})), \
 				patch("sys.stdout", new_callable=io.StringIO):
-				self.assertEqual(cli.main(["--json", "ingest-parts", str(bom_csv)]), 0)
+				self.assertEqual(cli.main(["--json", "ingest-parts", str(bom_csv), "--service-package", "SP-1"]), 0)
 
 			empty_json = Path(tmp) / "empty.json"
 			empty_json.write_text("[]", encoding="utf-8")
 			with patch("urllib.request.urlopen") as mock_open, \
 				patch("sys.stderr", new_callable=io.StringIO) as err:
-				code = cli.main(["--json", "ingest-parts", str(empty_json)])
+				code = cli.main(["--json", "ingest-parts", str(empty_json), "--service-package", "SP-1"])
 			self.assertEqual(code, 1)
 			mock_open.assert_not_called()
 			self.assertIn("No valid parts", err.getvalue())

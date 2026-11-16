@@ -339,7 +339,7 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 	p_parts.add_argument("--supplier")
 	p_parts.add_argument("--source", default="Aftermarket")
 	p_parts.add_argument("--condition", default="New")
-	p_parts.add_argument("--service-package")
+	p_parts.add_argument("--service-package", help="Target Service Package name(s) to nest ingested parts under (required)")
 
 	p_alt = sub.add_parser("alternates", help="Find compatible OEM, aftermarket, or used alternate parts")
 	p_alt.add_argument("--service-package")
