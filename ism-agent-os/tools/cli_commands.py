@@ -25,6 +25,7 @@ from .cli_parsing import (
 from .cli_validation import READ_ONLY_COMMANDS, validate_temporal_args, validate_write_command_args
 from .client import IsmAgentClient, IsmApiError
 from .pricing import calculate_part_price, load_pricing_config
+from .stage_store import extract_receipt_metadata, read_latest_receipt
 
 try:
 	from .ingestion.supplier_catalog import SupplierCatalogSanitizer
@@ -262,14 +263,250 @@ def _load_batch_items(args: argparse.Namespace) -> list[Any]:
 
 
 _JSON_ARRAY_FLAGS: frozenset[str] = frozenset({"--update-services", "--payments"})
-_POSITIONAL_ARG_BY_CMD: dict[str, str] = {"deposit": "repair_order"}
+_POSITIONAL_ARG_BY_CMD: dict[str, str] = {
+	"deposit": "repair_order",
+	"ingest-parts": "file",
+	"fetch-tesla": "url",
+	"ingest-tesla": "url",
+}
+_STEP_TOKEN_RE = re.compile(
+	r"\$(?:\{(step\d+|prev)(?:\.([A-Za-z0-9_.-]+))?\}|(step\d+|prev)(?:\.([A-Za-z0-9_.-]+))?)"
+)
+_AT_LAST_RE = re.compile(
+	r"(?<![A-Za-z0-9._%+-])@last(?:\.([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*))?(?![A-Za-z0-9_@-])"
+)
+
+
+def _traverse_path(obj: Any, path: str) -> tuple[bool, Any]:
+	cur = obj
+	for seg in path.split("."):
+		if isinstance(cur, dict) and seg in cur:
+			cur = cur[seg]
+		elif isinstance(cur, (list, tuple)):
+			try:
+				idx = int(seg)
+			except ValueError:
+				return (False, None)
+			if idx < 0 or idx >= len(cur):
+				return (False, None)
+			cur = cur[idx]
+		else:
+			return (False, None)
+	return (True, cur)
+
+
+def _stringify_resolved_value(val: Any) -> str:
+	if isinstance(val, (dict, list)):
+		return json.dumps(val)
+	if val is None:
+		return ""
+	return str(val)
+
+
+def _lookup_at_last_token(path: Optional[str], receipt: dict[str, Any]) -> Any:
+	if not path:
+		primary = receipt.get("primary_id")
+		if not primary and isinstance(receipt.get("data"), dict):
+			primary = receipt["data"].get("name")
+		if not primary:
+			raise ValueError("Latest staged receipt has no primary_id to resolve '@last'.")
+		return primary
+
+	for candidate in (receipt, receipt.get("ids"), receipt.get("data"), receipt.get("result")):
+		if isinstance(candidate, dict):
+			found, val = _traverse_path(candidate, path)
+			if found and val is not None:
+				return val
+	raise ValueError(f"Could not resolve '@last.{path}' from latest staged receipt.")
+
+
+def resolve_at_last_value(
+	val: Any,
+	*,
+	staged_dir: Optional[str | Path] = None,
+	_receipt_cache: Optional[dict[str, Any]] = None,
+) -> Any:
+	"""Recursively resolve @last and @last.<field> tokens from .ism_staged/latest.json."""
+	cache = _receipt_cache if _receipt_cache is not None else {}
+
+	def _get_receipt() -> dict[str, Any]:
+		if "receipt" not in cache:
+			resp = read_latest_receipt(staged_dir=staged_dir)
+			rec = resp.get("data")
+			if not isinstance(rec, dict):
+				raise ValueError("Latest staged receipt is empty.")
+			cache["receipt"] = rec
+		return cache["receipt"]
+
+	if isinstance(val, str):
+		if not _AT_LAST_RE.search(val):
+			return val
+		stripped = val.strip()
+		exact = _AT_LAST_RE.fullmatch(stripped)
+		if exact:
+			return _lookup_at_last_token(exact.group(1), _get_receipt())
+		return _AT_LAST_RE.sub(
+			lambda m: _stringify_resolved_value(_lookup_at_last_token(m.group(1), _get_receipt())),
+			val,
+		)
+	if isinstance(val, list):
+		return [resolve_at_last_value(x, staged_dir=staged_dir, _receipt_cache=cache) for x in val]
+	if isinstance(val, tuple):
+		return tuple(resolve_at_last_value(x, staged_dir=staged_dir, _receipt_cache=cache) for x in val)
+	if isinstance(val, dict):
+		return {
+			k: resolve_at_last_value(v, staged_dir=staged_dir, _receipt_cache=cache)
+			for k, v in val.items()
+		}
+	return val
+
+
+def resolve_namespace_at_last(
+	args: argparse.Namespace,
+	*,
+	staged_dir: Optional[str | Path] = None,
+) -> argparse.Namespace:
+	"""Resolve @last tokens across parsed argparse.Namespace attributes."""
+	cache: dict[str, Any] = {}
+	for key, val in list(vars(args).items()):
+		if key in ("command", "env_file", "json", "summary", "dry_run", "stage"):
+			continue
+		if val is not None:
+			setattr(args, key, resolve_at_last_value(val, staged_dir=staged_dir, _receipt_cache=cache))
+	return args
+
+
+def _iter_strings(value: Any):
+	if isinstance(value, str):
+		yield value
+	elif isinstance(value, (list, tuple)):
+		for elem in value:
+			yield from _iter_strings(elem)
+	elif isinstance(value, dict):
+		for elem in value.values():
+			yield from _iter_strings(elem)
+	elif isinstance(value, argparse.Namespace):
+		for k, v in vars(value).items():
+			if k not in ("command", "env_file", "json", "summary", "dry_run", "stage"):
+				yield from _iter_strings(v)
+
+
+def validate_batch_step_references(items: list[Any], *, is_batch: bool = True) -> None:
+	"""Validate $stepN and $prev reference bounds before staging or executing."""
+	for idx, item in enumerate(items):
+		for text in _iter_strings(item):
+			for match in _STEP_TOKEN_RE.finditer(text):
+				target = match.group(1) or match.group(3) or ""
+				if not is_batch:
+					raise ValueError(
+						f"Step reference '${target}' is only supported inside 'batch' commands."
+					)
+				if target == "prev":
+					if idx == 0:
+						raise ValueError("Step 0 cannot reference '$prev'.")
+				elif target.startswith("step"):
+					ref_idx = int(target[4:])
+					if ref_idx >= idx:
+						valid = f"0..{idx - 1}" if idx > 0 else "none"
+						raise ValueError(
+							f"Step {idx} cannot reference future/current '$step{ref_idx}' (valid: {valid})."
+						)
+
+
+def _lookup_step_token(
+	target: str,
+	path: Optional[str],
+	step_idx: int,
+	prior_results: list[dict[str, Any]],
+) -> Any:
+	ref_idx = (step_idx - 1) if target == "prev" else int(target[4:])
+	if ref_idx < 0 or ref_idx >= step_idx or ref_idx >= len(prior_results):
+		raise ValueError(f"Step {step_idx} references out-of-range '${target}'.")
+	prior = prior_results[ref_idx]
+	if not prior.get("ok"):
+		raise ValueError(
+			f"Cannot resolve '${target}' at step {step_idx}: step {ref_idx} did not succeed."
+		)
+	res_obj = prior.get("result")
+	if not path:
+		meta = extract_receipt_metadata(
+			res_obj if isinstance(res_obj, dict) else {},
+			mode="single",
+			commands=[str(prior.get("command") or "")],
+		)
+		primary = meta.get("primary_id")
+		if not primary:
+			raise ValueError(f"Step {ref_idx} produced no primary ID for '${target}'.")
+		return primary
+
+	clean_path = path
+	if clean_path.startswith("result.") and (not isinstance(res_obj, dict) or "result" not in res_obj):
+		clean_path = clean_path[len("result.") :]
+	if isinstance(res_obj, dict):
+		found, resolved = _traverse_path(res_obj, clean_path)
+		if found:
+			return resolved
+		if isinstance(res_obj.get("data"), dict):
+			found, resolved = _traverse_path(res_obj["data"], clean_path)
+			if found:
+				return resolved
+	raise ValueError(f"Could not resolve '${target}.{path}' from step {ref_idx} result.")
+
+
+def resolve_step_tokens(value: Any, step_idx: int, prior_results: list[dict[str, Any]]) -> Any:
+	"""Recursively resolve $stepN.<field> and $prev.<field> tokens against prior batch outputs."""
+	if isinstance(value, str):
+		if not _STEP_TOKEN_RE.search(value):
+			return value
+		stripped = value.strip()
+		exact = _STEP_TOKEN_RE.fullmatch(stripped)
+		if exact:
+			target = exact.group(1) or exact.group(3) or ""
+			path = exact.group(2) if exact.group(1) else exact.group(4)
+			return _lookup_step_token(target, path, step_idx, prior_results)
+
+		def _replace(m: re.Match[str]) -> str:
+			target = m.group(1) or m.group(3) or ""
+			path = m.group(2) if m.group(1) else m.group(4)
+			return _stringify_resolved_value(_lookup_step_token(target, path, step_idx, prior_results))
+
+		return _STEP_TOKEN_RE.sub(_replace, value)
+	if isinstance(value, list):
+		return [resolve_step_tokens(x, step_idx, prior_results) for x in value]
+	if isinstance(value, tuple):
+		return tuple(resolve_step_tokens(x, step_idx, prior_results) for x in value)
+	if isinstance(value, dict):
+		return {k: resolve_step_tokens(v, step_idx, prior_results) for k, v in value.items()}
+	return value
+
+
+def _resolve_batch_item_to_argv(
+	item: Any,
+	step_idx: int,
+	prior_results: list[dict[str, Any]],
+	*,
+	staged_dir: Optional[str | Path] = None,
+) -> list[str]:
+	"""Convert a batch item to argv and resolve @last / $stepN / $prev references safely."""
+	cache: dict[str, Any] = {}
+	if isinstance(item, (dict, list)):
+		resolved_item = resolve_at_last_value(item, staged_dir=staged_dir, _receipt_cache=cache)
+		resolved_item = resolve_step_tokens(resolved_item, step_idx, prior_results)
+		return _batch_item_to_argv(resolved_item)
+	argv_item = _batch_item_to_argv(item)
+	out: list[str] = []
+	for tok in argv_item:
+		tok_val = resolve_at_last_value(tok, staged_dir=staged_dir, _receipt_cache=cache)
+		tok_val = resolve_step_tokens(tok_val, step_idx, prior_results)
+		out.append(_stringify_resolved_value(tok_val))
+	return out
 
 
 def _dict_args_to_argv(cmd: str, kwargs: dict[str, Any]) -> list[str]:
 	"""Convert a command name and flag dictionary into CLI argv tokens."""
 	argv = [cmd]
 	positional_key = _POSITIONAL_ARG_BY_CMD.get(cmd)
-	if positional_key and kwargs.get(positional_key) is not None:
+	if positional_key and kwargs.get(positional_key) is not None and str(kwargs[positional_key]).strip() != "":
 		argv.append(str(kwargs[positional_key]))
 	for key, val in kwargs.items():
 		if key == positional_key:
@@ -284,11 +521,19 @@ def _dict_args_to_argv(cmd: str, kwargs: dict[str, Any]) -> list[str]:
 				argv.extend([flag, json.dumps(val)])
 			else:
 				for elem in val:
-					argv.extend([flag, str(elem)])
+					elem_str = str(elem)
+					if elem_str.startswith("-"):
+						argv.append(f"{flag}={elem_str}")
+					else:
+						argv.extend([flag, elem_str])
 		elif isinstance(val, dict):
 			argv.extend([flag, json.dumps(val)])
 		else:
-			argv.extend([flag, str(val)])
+			val_str = str(val)
+			if val_str.startswith("-"):
+				argv.append(f"{flag}={val_str}")
+			else:
+				argv.extend([flag, val_str])
 	return argv
 
 
@@ -342,6 +587,8 @@ def _parse_batch_subcommand(
 		sub_args = parser.parse_args(argv_item)
 	if sub_args.command in ("batch", "test", "verify-connection"):
 		raise ValueError(f"Command '{sub_args.command}' is not allowed inside batch.")
+	if bool(getattr(sub_args, "stage", False)):
+		raise ValueError("Nested '--stage' is not allowed inside batch subcommands.")
 	return cmd_label, sub_args
 
 
@@ -357,7 +604,8 @@ def _cmd_batch(
 	for idx, item in enumerate(items):
 		cmd_label: Optional[str] = None
 		try:
-			cmd_label, sub_args = _parse_batch_subcommand(item, parser, suppress_stderr=True)
+			resolved_argv = _resolve_batch_item_to_argv(item, idx, results)
+			cmd_label, sub_args = _parse_batch_subcommand(resolved_argv, parser, suppress_stderr=True)
 			cmd_label = sub_args.command
 			missing = validate_write_command_args(sub_args)
 			if sub_args.command in READ_ONLY_COMMANDS:
@@ -398,6 +646,10 @@ def _cmd_batch(
 		"failed": failed,
 		"results": results,
 	}
+
+
+def _cmd_stage_receipt(a: argparse.Namespace, _c: Optional[IsmAgentClient], _s: bool) -> dict[str, Any]:
+	return read_latest_receipt(stage_id=getattr(a, "stage_id", None))
 
 
 _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool], Any]] = {
@@ -671,6 +923,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 	"call-method": lambda a, c, _s: c.call_method(
 		method=a.method, args=_parse_json_opt(a.args_json, expected_type=dict)
 	),
+	"stage-receipt": _cmd_stage_receipt,
 }
 
 

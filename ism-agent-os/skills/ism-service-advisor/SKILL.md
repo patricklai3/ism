@@ -41,10 +41,11 @@ description: >-
 4. **Surface deferred services**: Check `data.deferred_services` (`deferred_count > 0`) returned by `quote` or `vehicle-info`. Highlight any `safety_hazard` items immediately and offer `add-deferred`.
 5. **Server math, parts pricing & links**: Never compute labor rates, durations, or 13% HST manually; calculate part selling rates via `price-part` (reusing non-zero Frappe `Item.standard_rate` on repeat quotes unless a fresh Tesla lookup at `https://parts.tesla.com/en-CA/find-part?searchTerm=<query>` is requested, and keeping Tesla comparison data out of customer-facing quote text). Return server totals from `data` and Desk/Print/Approval links from `urls` (pass `--summary` only if a markdown `summary_card` is requested).
 
-## Required Fields & Pre-Dispatch Callback
+## Required Fields, `--stage` & Pre-Dispatch Callback
 
 - **`quote` / `intake-slots` required fields**: `--customer`, `--vehicle`, `--odometer-in` (`>= 0`; NEVER guess or default), and at least one `--service`/`--services-json`/`--notes`.
-- **Mandatory Callback**: Before executing any write (`quote`, `intake-slots`, `amend-quote`, `send-approval`, `add-deferred`), run read-only checks or `--dry-run`, output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation. When planning `quote -> amend-quote + send-approval`, explicitly list `quote`, `amend-quote`, and `send-approval` in the Pre-Dispatch Summary and plan step 2 as one `batch` call (`--cmd "amend-quote ..." --cmd "send-approval ..."`), so Turn 2 executes `batch` in a single CLI call (and passes the write-gate hook).
+- **Preferred Turn-1 Staged Form (`--stage`)**: Stage single writes (`python -m tools.cli --json --stage quote ...`) or chained pipelines (`python -m tools.cli --json --stage batch --cmd "quote ..." --cmd "amend-quote --repair-order '$step0.data.name' ..." --cmd "send-approval --repair-order '$prev.data.name' --medium link"`), even when `--odometer-in` or optional fields need user input. Present the returned `127.0.0.1` URL and end the turn. On follow-up turns, read created IDs via `python -m tools.cli --json stage-receipt` or pass `@last` / `@last.<field>`.
+- **Legacy Callback (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), run `--dry-run`, output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing live writes.
 
 ## Verification
 

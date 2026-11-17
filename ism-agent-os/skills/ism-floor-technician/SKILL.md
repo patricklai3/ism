@@ -32,11 +32,12 @@ description: >-
 2. **Batch multi-step floor updates**: Use `python -m tools.cli --json batch --cmd "..." --cmd "..."` (or `--file @cmds.json`) instead of PowerShell stdin pipes for chained actions (e.g., `job-status --action hold` + `check-stock`, or `toggle-service` + `job-status --action complete`). Pass multiple rows to `toggle-service --service-row <R1> <R2>` in one call.
 3. **Human confirmation for checkout**: Never run `checkout --confirm` without explicit human confirmation.
 
-## Required Fields & Pre-Dispatch Callback
+## Required Fields, `--stage` & Pre-Dispatch Callback
 
 - **`job-status --action complete` required fields**: `--repair-order`, `--action complete`, and `--odometer-out` (`>= odometer_in`).
 - **`checkout` required fields**: `--repair-order`, `--payment-method` (no silent default), `--odometer-out` (`>= odometer_in`), and `--confirm`.
-- **Mandatory Callback**: Run `--dry-run` first, output `### ISM Pre-Dispatch Summary` (flagging any missing required fields), and wait for explicit user confirmation before executing any floor write or checkout.
+- **Preferred Turn-1 Staged Form (`--stage`)**: Stage floor writes (`job-status`, `toggle-service`, `record-inspection`, `add-supplement`, `duplicate-side`, `checkout`) via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch` with `$stepN.<field>` / `$prev.<field>`), present the returned `127.0.0.1` URL for the technician/advisor to fill missing fields (like `--odometer-out` or `--payment-method` + `--confirm`) and submit locally, and recall submitted results with `python -m tools.cli --json stage-receipt` or `@last`.
+- **Legacy Callback (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), run `--dry-run` first, output `### ISM Pre-Dispatch Summary`, and wait for explicit user confirmation before executing any floor write or checkout.
 
 ## Verification
 

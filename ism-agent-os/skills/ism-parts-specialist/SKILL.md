@@ -60,12 +60,14 @@ Suppliers often require payment at order time before goods arrive, and the suppl
    - Then invoice/receive directly using the exact `purchase-invoice` flags (`python -m tools.cli --json purchase-invoice --purchase-order <PO> --update-stock --bill-no <NO> --bill-date <YYYY-MM-DD>`; omit `--update-stock` if goods arrive later, or use `python -m tools.cli --json receive-po --purchase-order <PO>` for receipt only) — do **NOT** run `--help`.
    - If `list-docs` returns no open PO for that supplier, **STOP** and report that no open Purchase Order was found for that supplier — **NEVER** substitute or fall back to another supplier's Purchase Order.
 
-## Required Fields & Pre-Dispatch Callback
+## Required Fields, `--stage` & Pre-Dispatch Callback
 
-- **`procure` / `pay-purchase` / `purchase-invoice` / `receive-po` / `ingest-parts` / `import-tesla` / `ingest-tesla`**: Output `### ISM Pre-Dispatch Summary` via `--dry-run` before dispatching live writes.
+- **`procure` / `pay-purchase` / `purchase-invoice` / `receive-po` / `ingest-parts` / `import-tesla` / `ingest-tesla`**:
+  - **Preferred (`--stage`)**: Stage procurement or parts writes via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch --cmd "procure ..." --cmd "receive-po --purchase-order '$step0.data.purchase_orders.0'"`), present the returned `127.0.0.1` URL so the operator can fill any missing fields (`--payment-method`, `--service-package`, `--bill-no`) and submit locally, and use `python -m tools.cli --json stage-receipt` or `@last` (`@last.purchase_order`) on follow-up turns.
+  - **Legacy (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), output `### ISM Pre-Dispatch Summary` via `--dry-run` before dispatching live writes.
 - Do **NOT** require `--repair-order` on `procure`.
 - `--service-package` is **REQUIRED** on `ingest-parts` so every newly ingested part is nested under at least one `Service Package`.
-- When payment is recorded (`pay-purchase`, or `procure` with `--paid-amount`), `--payment-method` is required; if the user wrote e.g. `"paid $150 +hst"` without stating the payment method, flag `--payment-method` as missing in the Pre-Dispatch Summary rather than guessing.
+- When payment is recorded (`pay-purchase`, or `procure` with `--paid-amount`), `--payment-method` is required; if the user wrote e.g. `"paid $150 +hst"` without stating the payment method, flag `--payment-method` as missing rather than guessing.
 
 ## Verification
 

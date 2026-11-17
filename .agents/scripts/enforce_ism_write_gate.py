@@ -273,14 +273,19 @@ def _parse_write_commands(
 
 	err_buf = io.StringIO()
 	old_cwd = os.getcwd()
+	has_stage_token = "--stage" in argv
 	try:
 		if cwd_path and cwd_path.is_dir():
 			os.chdir(cwd_path)
 		import contextlib
 
+		active_parser = _build_parser(relax_required=True) if has_stage_token else parser
 		with contextlib.redirect_stderr(err_buf):
-			args = parser.parse_args(argv)
-		if bool(getattr(args, "dry_run", False)):
+			args = active_parser.parse_args(argv)
+		if has_stage_token and not bool(getattr(args, "stage", False)):
+			with contextlib.redirect_stderr(err_buf):
+				args = parser.parse_args(argv)
+		if bool(getattr(args, "dry_run", False)) or bool(getattr(args, "stage", False)):
 			return ([], None)
 		if args.command in READ_ONLY_COMMANDS:
 			return ([], None)
@@ -346,6 +351,13 @@ def evaluate_hook_payload(payload: dict[str, Any]) -> tuple[str, Optional[str]]:
 
 	if not write_namespaces:
 		return ("allow", None)
+
+	if os.environ.get("ISM_STAGE_ONLY", "").strip().lower() in ("1", "true", "yes", "on"):
+		return (
+			"deny",
+			f"Blocked live ISM write command(s) [{', '.join(ns.command for ns in write_namespaces)}]: "
+			"ISM_STAGE_ONLY=1 requires staging writes via `--stage` instead of direct live execution.",
+		)
 
 	for ns in write_namespaces:
 		missing = validate_write_command_args(ns)

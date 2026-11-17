@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ISM Staged Action Review</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-2: #0b1220;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent-hover: #0ea5e9;
+    --ok: #22c55e;
+    --ok-bg: rgba(34, 197, 94, 0.14);
+    --warn: #f59e0b;
+    --warn-bg: rgba(245, 158, 11, 0.15);
+    --err: #ef4444;
+    --err-bg: rgba(239, 68, 68, 0.16);
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --sans: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px 64px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.45;
+  }
+  .container {
+    max-width: 860px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 4px;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .mono { font-family: var(--mono); }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+  }
+  .pill.pending { border-color: var(--warn); color: #fcd34d; background: var(--warn-bg); }
+  .pill.ready { border-color: var(--ok); color: #86efac; background: var(--ok-bg); }
+  .pill.submitted { border-color: var(--ok); color: #86efac; background: var(--ok-bg); }
+  .pill.error, .pill.expired { border-color: var(--err); color: #fca5a5; background: var(--err-bg); }
+  .banner {
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
+    font-size: 0.9rem;
+  }
+  .banner.warn { border-color: var(--warn); background: var(--warn-bg); color: #fde68a; }
+  .banner.err { border-color: var(--err); background: var(--err-bg); color: #fecaca; }
+  .banner.ok { border-color: var(--ok); background: var(--ok-bg); color: #bbf7d0; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 16px;
+  }
+  .card.step-done {
+    border-color: rgba(34, 197, 94, 0.45);
+    opacity: 0.92;
+  }
+  .card-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    padding-bottom: 12px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .step-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 1rem;
+  }
+  .cmd-tag {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--accent);
+  }
+  .target-badge {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    background: var(--surface-2);
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px 14px;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .field.full { grid-column: 1 / -1; }
+  .field-label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 0.84rem;
+    font-weight: 600;
+  }
+  .flag-hint {
+    font-family: var(--mono);
+    font-size: 0.73rem;
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .badge-missing {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--err-bg);
+    border: 1px solid var(--err);
+    color: #fca5a5;
+  }
+  .badge-chain {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(56, 189, 248, 0.14);
+    border: 1px solid var(--accent);
+    color: #bae6fd;
+  }
+  input[type="text"],
+  input[type="number"],
+  input[type="date"],
+  input[type="time"],
+  select,
+  textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 0.9rem;
+  }
+  textarea {
+    min-height: 74px;
+    resize: vertical;
+  }
+  textarea.json-box {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    min-height: 86px;
+  }
+  input.is-missing, textarea.is-missing, select.is-missing {
+    border-color: var(--warn);
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35);
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+  }
+  input:disabled, textarea:disabled, select:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+  .check-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .check-wrap.is-missing {
+    border-color: var(--warn);
+  }
+  .check-wrap input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+  }
+  details.opt-group {
+    margin-top: 14px;
+    border-top: 1px dashed var(--border);
+    padding-top: 10px;
+  }
+  details.opt-group summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.84rem;
+    font-weight: 600;
+    user-select: none;
+    margin-bottom: 10px;
+  }
+  .any-of-box {
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    font-size: 0.8rem;
+    border: 1px solid var(--warn);
+    background: var(--warn-bg);
+    color: #fde68a;
+  }
+  .any-of-box.ok {
+    border-color: var(--border);
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+    margin-top: 18px;
+  }
+  button.primary {
+    background: var(--accent);
+    color: #082f49;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 22px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+  button.primary:disabled { opacity: 0.55; cursor: not-allowed; }
+  .slot-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  button.slot-pill {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 6px 13px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.slot-pill:hover:not(:disabled) {
+    background: rgba(56, 189, 248, 0.2);
+  }
+  .receipt-ids {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .id-box {
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .id-box .k {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .id-box .v {
+    font-family: var(--mono);
+    font-size: 1rem;
+    font-weight: 700;
+    color: #86efac;
+  }
+  .links-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  a.link-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 7px;
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.84rem;
+    font-weight: 600;
+  }
+  a.link-btn:hover { background: rgba(56, 189, 248, 0.14); }
+  .kv-table {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px 14px;
+    margin-top: 10px;
+    font-size: 0.86rem;
+  }
+  .kv-item {
+    background: var(--surface-2);
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .kv-item .k { color: var(--muted); font-size: 0.74rem; }
+  .kv-item .v { font-weight: 600; margin-top: 2px; word-break: break-word; }
+  .field-err {
+    font-size: 0.76rem;
+    color: #fca5a5;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1>ISM Staged Action Review</h1>
+      <div class="meta-row">
+        <span>Stage: <code id="stage-id" class="mono">-</code></span>
+        <span id="mode-pill" class="pill">-</span>
+      </div>
+    </div>
+    <span id="status-pill" class="pill">Loading...</span>
+  </header>
+
+  <div id="top-banner" style="display:none;"></div>
+  <div id="conflict-panel" style="display:none;"></div>
+  <div id="receipt-panel" style="display:none;"></div>
+
+  <form id="stage-form" novalidate>
+    <div id="steps-root"></div>
+    <div id="actions-bar" class="actions" style="display:none;">
+      <button id="submit-btn" type="submit" class="primary">Confirm &amp; Submit</button>
+    </div>
+  </form>
+</div>
+
+<script>
+(() => {
+  const params = new URLSearchParams(window.location.search);
+  const stageId = params.get("id") || "";
+  const token = params.get("token") || "";
+
+  const stageIdEl = document.getElementById("stage-id");
+  const modePillEl = document.getElementById("mode-pill");
+  const statusPillEl = document.getElementById("status-pill");
+  const topBannerEl = document.getElementById("top-banner");
+  const conflictPanelEl = document.getElementById("conflict-panel");
+  const receiptPanelEl = document.getElementById("receipt-panel");
+  const stepsRootEl = document.getElementById("steps-root");
+  const actionsBarEl = document.getElementById("actions-bar");
+  const submitBtnEl = document.getElementById("submit-btn");
+  const formEl = document.getElementById("stage-form");
+
+  let stageState = null;
+  let submitting = false;
+
+  function escapeHtml(val) {
+    return String(val ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function showBanner(kind, text) {
+    if (!text) {
+      topBannerEl.style.display = "none";
+      topBannerEl.innerHTML = "";
+      return;
+    }
+    topBannerEl.className = `banner ${kind}`;
+    topBannerEl.textContent = text;
+    topBannerEl.style.display = "block";
+  }
+
+  function setStatusPill(status, ready) {
+    statusPillEl.className = "pill";
+    if (status === "submitted") {
+      statusPillEl.classList.add("submitted");
+      statusPillEl.textContent = "Submitted";
+    } else if (status === "expired") {
+      statusPillEl.classList.add("expired");
+      statusPillEl.textContent = "Expired";
+    } else if (status === "executing") {
+      statusPillEl.classList.add("pending");
+      statusPillEl.textContent = "Executing...";
+    } else if (ready) {
+      statusPillEl.classList.add("ready");
+      statusPillEl.textContent = "Ready to Submit";
+    } else {
+      statusPillEl.classList.add("pending");
+      statusPillEl.textContent = "Input Required";
+    }
+  }
+
+  function formatInitialValue(fspec) {
+    const val = fspec.value;
+    if (val === null || val === undefined) return "";
+    if (fspec.multi && Array.isArray(val)) return val.join("\n");
+    if (fspec.type === "json" && typeof val === "object") return JSON.stringify(val, null, 2);
+    return String(val);
+  }
+
+  function hasFieldValue(fspec) {
+    if (fspec.type === "bool") return Boolean(fspec.value);
+    if (Array.isArray(fspec.value)) return fspec.value.length > 0;
+    return fspec.value !== null && fspec.value !== undefined && String(fspec.value).trim() !== "";
+  }
+
+  function isStepRefValue(val) {
+    return typeof val === "string" && /\$(?:\{(?:step\d+|prev)(?:\.[A-Za-z0-9_.-]+)?\}|(?:step\d+|prev)(?:\.[A-Za-z0-9_.-]+)?)/.test(val);
+  }
+
+  function buildFieldControl(stepIdx, fspec, disabled) {
+    const fieldId = `f-${stepIdx}-${fspec.name}`;
+    const initStr = formatInitialValue(fspec);
+    const wrap = document.createElement("div");
+    wrap.className = "field" + (fspec.type === "textarea" || fspec.type === "json" ? " full" : "");
+
+    const labelRow = document.createElement("div");
+    labelRow.className = "field-label";
+    const leftSpan = document.createElement("span");
+    leftSpan.innerHTML = `${escapeHtml(fspec.label)} <span class="flag-hint">${escapeHtml(fspec.flag)}</span>`;
+    labelRow.appendChild(leftSpan);
+
+    const badgeWrap = document.createElement("span");
+    if (fspec.missing || fspec.invalid) {
+      const b = document.createElement("span");
+      b.className = "badge-missing";
+      b.textContent = fspec.invalid ? "INVALID" : "MISSING — REQUIRED";
+      badgeWrap.appendChild(b);
+    } else if (fspec.is_step_ref || isStepRefValue(fspec.value)) {
+      const b = document.createElement("span");
+      b.className = "badge-chain";
+      b.textContent = "Chained from prior step";
+      badgeWrap.appendChild(b);
+    }
+    labelRow.appendChild(badgeWrap);
+    wrap.appendChild(labelRow);
+
+    let inputEl;
+    const isStepRef = isStepRefValue(initStr);
+    const effectiveType = isStepRef && (fspec.type === "int" || fspec.type === "float" || fspec.type === "date" || fspec.type === "time")
+      ? "text"
+      : fspec.type;
+
+    if (effectiveType === "bool") {
+      const lbl = document.createElement("label");
+      lbl.className = "check-wrap" + (fspec.missing ? " is-missing" : "");
+      inputEl = document.createElement("input");
+      inputEl.type = "checkbox";
+      inputEl.id = fieldId;
+      inputEl.checked = Boolean(fspec.value);
+      inputEl.disabled = disabled;
+      const txt = document.createElement("span");
+      txt.textContent = fspec.label;
+      lbl.appendChild(inputEl);
+      lbl.appendChild(txt);
+      wrap.appendChild(lbl);
+    } else if (effectiveType === "select") {
+      inputEl = document.createElement("select");
+      inputEl.id = fieldId;
+      inputEl.disabled = disabled;
+      const choices = Array.isArray(fspec.choices) ? fspec.choices : [];
+      if (!fspec.required || !choices.includes(initStr)) {
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "-- Select --";
+        inputEl.appendChild(blank);
+      }
+      for (const ch of choices) {
+        const opt = document.createElement("option");
+        opt.value = ch;
+        opt.textContent = ch === "" ? "(none)" : ch;
+        if (ch === initStr) opt.selected = true;
+        inputEl.appendChild(opt);
+      }
+      if (fspec.missing || fspec.invalid) inputEl.classList.add("is-missing");
+      wrap.appendChild(inputEl);
+    } else if (effectiveType === "textarea" || effectiveType === "json") {
+      inputEl = document.createElement("textarea");
+      inputEl.id = fieldId;
+      if (effectiveType === "json") inputEl.classList.add("json-box");
+      inputEl.value = initStr;
+      inputEl.placeholder = fspec.placeholder || "";
+      inputEl.disabled = disabled;
+      if (fspec.missing || fspec.invalid) inputEl.classList.add("is-missing");
+      wrap.appendChild(inputEl);
+    } else {
+      inputEl = document.createElement("input");
+      inputEl.id = fieldId;
+      if (effectiveType === "int" || effectiveType === "float") {
+        inputEl.type = "number";
+        inputEl.step = effectiveType === "int" ? "1" : "any";
+        if (fspec.min !== null && fspec.min !== undefined) inputEl.min = String(fspec.min);
+      } else if (effectiveType === "date") {
+        inputEl.type = "date";
+      } else if (effectiveType === "time") {
+        inputEl.type = "time";
+        inputEl.step = "1";
+      } else {
+        inputEl.type = "text";
+      }
+      inputEl.value = initStr;
+      inputEl.placeholder = fspec.placeholder || "";
+      inputEl.disabled = disabled;
+      if (Array.isArray(fspec.suggestions) && fspec.suggestions.length > 0) {
+        const dlId = `${fieldId}-list`;
+        const dl = document.createElement("datalist");
+        dl.id = dlId;
+        for (const s of fspec.suggestions) {
+          const opt = document.createElement("option");
+          opt.value = s;
+          dl.appendChild(opt);
+        }
+        inputEl.setAttribute("list", dlId);
+        wrap.appendChild(dl);
+      }
+      if (fspec.missing || fspec.invalid) inputEl.classList.add("is-missing");
+      wrap.appendChild(inputEl);
+    }
+
+    inputEl.dataset.stepIndex = String(stepIdx);
+    inputEl.dataset.fieldName = fspec.name;
+    inputEl.dataset.fieldType = fspec.type;
+    inputEl.dataset.multi = fspec.multi ? "1" : "0";
+    inputEl.dataset.required = fspec.required ? "1" : "0";
+    if (fspec.missing || fspec.invalid) inputEl.dataset.needsFocus = "1";
+
+    const errEl = document.createElement("div");
+    errEl.className = "field-err";
+    errEl.id = `${fieldId}-err`;
+    wrap.appendChild(errEl);
+    return wrap;
+  }
+
+  function renderSteps(state) {
+    stepsRootEl.innerHTML = "";
+    const steps = state.commands || [];
+    const globalLocked = state.status === "submitted" || state.status === "expired";
+
+    steps.forEach((step, idx) => {
+      const card = document.createElement("section");
+      const stepLocked = globalLocked || Boolean(step.completed);
+      card.className = "card" + (step.completed ? " step-done" : "");
+
+      const head = document.createElement("div");
+      head.className = "card-head";
+      const stepBadge = steps.length > 1 ? `<span>Step ${idx + 1}</span>` : "<span>Action</span>";
+      const donePill = step.completed
+        ? '<span class="pill ready">Completed</span>'
+        : (step.ready ? '<span class="pill ready">Ready</span>' : '<span class="pill pending">Needs Input</span>');
+      head.innerHTML = `
+        <div class="step-title">
+          ${stepBadge}
+          <span class="cmd-tag">${escapeHtml(step.command)}</span>
+          ${donePill}
+        </div>
+        <div class="target-badge">${escapeHtml(step.target || "")}</div>
+      `;
+      card.appendChild(head);
+
+      const anyOfList = step.any_of || [];
+      for (const grp of anyOfList) {
+        if (!grp.satisfied) {
+          const box = document.createElement("div");
+          box.className = "any-of-box";
+          box.textContent = `Provide at least one: ${grp.label}`;
+          card.appendChild(box);
+        }
+      }
+
+      const primaryFields = [];
+      const optionalFields = [];
+      for (const f of step.fields || []) {
+        if (f.required || f.missing || f.invalid || hasFieldValue(f) || f.any_of_group) {
+          primaryFields.push(f);
+        } else {
+          optionalFields.push(f);
+        }
+      }
+
+      const primaryGrid = document.createElement("div");
+      primaryGrid.className = "grid";
+      for (const f of primaryFields) {
+        primaryGrid.appendChild(buildFieldControl(idx, f, stepLocked));
+      }
+      card.appendChild(primaryGrid);
+
+      if (optionalFields.length > 0) {
+        const details = document.createElement("details");
+        details.className = "opt-group";
+        const summary = document.createElement("summary");
+        summary.textContent = `Optional fields (${optionalFields.length})`;
+        details.appendChild(summary);
+        const optGrid = document.createElement("div");
+        optGrid.className = "grid";
+        for (const f of optionalFields) {
+          optGrid.appendChild(buildFieldControl(idx, f, stepLocked));
+        }
+        details.appendChild(optGrid);
+        card.appendChild(details);
+      }
+
+      stepsRootEl.appendChild(card);
+    });
+
+    actionsBarEl.style.display = globalLocked ? "none" : "flex";
+    const focusTarget = stepsRootEl.querySelector('[data-needs-focus="1"]:not(:disabled)');
+    if (focusTarget) {
+      focusTarget.focus();
+    }
+  }
+
+  function renderReceipt(receipt) {
+    if (!receipt) {
+      receiptPanelEl.style.display = "none";
+      receiptPanelEl.innerHTML = "";
+      return;
+    }
+    const ids = receipt.ids || {};
+    const data = receipt.data || {};
+    const urls = receipt.urls || {};
+
+    const idEntries = Object.entries(ids).filter(([, v]) => Boolean(v));
+    const idHtml = idEntries.map(([k, v]) => `
+      <div class="id-box">
+        <div class="k">${escapeHtml(k.replace(/_/g, " "))}</div>
+        <div class="v">${escapeHtml(v)}</div>
+      </div>
+    `).join("");
+
+    const summaryKeys = [
+      ["status", "Status"],
+      ["approval_status", "Approval Status"],
+      ["customer", "Customer"],
+      ["vehicle", "Vehicle"],
+      ["scheduled_date", "Scheduled Date"],
+      ["scheduled_time", "Scheduled Time"],
+      ["service_bay", "Service Bay"],
+      ["assigned_technician", "Technician"],
+      ["grand_total", "Grand Total"],
+      ["total_tax", "Tax"],
+      ["outstanding_amount", "Outstanding"],
+      ["paid_amount", "Paid"],
+    ];
+    const kvHtml = summaryKeys
+      .filter(([k]) => data[k] !== undefined && data[k] !== null && data[k] !== "")
+      .map(([k, label]) => `
+        <div class="kv-item">
+          <div class="k">${escapeHtml(label)}</div>
+          <div class="v">${escapeHtml(data[k])}</div>
+        </div>
+      `).join("");
+
+    const linksHtml = Object.entries(urls)
+      .filter(([, href]) => typeof href === "string" && /^https?:\/\//i.test(href))
+      .map(([name, href]) => `<a class="link-btn" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(name.replace(/_/g, " "))}</a>`)
+      .join("");
+
+    receiptPanelEl.className = "card";
+    receiptPanelEl.innerHTML = `
+      <div class="card-head">
+        <div class="step-title">Submitted Receipt <span class="pill ready">${escapeHtml(receipt.primary_id || "Done")}</span></div>
+        <div class="target-badge">${escapeHtml((receipt.commands || []).join(" -> "))}</div>
+      </div>
+      ${idHtml ? `<div class="receipt-ids">${idHtml}</div>` : ""}
+      ${kvHtml ? `<div class="kv-table">${kvHtml}</div>` : ""}
+      ${linksHtml ? `<div class="links-row">${linksHtml}</div>` : ""}
+    `;
+    receiptPanelEl.style.display = "block";
+  }
+
+  function renderConflict(resp) {
+    const slots = resp.alternatives || resp.available_slots || [];
+    const failedStep = typeof resp.failed_step === "number" ? resp.failed_step : 0;
+    if (!resp.conflict && slots.length === 0) {
+      conflictPanelEl.style.display = "none";
+      conflictPanelEl.innerHTML = "";
+      return;
+    }
+
+    conflictPanelEl.className = "banner warn";
+    conflictPanelEl.innerHTML = `
+      <strong>Scheduling Conflict / Ambiguity</strong>
+      <div>${escapeHtml(resp.error || "Select an available alternative below to retry:")}</div>
+      <div class="slot-pills" id="slot-pills-row"></div>
+    `;
+    const row = conflictPanelEl.querySelector("#slot-pills-row");
+    for (const slot of slots) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "slot-pill";
+      btn.textContent = slot.label || "Select Slot & Retry";
+      btn.addEventListener("click", () => applySlotAndRetry(failedStep, slot));
+      row.appendChild(btn);
+    }
+    conflictPanelEl.style.display = "block";
+  }
+
+  function applySlotAndRetry(stepIdx, slot) {
+    const updates = [
+      ["date", slot.date],
+      ["time", slot.start_time || slot.time],
+      ["bay", slot.service_bay || slot.bay],
+      ["tech", slot.technician || slot.tech],
+      ["technician", slot.technician || slot.tech],
+    ];
+    for (const [fname, val] of updates) {
+      if (!val) continue;
+      const el = document.getElementById(`f-${stepIdx}-${fname}`);
+      if (el && !el.disabled) {
+        if (fname === "time" && el.type === "time" && String(val).length === 5) {
+          el.value = `${val}:00`;
+        } else {
+          el.value = String(val);
+        }
+      }
+    }
+    submitForm();
+  }
+
+  function collectPayload() {
+    const steps = stageState.commands || [];
+    let clientValid = true;
+    const stepPayloads = [];
+
+    steps.forEach((step, idx) => {
+      const values = {};
+      for (const fspec of step.fields || []) {
+        const el = document.getElementById(`f-${idx}-${fspec.name}`);
+        const errEl = document.getElementById(`f-${idx}-${fspec.name}-err`);
+        if (errEl) errEl.textContent = "";
+        if (!el) {
+          values[fspec.name] = step.values ? step.values[fspec.name] : null;
+          continue;
+        }
+        if (step.completed) {
+          values[fspec.name] = step.values ? step.values[fspec.name] : null;
+          continue;
+        }
+        let val;
+        if (fspec.type === "bool") {
+          val = Boolean(el.checked);
+        } else if (fspec.multi) {
+          const lines = el.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+          val = lines.length > 0 ? lines : null;
+        } else {
+          const trimmed = el.value.trim();
+          val = trimmed === "" ? null : trimmed;
+        }
+        values[fspec.name] = val;
+
+        const isEmpty = val === null || val === false || (Array.isArray(val) && val.length === 0);
+        if (fspec.required && isEmpty) {
+          clientValid = false;
+          el.classList.add("is-missing");
+          if (errEl) errEl.textContent = `${fspec.flag} is required.`;
+        } else if (fspec.type === "int" && val !== null && !isStepRefValue(val) && !String(val).includes("@last")) {
+          if (!/^-?\d+$/.test(String(val)) || (fspec.min !== null && fspec.min !== undefined && Number(val) < Number(fspec.min))) {
+            clientValid = false;
+            el.classList.add("is-missing");
+            if (errEl) errEl.textContent = `Must be an integer >= ${fspec.min ?? 0}.`;
+          } else {
+            el.classList.remove("is-missing");
+          }
+        } else if (fspec.type === "json" && typeof val === "string" && !isStepRefValue(val) && !val.startsWith("@")) {
+          try {
+            JSON.parse(val);
+            el.classList.remove("is-missing");
+          } catch (e) {
+            clientValid = false;
+            el.classList.add("is-missing");
+            if (errEl) errEl.textContent = `Invalid JSON: ${e.message}`;
+          }
+        } else {
+          el.classList.remove("is-missing");
+        }
+      }
+
+      for (const grp of step.any_of || []) {
+        const ok = (grp.fields || []).some((fn) => {
+          const v = values[fn];
+          return v !== null && v !== undefined && v !== false && !(Array.isArray(v) && v.length === 0);
+        });
+        if (!ok && !step.completed) {
+          clientValid = false;
+          showBanner("warn", `Step ${idx + 1} (${step.command}) requires at least one of: ${grp.label}`);
+        }
+      }
+
+      stepPayloads.push({ values });
+    });
+
+    return { clientValid, steps: stepPayloads };
+  }
+
+  async function submitForm() {
+    if (!stageState || submitting) return;
+    showBanner("", "");
+    const collected = collectPayload();
+    if (!collected.clientValid) {
+      const firstErr = stepsRootEl.querySelector(".is-missing:not(:disabled)");
+      if (firstErr) firstErr.focus();
+      return;
+    }
+
+    submitting = true;
+    submitBtnEl.disabled = true;
+    submitBtnEl.textContent = "Submitting...";
+    try {
+      const res = await fetch(`/api/stage/${encodeURIComponent(stageId)}/submit`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Stage-Token": token,
+        },
+        body: JSON.stringify({ steps: collected.steps }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        stageState.status = "submitted";
+        stageState.receipt = data.receipt;
+        setStatusPill("submitted", true);
+        conflictPanelEl.style.display = "none";
+        showBanner("ok", "Action executed successfully in Frappe.");
+        renderSteps(stageState);
+        renderReceipt(data.receipt);
+        return;
+      }
+
+      if (data.commands) {
+        stageState.commands = data.commands;
+        renderSteps(stageState);
+      }
+      if (res.status === 409 && data.receipt) {
+        stageState.status = data.status || "submitted";
+        setStatusPill(stageState.status, true);
+        renderSteps(stageState);
+        renderReceipt(data.receipt);
+      }
+      renderConflict(data);
+      showBanner("err", data.error || `Request failed (HTTP ${res.status}).`);
+    } catch (err) {
+      showBanner("err", `Network error: ${err.message}`);
+    } finally {
+      submitting = false;
+      submitBtnEl.disabled = false;
+      submitBtnEl.textContent = "Confirm & Submit";
+    }
+  }
+
+  formEl.addEventListener("submit", (evt) => {
+    evt.preventDefault();
+    submitForm();
+  });
+
+  async function init() {
+    stageIdEl.textContent = stageId || "unknown";
+    if (!stageId || !token) {
+      setStatusPill("expired", false);
+      showBanner("err", "Missing stage id or token in URL.");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/stage/${encodeURIComponent(stageId)}`, {
+        headers: { "X-Stage-Token": token },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setStatusPill("expired", false);
+        showBanner("err", data.error || `Failed to load staged action (HTTP ${res.status}).`);
+        return;
+      }
+      stageState = data;
+      modePillEl.textContent = data.mode === "batch" ? `Batch (${(data.commands || []).length} steps)` : "Single Action";
+      setStatusPill(data.status, data.ready);
+      if (data.last_error && data.status === "pending") {
+        showBanner("warn", data.last_error);
+      }
+      renderSteps(data);
+      if (data.status === "submitted" && data.receipt) {
+        showBanner("ok", "This staged action has already been submitted.");
+        renderReceipt(data.receipt);
+      } else if (data.status === "expired") {
+        showBanner("err", "This staged action has expired. Ask the agent to stage a new one.");
+      }
+    } catch (err) {
+      setStatusPill("expired", false);
+      showBanner("err", `Failed to connect to local staging daemon: ${err.message}`);
+    }
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
