@@ -1388,6 +1388,31 @@ class TestCli(unittest.TestCase):
 			confirm=True,
 		)
 
+		# Verify --dry-run / validate_write_command_args for amend-quote (--update-services without --notes),
+		# checkout (--payments without --payment-method), and deposit (positive vs non-positive amount)
+		for dry_argv in (
+			["--json", "--dry-run", "amend-quote", "--repair-order", "RO-100", "--update-services", json.dumps([{"idx": 1, "labor_hours": 1.5}])],
+			["--json", "--dry-run", "amend-quote", "--repair-order", "RO-100", "--discount-amount", "0"],
+			["--json", "--dry-run", "checkout", "--repair-order", "RO-100", "--payments", json.dumps(split_tenders), "--odometer-out", "51200", "--confirm"],
+			["--json", "--dry-run", "deposit", "RO-100", "--amount", "150"],
+		):
+			with patch("urllib.request.urlopen") as mock_open, \
+				patch("sys.stdout", new_callable=io.StringIO) as out:
+				code = cli.main(dry_argv)
+			self.assertEqual(code, 0, out.getvalue())
+			mock_open.assert_not_called()
+			dry_res = json.loads(out.getvalue())
+			self.assertTrue(dry_res["ready"], dry_res)
+
+		with patch("urllib.request.urlopen") as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "--dry-run", "deposit", "RO-100", "--amount", "0"])
+		self.assertEqual(code, 0)
+		mock_open.assert_not_called()
+		bad_dep = json.loads(out.getvalue())
+		self.assertFalse(bad_dep["ready"])
+		self.assertIn("deposit:--amount (must be > 0)", bad_dep["missing_required"])
+
 		# Direct CLI invocation for deposit
 		captured.clear()
 		with patch("urllib.request.urlopen", side_effect=_fake_urlopen), \
