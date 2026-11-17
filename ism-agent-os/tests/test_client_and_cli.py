@@ -1230,6 +1230,200 @@ class TestCli(unittest.TestCase):
 		self.assertEqual(proc.returncode, 0, proc.stderr)
 		self.assertTrue(json.loads(proc.stdout)["dry_run"])
 
+	def test_cli_and_client_amend_deposit_and_split_checkout(self) -> None:
+		client = IsmAgentClient(IsmConfig(url="http://127.0.0.1:8000", api_key="k", api_secret="s"))
+
+		with patch.object(client, "_call_agent", return_value={"success": True}) as mock_call:
+			client.amend_quote(
+				"RO-100",
+				update_services=[{"idx": 1, "labor_hours": 1.5, "discount_amount": 10.0}],
+				discount_amount=25.0,
+				shop_supplies_amount=15.0,
+				environmental_fee_amount=5.0,
+			)
+		mock_call.assert_called_once_with(
+			"amend_quote",
+			include_summary=False,
+			repair_order="RO-100",
+			add_services=None,
+			remove_service_indices=None,
+			update_services=[{"idx": 1, "labor_hours": 1.5, "discount_amount": 10.0}],
+			notes=None,
+			discount_amount=25.0,
+			shop_supplies_amount=15.0,
+			environmental_fee_amount=5.0,
+		)
+
+		with patch.object(client, "_call_agent", return_value={"success": True}) as mock_call:
+			client.record_ro_deposit("RO-100", amount=200.0, payment_method="Visa", reference_no="AUTH-42")
+		mock_call.assert_called_once_with(
+			"record_ro_deposit",
+			include_summary=False,
+			repair_order="RO-100",
+			amount=200.0,
+			payment_method="Visa",
+			reference_no="AUTH-42",
+		)
+
+		split_tenders = [
+			{"payment_method": "Visa", "amount": 150.0, "reference_no": "V-1"},
+			{"payment_method": "Cash", "amount": 50.0},
+		]
+		with patch.object(client, "_call_agent", return_value={"success": True}) as mock_call:
+			client.checkout_repair_order("RO-100", odometer_out=51200, payments=split_tenders, confirm=True)
+		mock_call.assert_called_once_with(
+			"checkout_repair_order",
+			include_summary=False,
+			repair_order="RO-100",
+			payment_method=None,
+			paid_amount=None,
+			odometer_out=51200,
+			payments=split_tenders,
+			confirm=True,
+		)
+
+		captured: list[dict] = []
+
+		def _fake_urlopen(req, **_kwargs):
+			captured.append(json.loads(req.data.decode("utf-8")))
+			return _FakeHttpResponse({"message": {"success": True, "data": {"repair_order": "RO-100"}}})
+
+		batch_cmds = [
+			{
+				"command": "amend-quote",
+				"args": {
+					"repair_order": "RO-100",
+					"update_services": [{"idx": 1, "labor_hours": 2.0}],
+					"discount_amount": 15.0,
+					"shop_supplies_amount": 12.0,
+					"environmental_fee_amount": 4.5,
+					"notes": "Updated scope",
+				},
+			},
+			{
+				"command": "deposit",
+				"args": {
+					"repair_order": "RO-100",
+					"amount": 250.0,
+					"payment_method": "Debit / Interac",
+					"reference_no": "INT-99",
+				},
+			},
+			{
+				"command": "checkout",
+				"args": {
+					"repair_order": "RO-100",
+					"payment_method": "Visa",
+					"payments": split_tenders,
+					"odometer_out": 51200,
+					"confirm": True,
+				},
+			},
+		]
+		with patch("urllib.request.urlopen", side_effect=_fake_urlopen), \
+			patch("sys.stdin", io.StringIO(json.dumps(batch_cmds))), \
+			patch("sys.stdout", new_callable=io.StringIO) as out, \
+			patch("sys.stderr", new_callable=io.StringIO) as err:
+			code = cli.main(["--json", "batch"])
+		self.assertEqual(code, 0, f"stdout={out.getvalue()} stderr={err.getvalue()}")
+		batch_res = json.loads(out.getvalue())
+		self.assertTrue(batch_res["success"])
+		self.assertEqual(len(captured), 3)
+		self.assertEqual(captured[0]["update_services"], [{"idx": 1, "labor_hours": 2.0}])
+		self.assertEqual(captured[0]["discount_amount"], 15.0)
+		self.assertEqual(captured[0]["shop_supplies_amount"], 12.0)
+		self.assertEqual(captured[0]["environmental_fee_amount"], 4.5)
+		self.assertEqual(captured[1]["repair_order"], "RO-100")
+		self.assertEqual(captured[1]["amount"], 250.0)
+		self.assertEqual(captured[1]["reference_no"], "INT-99")
+		self.assertEqual(captured[2]["payments"], split_tenders)
+		self.assertTrue(captured[2]["confirm"])
+
+		# Also verify parser + handler dispatch when notes / payment_method are omitted
+		from tools.cli_commands import _COMMAND_HANDLERS, _parse_batch_subcommand
+		from tools.cli_parsers import _build_parser
+
+		parser = _build_parser()
+		cmd_amend, ns_amend = _parse_batch_subcommand(
+			{
+				"command": "amend-quote",
+				"args": {"repair_order": "RO-100", "update_services": [{"idx": 1, "labor_hours": 1.5}]},
+			},
+			parser,
+		)
+		self.assertEqual(cmd_amend, "amend-quote")
+		with patch.object(client, "_call_agent", return_value={"success": True}) as mock_call:
+			_COMMAND_HANDLERS[cmd_amend](ns_amend, client, False)
+		mock_call.assert_called_once_with(
+			"amend_quote",
+			include_summary=False,
+			repair_order="RO-100",
+			add_services=None,
+			remove_service_indices=None,
+			update_services=[{"idx": 1, "labor_hours": 1.5}],
+			notes=None,
+			discount_amount=None,
+			shop_supplies_amount=None,
+			environmental_fee_amount=None,
+		)
+
+		cmd_chk, ns_chk = _parse_batch_subcommand(
+			{
+				"command": "checkout",
+				"args": {"repair_order": "RO-100", "payments": split_tenders, "odometer_out": 51200, "confirm": True},
+			},
+			parser,
+		)
+		self.assertEqual(cmd_chk, "checkout")
+		with patch.object(client, "_call_agent", return_value={"success": True}) as mock_call:
+			_COMMAND_HANDLERS[cmd_chk](ns_chk, client, False)
+		mock_call.assert_called_once_with(
+			"checkout_repair_order",
+			include_summary=False,
+			repair_order="RO-100",
+			payment_method=None,
+			paid_amount=None,
+			odometer_out=51200,
+			payments=split_tenders,
+			confirm=True,
+		)
+
+		# Verify --dry-run / validate_write_command_args for amend-quote (--update-services without --notes),
+		# checkout (--payments without --payment-method), and deposit (positive vs non-positive amount)
+		for dry_argv in (
+			["--json", "--dry-run", "amend-quote", "--repair-order", "RO-100", "--update-services", json.dumps([{"idx": 1, "labor_hours": 1.5}])],
+			["--json", "--dry-run", "amend-quote", "--repair-order", "RO-100", "--discount-amount", "0"],
+			["--json", "--dry-run", "checkout", "--repair-order", "RO-100", "--payments", json.dumps(split_tenders), "--odometer-out", "51200", "--confirm"],
+			["--json", "--dry-run", "deposit", "RO-100", "--amount", "150"],
+		):
+			with patch("urllib.request.urlopen") as mock_open, \
+				patch("sys.stdout", new_callable=io.StringIO) as out:
+				code = cli.main(dry_argv)
+			self.assertEqual(code, 0, out.getvalue())
+			mock_open.assert_not_called()
+			dry_res = json.loads(out.getvalue())
+			self.assertTrue(dry_res["ready"], dry_res)
+
+		with patch("urllib.request.urlopen") as mock_open, \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main(["--json", "--dry-run", "deposit", "RO-100", "--amount", "0"])
+		self.assertEqual(code, 0)
+		mock_open.assert_not_called()
+		bad_dep = json.loads(out.getvalue())
+		self.assertFalse(bad_dep["ready"])
+		self.assertIn("deposit:--amount (must be > 0)", bad_dep["missing_required"])
+
+		# Direct CLI invocation for deposit
+		captured.clear()
+		with patch("urllib.request.urlopen", side_effect=_fake_urlopen), \
+			patch("sys.stdout", new_callable=io.StringIO):
+			code = cli.main(["--json", "deposit", "RO-100", "--amount", "100", "--reference-no", "REF-1"])
+		self.assertEqual(code, 0)
+		self.assertEqual(captured[0]["repair_order"], "RO-100")
+		self.assertEqual(captured[0]["amount"], 100.0)
+		self.assertEqual(captured[0]["payment_method"], "Debit / Interac")
+		self.assertEqual(captured[0]["reference_no"], "REF-1")
+
 
 if __name__ == "__main__":
 	unittest.main()

@@ -65,6 +65,16 @@ def _validate_job_status(args: argparse.Namespace, missing: list[str]) -> None:
 		_check_non_negative_int_arg(args, "odometer_out", "--odometer-out", missing)
 
 
+def _validate_deposit(args: argparse.Namespace, missing: list[str]) -> None:
+	amount = getattr(args, "amount", None)
+	if amount is not None and not isinstance(amount, bool):
+		try:
+			if float(amount) <= 0:
+				missing.append("--amount (must be > 0)")
+		except (TypeError, ValueError):
+			missing.append("--amount (must be > 0)")
+
+
 def _validate_record_inspection(args: argparse.Namespace, missing: list[str]) -> None:
 	if getattr(args, "odometer_in", None) is not None:
 		_check_non_negative_int_arg(args, "odometer_in", "--odometer-in", missing)
@@ -124,9 +134,31 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	},
 	"amend-quote": {
 		"target": "ism.api.agent.amend_quote -> Repair Order",
-		"fields": ("repair_order", "add_service", "add_services_json", "remove_indices_json", "notes"),
+		"fields": (
+			"repair_order",
+			"add_service",
+			"add_services_json",
+			"remove_indices_json",
+			"update_services",
+			"notes",
+			"discount_amount",
+			"shop_supplies_amount",
+			"environmental_fee_amount",
+		),
 		"required": (("repair_order", "--repair-order"),),
-		"any_of": ((("add_service", "add_services_json", "remove_indices_json", "notes"), "--add-service/--add-services-json/--remove-indices-json/--notes (at least one required)"),),
+		"any_of": ((
+			(
+				"add_service",
+				"add_services_json",
+				"remove_indices_json",
+				"update_services",
+				"notes",
+				"discount_amount",
+				"shop_supplies_amount",
+				"environmental_fee_amount",
+			),
+			"--add-service/--add-services-json/--remove-indices-json/--update-services/--notes/--discount-amount/--shop-supplies-amount/--environmental-fee-amount (at least one required)",
+		),),
 	},
 	"send-approval": {
 		"target": "ism.api.agent.send_quote_for_approval -> Approval Dispatch",
@@ -155,10 +187,17 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 		"required": (("repair_order", "--repair-order"), ("action", "--action")),
 		"custom": _validate_job_status,
 	},
+	"deposit": {
+		"target": "ism.api.agent.record_ro_deposit -> Payment Entry (Advance Deposit)",
+		"fields": ("repair_order", "amount", "payment_method", "reference_no"),
+		"required": (("repair_order", "repair_order"), ("amount", "--amount")),
+		"custom": _validate_deposit,
+	},
 	"checkout": {
 		"target": "ism.api.agent.checkout_repair_order -> Sales Invoice + Payment + Release",
-		"fields": ("repair_order", "payment_method", "odometer_out", "paid_amount", "confirm"),
-		"required": (("repair_order", "--repair-order"), ("payment_method", "--payment-method")),
+		"fields": ("repair_order", "payment_method", "payments", "odometer_out", "paid_amount", "confirm"),
+		"required": (("repair_order", "--repair-order"),),
+		"any_of": ((("payment_method", "payments"), "--payment-method or --payments"),),
 		"non_neg_ints": (("odometer_out", "--odometer-out"),),
 		"required_bool": (("confirm", "--confirm"),),
 	},

@@ -83,7 +83,11 @@ def _cmd_amend_quote(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> dict[
 		repair_order=a.repair_order,
 		add_services=add_services,
 		remove_service_indices=_parse_json_opt(a.remove_indices_json, expected_type=list),
+		update_services=_parse_json_opt(a.update_services, expected_type=list),
 		notes=a.notes,
+		discount_amount=a.discount_amount,
+		shop_supplies_amount=a.shop_supplies_amount,
+		environmental_fee_amount=a.environmental_fee_amount,
 		include_summary=s,
 	)
 
@@ -257,17 +261,26 @@ def _load_batch_items(args: argparse.Namespace) -> list[Any]:
 	return payload
 
 
+_JSON_ARRAY_FLAGS: frozenset[str] = frozenset({"--update-services", "--payments"})
+_POSITIONAL_ARG_BY_CMD: dict[str, str] = {"deposit": "repair_order"}
+
+
 def _dict_args_to_argv(cmd: str, kwargs: dict[str, Any]) -> list[str]:
 	"""Convert a command name and flag dictionary into CLI argv tokens."""
 	argv = [cmd]
+	positional_key = _POSITIONAL_ARG_BY_CMD.get(cmd)
+	if positional_key and kwargs.get(positional_key) is not None:
+		argv.append(str(kwargs[positional_key]))
 	for key, val in kwargs.items():
+		if key == positional_key:
+			continue
 		if val is None or val is False:
 			continue
 		flag = f"--{str(key).lstrip('-').replace('_', '-')}"
 		if val is True:
 			argv.append(flag)
 		elif isinstance(val, (list, tuple)):
-			if flag.endswith("-json"):
+			if flag.endswith("-json") or flag in _JSON_ARRAY_FLAGS:
 				argv.extend([flag, json.dumps(val)])
 			else:
 				for elem in val:
@@ -507,11 +520,19 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 		attach_advances=not bool(a.no_attach_advances),
 		include_summary=s,
 	),
+	"deposit": lambda a, c, s: c.record_ro_deposit(
+		repair_order=a.repair_order,
+		amount=a.amount,
+		payment_method=a.payment_method,
+		reference_no=a.reference_no,
+		include_summary=s,
+	),
 	"checkout": lambda a, c, s: c.checkout_repair_order(
 		repair_order=a.repair_order,
 		payment_method=a.payment_method,
 		paid_amount=a.paid_amount,
 		odometer_out=a.odometer_out,
+		payments=_parse_json_opt(a.payments, expected_type=list),
 		confirm=bool(a.confirm),
 		include_summary=s,
 	),

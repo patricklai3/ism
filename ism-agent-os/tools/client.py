@@ -80,17 +80,25 @@ class IsmAgentClient:
 		repair_order: str,
 		add_services: Optional[list[Any] | str] = None,
 		remove_service_indices: Optional[list[int] | str] = None,
+		update_services: Optional[list[Any] | str] = None,
 		notes: Optional[str] = None,
+		discount_amount: Optional[float] = None,
+		shop_supplies_amount: Optional[float] = None,
+		environmental_fee_amount: Optional[float] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
-		"""Amend services or notes on an unapproved Repair Order."""
+		"""Amend services, fees, discounts, or notes on an unapproved Repair Order."""
 		return self._call_agent(
 			"amend_quote",
 			include_summary=include_summary,
 			repair_order=repair_order,
 			add_services=add_services,
 			remove_service_indices=remove_service_indices,
+			update_services=update_services,
 			notes=notes,
+			discount_amount=discount_amount,
+			shop_supplies_amount=shop_supplies_amount,
+			environmental_fee_amount=environmental_fee_amount,
 		)
 
 	def find_available_slots(
@@ -732,12 +740,31 @@ class IsmAgentClient:
 			attach_advances=bool(attach_advances),
 		)
 
+	def record_ro_deposit(
+		self,
+		repair_order: str,
+		amount: float,
+		payment_method: str = "Debit / Interac",
+		reference_no: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Record a customer deposit payment against a Repair Order."""
+		return self._call_agent(
+			"record_ro_deposit",
+			include_summary=include_summary,
+			repair_order=repair_order,
+			amount=amount,
+			payment_method=payment_method,
+			reference_no=reference_no,
+		)
+
 	def checkout_repair_order(
 		self,
 		repair_order: str,
 		payment_method: Optional[str] = None,
 		paid_amount: Optional[float] = None,
 		odometer_out: Optional[int] = None,
+		payments: Optional[list[dict[str, Any]] | str] = None,
 		confirm: bool = False,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
@@ -749,6 +776,7 @@ class IsmAgentClient:
 			payment_method=payment_method,
 			paid_amount=paid_amount,
 			odometer_out=odometer_out,
+			payments=payments,
 			confirm=True if confirm else None,
 		)
 

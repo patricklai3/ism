@@ -164,6 +164,13 @@ def _register_advisor_and_dispatch_parsers(sub: argparse._SubParsersAction) -> N
 	)
 	p_amend.add_argument("--add-services-json", help='JSON array [{"service_title":"...","labor_hours":0.5}] (or @file.json)')
 	p_amend.add_argument("--remove-indices-json", help="JSON array of 0-based indices e.g. [0] (or @file.json)")
+	p_amend.add_argument(
+		"--update-services",
+		help='JSON array of in-place service updates e.g. [{"idx":1,"labor_hours":1.5}] (or @file.json)',
+	)
+	p_amend.add_argument("--discount-amount", type=float, help="Order-level discount amount in CAD")
+	p_amend.add_argument("--shop-supplies-amount", type=float, help="Shop supplies fee amount in CAD")
+	p_amend.add_argument("--environmental-fee-amount", type=float, help="Environmental fee amount in CAD")
 	p_amend.add_argument("--notes")
 
 	p_auth = sub.add_parser("send-approval", help="Generate/send quote approval link (falls back to link if SMS unconfigured)")
@@ -225,11 +232,21 @@ def _register_floor_and_action_parsers(sub: argparse._SubParsersAction) -> None:
 	p_dup.add_argument("--repair-order", required=True)
 	p_dup.add_argument("--service-row", required=True)
 
+	p_dep = sub.add_parser("deposit", help="Record a customer deposit payment on a Repair Order")
+	p_dep.add_argument("repair_order", help="Repair Order ID (e.g. RO-2026-00011)")
+	p_dep.add_argument("--amount", type=float, required=True, help="Deposit amount in CAD")
+	p_dep.add_argument("--payment-method", default="Debit / Interac", help="Payment method (default: Debit / Interac)")
+	p_dep.add_argument("--reference-no", help="Optional payment reference number")
+
 	p_chk = sub.add_parser("checkout", help="Invoice, collect payment, and release Repair Order")
 	p_chk.add_argument("--repair-order", required=True)
-	p_chk.add_argument("--payment-method", help="Payment method (required, e.g. 'Debit / Interac', 'Visa', 'Cash')")
+	p_chk.add_argument("--payment-method", help="Payment method (required unless --payments is given, e.g. 'Debit / Interac', 'Visa', 'Cash')")
 	p_chk.add_argument("--paid-amount", type=float)
 	p_chk.add_argument("--odometer-out", type=int)
+	p_chk.add_argument(
+		"--payments",
+		help='JSON array of split-tender payments [{"payment_method":"Visa","amount":100}] (or @file.json)',
+	)
 	p_chk.add_argument("--confirm", action="store_true")
 
 	p_lai = sub.add_parser("action-items", help="List Shop Action Items")
