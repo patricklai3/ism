@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Blinded natural-language CLI evaluation loop: fixture seeding, DB verification, and KPI scoring."""
+"""Blinded natural-language CLI evaluation loop: SimManifest loading, DB verification, and KPI scoring."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ import json
 import re
 import shlex
 import sys
-import urllib.parse
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -20,6 +19,13 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(_REPO_ROOT))
 
+from scripts.sim_runner import (  # noqa: E402
+	default_offline_eval_manifest,
+	interpolate_manifest,
+	resolve_manifest_arg,
+	resolve_manifest_path,
+	seed_profile_in_slot,
+)
 from tools.cli import (  # noqa: E402
 	READ_ONLY_COMMANDS,
 	_batch_item_to_argv,
@@ -31,15 +37,11 @@ from tools.config import IsmConfig  # noqa: E402
 from tools.transport import IsmApiError  # noqa: E402
 
 _RESULTS_DIR = Path(__file__).resolve().parent / "eval_results"
-_PROTECTED_ROS = {"RO-2026-00009", "RO-2026-00010", "RO-2026-00011", "RO-2026-00067"}
-_EVAL_CUSTOMERS = {"_EVAL_AgentOS_Customer", "_TEST_ISM_Demo_Customer"}
-_EVAL_SUPPLIERS = {"_EVAL_Supplier"}
-_EVAL_PART_ROTOR = "_EVAL_Part_Rotor"
-_RO_PATTERN = re.compile(r"\bRO-\d{4}-\d+\b")
-_SE_PATTERN = re.compile(r"\bSE-\d+\b")
-_PO_PATTERN = re.compile(r"\bPUR-ORD-\d{4}-\d+\b")
+_RO_PATTERN = re.compile(r"\bRO-(?:\d{4}-\d+|[A-Z]+-\d+(?:-\d+)?)\b")
+_SE_PATTERN = re.compile(r"\bSE-(?:[A-Z]+-)?\d+(?:-\d+)?\b")
+_PO_PATTERN = re.compile(r"\b(?:PUR-ORD-\d{4}-\d+|PO-(?:SIM|MC)-\d+(?:-\d+)?)\b")
 _PI_PATTERN = re.compile(r"\b(?:ACC-)?PINV-\d{4}-\d+\b")
-_PE_PATTERN = re.compile(r"\bACC-PAY-\d{4}-\d+\b")
+_PE_PATTERN = re.compile(r"\b(?:ACC-PAY-\d{4}-\d+|PE-(?:SIM|MC)-\d+(?:-\d+)?)\b")
 _URL_PATTERN = re.compile(r"https?://[^\s\)\]>\"']+")
 
 
@@ -58,40 +60,39 @@ class NLScenario:
 	notes: str = ""
 
 
-def get_scenarios() -> list[NLScenario]:
-	"""Return the 15 realistic messy natural-language evaluation scenarios."""
+def _scenario_templates() -> list[NLScenario]:
 	return [
 		NLScenario(
 			id="S01_shop_status_relative",
 			category="status_relative_date",
-			nl_prompt="Hey, what's on the shop floor tomorrow?",
+			nl_prompt="Hey, what's on the shop floor on {{metadata.target_date}}?",
 			expected_commands=["status"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=0,
-			notes="Relative date 'tomorrow' should map directly to status --date <YYYY-MM-DD> with no extra tech-overview.",
+			notes="Target date {{metadata.target_date}} should map directly to status --date <YYYY-MM-DD> with no extra tech-overview.",
 		),
 		NLScenario(
 			id="S02_tech_util_leave",
 			category="tech_overview_leave",
-			nl_prompt="Who's on leave tomorrow and how busy are the techs?",
+			nl_prompt="Who's on leave on {{metadata.target_date}} and how busy are the techs?",
 			expected_commands=["tech-overview"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=0,
-			notes="Should use tech-overview --date <YYYY-MM-DD> and surface Elena on leave + tech utilization.",
+			notes="Should use tech-overview --date {{metadata.target_date}} and surface Elena on leave + tech utilization.",
 		),
 		NLScenario(
 			id="S03_slots_alignment_rack",
 			category="equipment_slots",
-			nl_prompt="Customer needs a 1-hour alignment rack slot tomorrow—what's open?",
+			nl_prompt="Customer needs a 1-hour alignment rack slot on {{metadata.target_date}}—what's open?",
 			expected_commands=["slots"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=0,
-			notes="Should call slots with --date <YYYY-MM-DD> --duration 60 --tags 'Alignment Rack'.",
+			notes="Should call slots with --date {{metadata.target_date}} --duration 60 --tags 'Alignment Rack'.",
 		),
 		NLScenario(
 			id="S04_vin_decode_history",
 			category="vin_and_vehicle_intel",
-			nl_prompt="Check VIN 5YJ3E1EA1PF200101 and pull its service history.",
+			nl_prompt="Check VIN {{vehicles.veh_model3_liam}} and pull its service history.",
 			expected_commands=["batch"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=0,
@@ -100,16 +101,16 @@ def get_scenarios() -> list[NLScenario]:
 		NLScenario(
 			id="S05_unscheduled_queue",
 			category="unscheduled_queue",
-			nl_prompt="What services on RO-2026-00011 still need a bay?",
+			nl_prompt="What services on {{ros.unscheduled_ro}} still need a bay?",
 			expected_commands=["unscheduled"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=0,
-			notes="Direct unscheduled --repair-order RO-2026-00011.",
+			notes="Direct unscheduled --repair-order {{ros.unscheduled_ro}}.",
 		),
 		NLScenario(
 			id="S06_direct_book_human_names",
 			category="direct_booking",
-			nl_prompt="Book RO-2026-00011 into Main Lift tomorrow at 1pm with Devon for 60 min.",
+			nl_prompt="Book {{ros.unscheduled_ro}} into {{bays.main_lift}} on {{metadata.target_date}} at 1pm with Devon for 60 min.",
 			expected_commands=["book"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
@@ -118,20 +119,20 @@ def get_scenarios() -> list[NLScenario]:
 		NLScenario(
 			id="S07_conflict_and_recovery",
 			category="conflict_recovery",
-			nl_prompt="Book RO-2026-00011 into Bay 1 - Main Lift tomorrow at 9am with Marcus.",
+			nl_prompt="Book {{ros.unscheduled_ro}} into {{bays.main_lift}} on {{metadata.target_date}} at 9am with Marcus.",
 			expected_commands=["book"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
 			is_conflict_scenario=True,
 			allows_server_feedback_retry=True,
-			notes="Write-gate: --dry-run book -> confirm -> 1 live book hitting occupied slot; report conflict + alternatives + deep link without follow-up slots/batch.",
+			notes="Write-gate: --dry-run book -> confirm -> 1 live book hitting occupied slot ({{ros.conflict_ro}}); report conflict + alternatives + deep link.",
 		),
 		NLScenario(
 			id="S08_composite_intake_slots",
 			category="composite_intake_slots",
 			nl_prompt=(
-				"Create a draft quote for _EVAL_AgentOS_Customer's Model 3 (5YJ3E1EA1PF200101, odometer 48,200 km) "
-				"for Front Brake Inspection and find tomorrow morning slots with Marcus in Main Lift."
+				"Create a draft quote for {{customers.retail_1}}'s Model 3 ({{vehicles.veh_model3_liam}}, odometer 48,200 km) "
+				"for Front Brake Inspection and find {{metadata.target_date}} morning slots with Marcus in {{bays.main_lift}}."
 			),
 			expected_commands=["intake-slots"],
 			optimal_cli_calls=1,
@@ -141,7 +142,7 @@ def get_scenarios() -> list[NLScenario]:
 		NLScenario(
 			id="S09_batch_three_reads",
 			category="batching",
-			nl_prompt="Check tomorrow's shop status, tech overview, and unscheduled queue for RO-2026-00011.",
+			nl_prompt="Check {{metadata.target_date}}'s shop status, tech overview, and unscheduled queue for {{ros.unscheduled_ro}}.",
 			expected_commands=["batch"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=0,
@@ -151,7 +152,7 @@ def get_scenarios() -> list[NLScenario]:
 			id="S10_quote_amend_approval",
 			category="quote_amend_approval",
 			nl_prompt=(
-				"Create a quote for _EVAL_AgentOS_Customer on 5YJ3E1EA1PF200101 (odometer 48,200 km) for Tire Rotation (0.5h), "
+				"Create a quote for {{customers.retail_1}} on {{vehicles.veh_model3_liam}} (odometer 48,200 km) for Tire Rotation (0.5h), "
 				"add Wiper Blade Replacement (0.3h), and get an approval link."
 			),
 			expected_commands=["quote", "amend-quote", "send-approval"],
@@ -163,7 +164,7 @@ def get_scenarios() -> list[NLScenario]:
 			id="S11_ambiguous_bay_recovery",
 			category="ambiguous_resource_edge",
 			nl_prompt=(
-				"Schedule a walk-in diagnostic for _EVAL_WalkIn_Test (2022 Tesla Model Y) tomorrow at 10am "
+				"Schedule a walk-in diagnostic for {{customers.retail_3}} (2022 Tesla Model Y) on {{metadata.target_date}} at 10am "
 				"in 'Bay' for 60 min—if 'Bay' is ambiguous, pick an open lift bay."
 			),
 			expected_commands=["book"],
@@ -177,7 +178,7 @@ def get_scenarios() -> list[NLScenario]:
 			id="S12_multi_service_quote_estimate",
 			category="multi_service_quote_estimate",
 			nl_prompt=(
-				"Quote _EVAL_AgentOS_Customer's 5YJ3E1EA1PF200101 (odometer 48,200 km) for Brake Fluid Flush (1.0h) "
+				"Quote {{customers.retail_1}}'s {{vehicles.veh_model3_liam}} (odometer 48,200 km) for Brake Fluid Flush (1.0h) "
 				"and Cabin Air Filter Replacement (0.5h), and give me the P80 estimated shop time and customer total with tax."
 			),
 			expected_commands=["quote", "estimate"],
@@ -188,7 +189,7 @@ def get_scenarios() -> list[NLScenario]:
 		NLScenario(
 			id="S13_missing_field_write_gate",
 			category="missing_field_write_gate",
-			nl_prompt="Create a draft quote for _EVAL_AgentOS_Customer on 5YJ3E1EA1PF200101 for Cabin Air Filter Replacement (0.5h).",
+			nl_prompt="Create a draft quote for {{customers.retail_1}} on {{vehicles.veh_model3_liam}} for Cabin Air Filter Replacement (0.5h).",
 			expected_commands=["quote"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=2,
@@ -198,8 +199,8 @@ def get_scenarios() -> list[NLScenario]:
 			id="S14_standalone_procure_advance_pay",
 			category="standalone_procure_advance_pay",
 			nl_prompt=(
-				"Order 2 units of Brembo Front Brake Rotor (item _EVAL_Part_Rotor) from _EVAL_Supplier "
-				"for shop stock (no RO) at $120 each, paid in full today via Bank Draft (ref BD-9001)."
+				"Order 2 units of Zimmermann Coated Front Brake Rotor (item {{items.front_rotor_aft}}) from {{suppliers.euro_aftermarket}} "
+				"for shop stock (no RO) at $88 each, paid in full today via Bank Draft (ref BD-9001)."
 			),
 			expected_commands=["procure"],
 			optimal_cli_calls=1,
@@ -210,517 +211,51 @@ def get_scenarios() -> list[NLScenario]:
 			id="S15_purchase_invoice_with_stock",
 			category="purchase_invoice_with_stock",
 			nl_prompt=(
-				"The parts for that _EVAL_Supplier Purchase Order just arrived with supplier invoice INV-9001 "
+				"The parts for Purchase Order {{pos.eval_open_po}} just arrived with supplier invoice INV-9001 "
 				"inside the box—post the Purchase Invoice and update stock in one step."
 			),
 			expected_commands=["list-docs", "purchase-invoice"],
 			optimal_cli_calls=2,
 			allowed_dry_runs=1,
-			notes="Lookup open _EVAL_Supplier PO -> --dry-run purchase-invoice -> confirm -> 1 live purchase-invoice --update-stock --bill-no INV-9001.",
+			notes="Lookup open PO {{pos.eval_open_po}} -> --dry-run purchase-invoice -> confirm -> 1 live purchase-invoice --update-stock --bill-no INV-9001.",
 		),
 	]
 
 
-def _delete_or_cancel_doc(client: IsmAgentClient, doctype: str, name: str, cancel_status: str = "Cancelled") -> str:
-	"""Delete a document via REST DELETE, falling back to setting status=Cancelled."""
-	encoded_dt = urllib.parse.quote(doctype, safe="")
-	encoded_name = urllib.parse.quote(name, safe="")
-	url = f"{client._tx.config.base_url}/api/resource/{encoded_dt}/{encoded_name}"
-	try:
-		client._tx.request_json(url, "DELETE")
-		return "deleted"
-	except IsmApiError:
+def get_scenarios(manifest: Optional[dict[str, Any]] = None) -> list[NLScenario]:
+	"""Return the 15 blinded NL evaluation scenarios interpolated against manifest."""
+	m = manifest if manifest is not None else default_offline_eval_manifest()
+	return [
+		NLScenario(
+			id=sc.id,
+			category=sc.category,
+			nl_prompt=interpolate_manifest(sc.nl_prompt, m),
+			expected_commands=list(sc.expected_commands),
+			optimal_cli_calls=sc.optimal_cli_calls,
+			allowed_dry_runs=sc.allowed_dry_runs,
+			is_conflict_scenario=sc.is_conflict_scenario,
+			allows_server_feedback_retry=sc.allows_server_feedback_retry,
+			notes=interpolate_manifest(sc.notes, m),
+		)
+		for sc in _scenario_templates()
+	]
+
+
+def _resolve_target_date(client: Optional[IsmAgentClient], manifest: Optional[dict[str, Any]] = None) -> str:
+	"""Resolve target_date from manifest metadata, server today()+1, or local tomorrow."""
+	if manifest is not None:
+		meta = manifest.get("metadata") or {}
+		if isinstance(meta.get("target_date"), str) and meta["target_date"]:
+			return meta["target_date"]
+	if client is not None:
 		try:
-			client.update_document(doctype, name, {"status": cancel_status})
-			return "cancelled"
-		except IsmApiError as exc:
-			return f"failed:{exc}"
-
-
-def _cancel_and_delete_doc(client: IsmAgentClient, doctype: str, name: str, docstatus: int = 0) -> str:
-	"""Cancel a submitted submittable document (if docstatus==1) and delete it via REST."""
-	if int(docstatus or 0) == 1:
-		try:
-			client.call_method("frappe.client.cancel", {"doctype": doctype, "name": name})
-		except IsmApiError as exc:
-			return f"cancel_failed:{exc}"
-	encoded_dt = urllib.parse.quote(doctype, safe="")
-	encoded_name = urllib.parse.quote(name, safe="")
-	url = f"{client._tx.config.base_url}/api/resource/{encoded_dt}/{encoded_name}"
-	try:
-		client._tx.request_json(url, "DELETE")
-		return "deleted"
-	except IsmApiError as exc:
-		return f"cancelled_only:{exc}" if int(docstatus or 0) == 1 else f"failed:{exc}"
-
-
-def _resolve_tomorrow_date(client: IsmAgentClient) -> str:
-	"""Resolve the Frappe server's 'tomorrow' ISO date from server today()."""
-	try:
-		res = client.get_shop_floor_status()
-		d = res.get("data", {}).get("date")
-		if isinstance(d, str) and re.match(r"^\d{4}-\d{2}-\d{2}$", d):
-			return (date.fromisoformat(d) + timedelta(days=1)).isoformat()
-	except Exception:
-		pass
+			res = client.get_shop_floor_status()
+			d = res.get("data", {}).get("date")
+			if isinstance(d, str) and re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+				return (date.fromisoformat(d) + timedelta(days=1)).isoformat()
+		except Exception:
+			pass
 	return (date.today() + timedelta(days=1)).isoformat()
-
-
-def _find_employee_by_name(client: IsmAgentClient, fragment: str) -> Optional[str]:
-	"""Look up an Active Employee ID matching employee_name fragment."""
-	rows = client.list_documents(
-		"Employee",
-		filters=[["status", "=", "Active"], ["employee_name", "like", f"%{fragment}%"]],
-		fields=["name", "employee_name", "designation"],
-		limit=10,
-	)
-	if not rows:
-		return None
-	techs = [r for r in rows if r.get("designation") == "Technician"]
-	chosen = techs[0] if techs else rows[0]
-	return chosen.get("name")
-
-
-def _ensure_eval_technicians(client: IsmAgentClient) -> list[str]:
-	"""Idempotently ensure Marcus Vance, Elena Rostova, and Devon Brooks exist as Active Technicians."""
-	sample = client.list_documents("Employee", fields=["company"], limit=1)
-	company = (sample[0].get("company") if sample else None) or client._tx.config.company or "Lightspeed EV"
-	specs = [
-		("Marcus", "Vance", "Male", "1988-05-12", "2021-03-01"),
-		("Elena", "Rostova", "Female", "1991-08-20", "2022-01-15"),
-		("Devon", "Brooks", "Male", "1993-02-10", "2022-06-01"),
-	]
-	created: list[str] = []
-	for first, last, gender, dob, doj in specs:
-		if _find_employee_by_name(client, f"{first} {last}"):
-			continue
-		doc = client.create_document(
-			"Employee",
-			{
-				"first_name": first,
-				"last_name": last,
-				"employee_name": f"{first} {last}",
-				"gender": gender,
-				"date_of_birth": dob,
-				"date_of_joining": doj,
-				"status": "Active",
-				"company": company,
-				"designation": "Technician",
-			},
-		)
-		if doc.get("name"):
-			created.append(doc["name"])
-	return created
-
-
-def _ensure_service_bays(client: IsmAgentClient) -> list[str]:
-	"""Idempotently ensure core Service Bays exist."""
-	existing = {b["name"] for b in client.list_documents("Service Bay", fields=["name"], limit=50)}
-	bays = [
-		{
-			"bay_name": "Bay 1 - Main Lift",
-			"is_active": 1,
-			"description": "Primary 2-post lift bay",
-			"equipment": [{"equipment_tag": "Lift"}],
-		},
-		{
-			"bay_name": "Bay 2 - Alignment & Suspension",
-			"is_active": 1,
-			"description": "Four-wheel alignment rack and lift",
-			"equipment": [{"equipment_tag": "Lift"}, {"equipment_tag": "Alignment Rack"}],
-		},
-		{
-			"bay_name": "Bay 3 - HV & Diagnostics",
-			"is_active": 1,
-			"description": "High-voltage battery and EV diagnostics bay",
-			"equipment": [{"equipment_tag": "EV High Voltage"}, {"equipment_tag": "HV Battery Station"}],
-		},
-	]
-	created: list[str] = []
-	for bay in bays:
-		if bay["bay_name"] not in existing:
-			client.create_document("Service Bay", bay)
-			created.append(bay["bay_name"])
-	return created
-
-
-def _cleanup_eval_artifacts(client: IsmAgentClient, target_date: str) -> dict[str, Any]:
-	"""Remove or cancel mutated eval Schedule Entries, Repair Orders, and S14-S15 procurement docs."""
-	se_actions: list[dict[str, str]] = []
-	ro_actions: list[dict[str, str]] = []
-	pe_actions: list[dict[str, str]] = []
-	pi_actions: list[dict[str, str]] = []
-	pr_actions: list[dict[str, str]] = []
-	po_actions: list[dict[str, str]] = []
-
-	eval_ros = client.list_documents(
-		"Repair Order",
-		filters=[["customer", "in", list(_EVAL_CUSTOMERS)]],
-		fields=["name", "customer", "status", "docstatus"],
-		limit=100,
-	)
-	eval_ro_names = {
-		r["name"] for r in eval_ros if r.get("name") and r["name"] not in _PROTECTED_ROS
-	}
-
-	all_entries = client.list_documents(
-		"Schedule Entry",
-		filters=[["status", "!=", "Cancelled"]],
-		fields=["name", "repair_order", "scheduled_date", "scheduled_time", "service_bay", "provisional_customer_name", "notes"],
-		limit=200,
-	)
-	for entry in all_entries:
-		ename = entry.get("name")
-		if not ename:
-			continue
-		ro = entry.get("repair_order") or ""
-		prov = entry.get("provisional_customer_name") or ""
-		notes = (entry.get("notes") or "").lower()
-		is_eval_entry = (
-			ro == "RO-2026-00011"
-			or ro in eval_ro_names
-			or prov.startswith("_EVAL_")
-			or prov.startswith("_TEST_")
-			or "eval" in notes
-		)
-		if is_eval_entry:
-			outcome = _delete_or_cancel_doc(client, "Schedule Entry", ename)
-			se_actions.append({"name": ename, "outcome": outcome})
-
-	# Ensure RO-2026-00011 services are unscheduled
-	try:
-		ro11 = client.get_document("Repair Order", "RO-2026-00011")
-		services = ro11.get("services") or []
-		dirty = False
-		updated_services = []
-		for svc in services:
-			row = dict(svc)
-			if row.get("schedule_entry"):
-				row["schedule_entry"] = None
-				dirty = True
-			updated_services.append(row)
-		if dirty:
-			client.update_document("Repair Order", "RO-2026-00011", {"services": updated_services})
-	except IsmApiError:
-		pass
-
-	for ro_name in sorted(eval_ro_names):
-		outcome = _delete_or_cancel_doc(client, "Repair Order", ro_name)
-		ro_actions.append({"name": ro_name, "outcome": outcome})
-
-	# Child-first cleanup for _EVAL_ procurement docs: Purchase Invoice -> Payment Entry -> Purchase Receipt -> Purchase Order
-	eval_suppliers = list(_EVAL_SUPPLIERS)
-	eval_pis = client.list_documents(
-		"Purchase Invoice",
-		filters=[["supplier", "in", eval_suppliers]],
-		fields=["name", "docstatus"],
-		limit=100,
-	)
-	for doc in eval_pis:
-		if doc.get("name"):
-			pi_actions.append({"name": doc["name"], "outcome": _cancel_and_delete_doc(client, "Purchase Invoice", doc["name"], doc.get("docstatus", 0))})
-
-	eval_pes = client.list_documents(
-		"Payment Entry",
-		filters=[["party_type", "=", "Supplier"], ["party", "in", eval_suppliers]],
-		fields=["name", "docstatus"],
-		limit=100,
-	)
-	for doc in eval_pes:
-		if doc.get("name"):
-			pe_actions.append({"name": doc["name"], "outcome": _cancel_and_delete_doc(client, "Payment Entry", doc["name"], doc.get("docstatus", 0))})
-
-	eval_prs = client.list_documents(
-		"Purchase Receipt",
-		filters=[["supplier", "in", eval_suppliers]],
-		fields=["name", "docstatus"],
-		limit=100,
-	)
-	for doc in eval_prs:
-		if doc.get("name"):
-			pr_actions.append({"name": doc["name"], "outcome": _cancel_and_delete_doc(client, "Purchase Receipt", doc["name"], doc.get("docstatus", 0))})
-
-	eval_pos = client.list_documents(
-		"Purchase Order",
-		filters=[["supplier", "in", eval_suppliers]],
-		fields=["name", "docstatus"],
-		limit=100,
-	)
-	for doc in eval_pos:
-		if doc.get("name"):
-			po_actions.append({"name": doc["name"], "outcome": _cancel_and_delete_doc(client, "Purchase Order", doc["name"], doc.get("docstatus", 0))})
-
-	return {
-		"schedule_entries": se_actions,
-		"repair_orders": ro_actions,
-		"payment_entries": pe_actions,
-		"purchase_invoices": pi_actions,
-		"purchase_receipts": pr_actions,
-		"purchase_orders": po_actions,
-		"target_date": target_date,
-	}
-
-
-def _ensure_conflict_and_baseline_entries(client: IsmAgentClient, target_date: str) -> list[dict[str, Any]]:
-	"""Ensure baseline Schedule Entries exist (including 09:00 Bay 1 - Main Lift + Marcus conflict)."""
-	marcus_id = _find_employee_by_name(client, "Marcus") or "HR-EMP-00004"
-	edwin_or_other = _find_employee_by_name(client, "David") or "HR-EMP-00006"
-
-	existing = client.list_documents(
-		"Schedule Entry",
-		filters=[["scheduled_date", "=", target_date], ["status", "!=", "Cancelled"]],
-		fields=["name", "repair_order", "scheduled_time", "service_bay", "assigned_technician"],
-		limit=100,
-	)
-	actions: list[dict[str, Any]] = []
-
-	desired = [
-		("RO-2026-00009", "Bay 1 - Main Lift", marcus_id, "09:00", 90, "Repair", "Baseline Sarah Jenkins brake job"),
-		("RO-2026-00010", "Bay 3 - HV & Diagnostics", edwin_or_other, "10:00", 60, "Diagnostic", "Baseline David Kim HV service"),
-	]
-	for ro_name, bay, tech, start, dur, etype, notes in desired:
-		has_match = any(
-			e.get("repair_order") == ro_name
-			and str(e.get("scheduled_time") or "").lstrip("0").startswith(start.lstrip("0"))
-			for e in existing
-		)
-		if not has_match:
-			res = client.book_appointment(
-				repair_order=ro_name,
-				scheduled_date=target_date,
-				start_time=start,
-				estimated_duration=dur,
-				service_bay=bay,
-				technician=tech,
-				entry_type=etype,
-				notes=notes,
-			)
-			actions.append({"repair_order": ro_name, "booked": res.get("success"), "data": res.get("data", {}).get("name")})
-		else:
-			actions.append({"repair_order": ro_name, "status": "already_present"})
-	return actions
-
-
-def _ensure_elena_on_leave(client: IsmAgentClient, target_date: str) -> dict[str, Any]:
-	"""Verify Elena (HR-EMP-00005) is marked on leave on target_date."""
-	elena_id = _find_employee_by_name(client, "Elena") or "HR-EMP-00005"
-	overview = client.get_daily_tech_overview(date=target_date)
-	techs = overview.get("data", {}).get("technicians", [])
-	elena_row = next((t for t in techs if t.get("employee") == elena_id), None)
-	if elena_row and elena_row.get("on_leave") is True:
-		return {"employee": elena_id, "on_leave": True, "status": "already_on_leave"}
-
-	existing_leave = client.list_documents(
-		"Leave Application",
-		filters=[
-			["employee", "=", elena_id],
-			["from_date", "<=", target_date],
-			["to_date", ">=", target_date],
-			["docstatus", "=", 1],
-		],
-		fields=["name", "status"],
-		limit=5,
-	)
-	if existing_leave:
-		return {"employee": elena_id, "leave": existing_leave[0], "status": "leave_app_exists"}
-
-	emp = client.get_document("Employee", elena_id)
-	year_str = target_date[:4]
-	hl_name = f"_EVAL_Holiday_List_{year_str}"
-	if not client.list_documents("Holiday List", filters=[["name", "=", hl_name]], fields=["name"], limit=1):
-		client.create_document(
-			"Holiday List",
-			{
-				"holiday_list_name": hl_name,
-				"from_date": f"{year_str}-01-01",
-				"to_date": f"{year_str}-12-31",
-				"holidays": [
-					{"holiday_date": f"{year_str}-01-01", "description": "New Year's Day"},
-				],
-			},
-		)
-	if not client.list_documents(
-		"Holiday List Assignment",
-		filters=[["assigned_to", "=", elena_id], ["docstatus", "=", 1]],
-		fields=["name"],
-		limit=1,
-	):
-		client.create_document(
-			"Holiday List Assignment",
-			{
-				"applicable_for": "Employee",
-				"assigned_to": elena_id,
-				"holiday_list": hl_name,
-				"from_date": f"{year_str}-01-01",
-				"docstatus": 1,
-			},
-		)
-	existing_alloc = client.list_documents(
-		"Leave Allocation",
-		filters=[
-			["employee", "=", elena_id],
-			["leave_type", "=", "Casual Leave"],
-			["from_date", "<=", target_date],
-			["to_date", ">=", target_date],
-			["docstatus", "=", 1],
-		],
-		fields=["name"],
-		limit=1,
-	)
-	if not existing_alloc:
-		client.create_document(
-			"Leave Allocation",
-			{
-				"employee": elena_id,
-				"leave_type": "Casual Leave",
-				"from_date": f"{year_str}-01-01",
-				"to_date": f"{year_str}-12-31",
-				"new_leaves_allocated": 10,
-				"company": emp.get("company"),
-				"docstatus": 1,
-			},
-		)
-	leave_doc = client.create_document(
-		"Leave Application",
-		{
-			"employee": elena_id,
-			"leave_type": "Casual Leave",
-			"from_date": target_date,
-			"to_date": target_date,
-			"company": emp.get("company"),
-			"status": "Approved",
-			"docstatus": 1,
-		},
-	)
-	return {"employee": elena_id, "created_leave": leave_doc.get("name"), "status": "created"}
-
-
-def _ensure_eval_parts_and_supplier(client: IsmAgentClient) -> dict[str, Any]:
-	"""Idempotently ensure _EVAL_Supplier, _EVAL_Part_Rotor, and Bank Draft Mode of Payment exist."""
-	sup_created = False
-	item_created = False
-	if not client.list_documents("Supplier", filters=[["name", "=", "_EVAL_Supplier"]], fields=["name"], limit=1):
-		client.create_document(
-			"Supplier",
-			{
-				"supplier_name": "_EVAL_Supplier",
-				"supplier_group": "Local",
-				"supplier_type": "Company",
-			},
-		)
-		sup_created = True
-
-	if not client.list_documents("Item", filters=[["name", "=", _EVAL_PART_ROTOR]], fields=["name"], limit=1):
-		client.create_document(
-			"Item",
-			{
-				"item_code": _EVAL_PART_ROTOR,
-				"item_name": "Brembo Front Brake Rotor",
-				"item_group": "Parts",
-				"stock_uom": "Nos",
-				"is_stock_item": 1,
-				"valuation_rate": 120.0,
-				"standard_rate": 180.0,
-			},
-		)
-		item_created = True
-
-	bank_draft = client.list_documents(
-		"Mode of Payment",
-		filters=[["name", "=", "Bank Draft"], ["enabled", "=", 1]],
-		fields=["name"],
-		limit=1,
-	)
-	return {
-		"supplier": "_EVAL_Supplier",
-		"supplier_created": sup_created,
-		"item_code": _EVAL_PART_ROTOR,
-		"item_created": item_created,
-		"bank_draft_enabled": bool(bank_draft),
-	}
-
-
-def _ensure_eval_customer_and_vehicle(client: IsmAgentClient) -> dict[str, Any]:
-	"""Idempotently ensure _EVAL_AgentOS_Customer and Repair Vehicle 5YJ3E1EA1PF200101 exist."""
-	cust_created = False
-	veh_created = False
-	if not client.list_documents("Customer", filters=[["name", "=", "_EVAL_AgentOS_Customer"]], fields=["name"], limit=1):
-		client.create_document(
-			"Customer",
-			{
-				"customer_name": "_EVAL_AgentOS_Customer",
-				"customer_type": "Individual",
-				"customer_group": "Individual",
-				"territory": "All Territories",
-			},
-		)
-		cust_created = True
-
-	if not client.list_documents("Repair Vehicle", filters=[["vin", "=", "5YJ3E1EA1PF200101"]], fields=["name"], limit=1):
-		client.create_document(
-			"Repair Vehicle",
-			{
-				"vin": "5YJ3E1EA1PF200101",
-				"customer": "_EVAL_AgentOS_Customer",
-				"make": "Tesla",
-				"model": "Model 3",
-				"year": 2023,
-			},
-		)
-		veh_created = True
-
-	return {
-		"customer": "_EVAL_AgentOS_Customer",
-		"customer_created": cust_created,
-		"vin": "5YJ3E1EA1PF200101",
-		"vehicle_created": veh_created,
-	}
-
-
-def _ensure_s15_open_po(client: IsmAgentClient) -> dict[str, Any]:
-	"""Seed a standalone submitted PO with Bank Draft advance payment for standalone S15 runs."""
-	res = client.submit_procurement_orders(
-		parts_data=[{"item_code": _EVAL_PART_ROTOR, "qty": 2, "rate": 120.0, "supplier": "_EVAL_Supplier"}],
-		payment_method="Bank Draft",
-		reference_no="BD-9001",
-	)
-	data = res.get("data", {})
-	return {
-		"purchase_orders": data.get("purchase_orders") or [],
-		"payment_entries": data.get("payment_entries") or [],
-	}
-
-
-def run_seed(
-	client: IsmAgentClient,
-	target_date: Optional[str] = None,
-	seed_s15_po: bool = False,
-) -> dict[str, Any]:
-	"""Clean up prior eval artifacts and seed baseline fixtures idempotently."""
-	resolved_date = target_date or _resolve_tomorrow_date(client)
-	bays_created = _ensure_service_bays(client)
-	techs_created = _ensure_eval_technicians(client)
-	cleanup = _cleanup_eval_artifacts(client, resolved_date)
-	baseline = _ensure_conflict_and_baseline_entries(client, resolved_date)
-	elena_leave = _ensure_elena_on_leave(client, resolved_date)
-	customer_vehicle = _ensure_eval_customer_and_vehicle(client)
-	procurement_fixtures = _ensure_eval_parts_and_supplier(client)
-	s15_po = _ensure_s15_open_po(client) if seed_s15_po else None
-	unsched = client.get_unscheduled_services("RO-2026-00011")
-	unsched_count = unsched.get("data", {}).get("unscheduled_count", 0)
-	return {
-		"success": unsched_count >= 1 and procurement_fixtures.get("bank_draft_enabled", False),
-		"target_date": resolved_date,
-		"bays_created": bays_created,
-		"techs_created": techs_created,
-		"cleanup": cleanup,
-		"baseline_entries": baseline,
-		"elena_leave": elena_leave,
-		"customer_vehicle": customer_vehicle,
-		"procurement_fixtures": procurement_fixtures,
-		"s15_open_po": s15_po,
-		"ro11_unscheduled_count": unsched_count,
-	}
 
 
 def _extract_claimed_ids(entry: dict[str, Any]) -> dict[str, list[str]]:
@@ -730,19 +265,13 @@ def _extract_claimed_ids(entry: dict[str, Any]) -> dict[str, list[str]]:
 		chunks.append(str(cmd.get("summary") or ""))
 		chunks.append(str(cmd.get("cmd") or ""))
 	blob = "\n".join(chunks)
-	ros = sorted(set(_RO_PATTERN.findall(blob)))
-	ses = sorted(set(_SE_PATTERN.findall(blob)))
-	pos = sorted(set(_PO_PATTERN.findall(blob)))
-	pis = sorted(set(_PI_PATTERN.findall(blob)))
-	pes = sorted(set(_PE_PATTERN.findall(blob)))
-	urls = sorted(set(_URL_PATTERN.findall(blob)))
 	return {
-		"repair_orders": ros,
-		"schedule_entries": ses,
-		"purchase_orders": pos,
-		"purchase_invoices": pis,
-		"payment_entries": pes,
-		"urls": urls,
+		"repair_orders": sorted(set(_RO_PATTERN.findall(blob))),
+		"schedule_entries": sorted(set(_SE_PATTERN.findall(blob))),
+		"purchase_orders": sorted(set(_PO_PATTERN.findall(blob))),
+		"purchase_invoices": sorted(set(_PI_PATTERN.findall(blob))),
+		"payment_entries": sorted(set(_PE_PATTERN.findall(blob))),
+		"urls": sorted(set(_URL_PATTERN.findall(blob))),
 	}
 
 
@@ -750,9 +279,25 @@ def verify_scenario_db(
 	client: IsmAgentClient,
 	scenario: NLScenario,
 	entry: dict[str, Any],
-	target_date: str,
+	target_date: Optional[str] = None,
+	manifest: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-	"""Verify one scenario's claimed outcomes and DB state against Frappe."""
+	"""Verify one scenario's claimed outcomes and DB state against Frappe using manifest handles."""
+	m = manifest if manifest is not None else default_offline_eval_manifest(target_date=target_date)
+	resolved_date = target_date or str(resolve_manifest_path(m, "metadata.target_date"))
+
+	baseline_ros = {str(v) for v in (m.get("ros") or {}).values() if v}
+	elena_id = str(resolve_manifest_path(m, "techs.elena"))
+	devon_id = str(resolve_manifest_path(m, "techs.devon"))
+	main_lift = str(resolve_manifest_path(m, "bays.main_lift"))
+	vin_liam = str(resolve_manifest_path(m, "vehicles.veh_model3_liam"))
+	cust_liam = str(resolve_manifest_path(m, "customers.retail_1"))
+	cust_walkin = str(resolve_manifest_path(m, "customers.retail_3"))
+	unsched_ro = str(resolve_manifest_path(m, "ros.unscheduled_ro"))
+	open_po = str(resolve_manifest_path(m, "pos.eval_open_po"))
+	rotor_item = str(resolve_manifest_path(m, "items.front_rotor_aft"))
+	supplier_aft = str(resolve_manifest_path(m, "suppliers.euro_aftermarket"))
+
 	checks: list[tuple[str, bool, str]] = []
 	claimed = _extract_claimed_ids(entry)
 	answer = str(entry.get("final_answer") or "")
@@ -760,49 +305,51 @@ def verify_scenario_db(
 	cmds_text = "\n".join(str(c.get("cmd") or "") for c in (entry.get("commands_run") or []))
 
 	if scenario.id == "S01_shop_status_relative":
-		live = client.get_shop_floor_status(date=target_date)
+		live = client.get_shop_floor_status(date=resolved_date)
 		summary = live.get("data", {}).get("summary", {})
 		bays = summary.get("active_bays")
 		appts = summary.get("scheduled_appointments")
-		checks.append(("date_in_answer_or_cmd", target_date in answer or target_date in cmds_text, f"expected {target_date}"))
+		checks.append(("date_in_answer_or_cmd", resolved_date in answer or resolved_date in cmds_text, f"expected {resolved_date}"))
 		checks.append(("mentions_bays_count", str(bays) in answer, f"active_bays={bays}"))
 		checks.append(("mentions_appts_count", str(appts) in answer, f"scheduled_appointments={appts}"))
 
 	elif scenario.id == "S02_tech_util_leave":
-		elena_id = _find_employee_by_name(client, "Elena") or "HR-EMP-00005"
-		overview = client.get_daily_tech_overview(date=target_date)
+		overview = client.get_daily_tech_overview(date=resolved_date)
 		techs = overview.get("data", {}).get("technicians", [])
 		elena = next((t for t in techs if t.get("employee") == elena_id), None)
 		elena_on_leave = bool(elena and elena.get("on_leave") is True)
 		checks.append(("db_elena_on_leave", elena_on_leave, f"elena={elena}"))
 		checks.append(("mentions_elena_leave", "elena" in answer_lower and "leave" in answer_lower, "expected Elena on leave"))
-		checks.append(("mentions_other_tech", any(n in answer_lower for n in ("marcus", "devon")), "expected tech utilization details"))
+		checks.append(("mentions_other_tech", any(n in answer_lower for n in ("marcus", "devon", "noah")), "expected tech utilization details"))
 
 	elif scenario.id == "S03_slots_alignment_rack":
 		slots_res = client.find_available_slots(
-			start_date=target_date,
+			start_date=resolved_date,
 			duration_minutes=60,
 			days_ahead=1,
 			equipment_tags=["Alignment Rack"],
 		)
 		slots = slots_res.get("data", {}).get("slots", [])
+		alignment_bay = str(resolve_manifest_path(m, "bays.alignment")).lower()
 		checks.append(("db_slots_exist", len(slots) > 0, f"slot_count={len(slots)}"))
-		checks.append(("mentions_alignment_bay", "alignment" in answer_lower or "bay 2" in answer_lower, "expected Alignment Rack bay"))
+		checks.append(("mentions_alignment_bay", "alignment" in answer_lower or "bay 2" in answer_lower or alignment_bay in answer_lower, "expected Alignment Rack bay"))
 		checks.append(("mentions_time_slot", bool(re.search(r"\b\d{1,2}:\d{2}\b", answer)), "expected HH:MM slot"))
 
 	elif scenario.id == "S04_vin_decode_history":
-		vin_data = client.decode_vehicle_vin("5YJ3E1EA1PF200101").get("data", {})
+		vin_data = client.decode_vehicle_vin(vin_liam).get("data", {})
 		try:
-			intel = client.get_vehicle_intelligence("5YJ3E1EA1PF200101").get("data", {})
+			intel = client.get_vehicle_intelligence(vin_liam).get("data", {})
 		except IsmApiError:
 			intel = {}
-		checks.append(("mentions_model_3", "model 3" in answer_lower, f"db_model={vin_data.get('model')}"))
-		checks.append(("mentions_year_2023", "2023" in answer, f"db_year={vin_data.get('model_year')}"))
+		expected_model = str(vin_data.get("model") or "Model 3").lower()
+		expected_year = str(vin_data.get("model_year") or "2023")
+		checks.append(("mentions_model", expected_model in answer_lower, f"db_model={vin_data.get('model')}"))
+		checks.append(("mentions_year", expected_year in answer, f"db_year={vin_data.get('model_year')}"))
 		has_history = bool(intel.get("service_history") or intel.get("repair_orders") or "history" in answer_lower or "ro-" in answer_lower)
 		checks.append(("mentions_history_or_profile", has_history, "expected vehicle intelligence/history"))
 
 	elif scenario.id == "S05_unscheduled_queue":
-		unsched = client.get_unscheduled_services("RO-2026-00011").get("data", {})
+		unsched = client.get_unscheduled_services(unsched_ro).get("data", {})
 		svcs = unsched.get("services") or []
 		first_title = str((svcs[0].get("service_title") or "") if svcs else "").lower()
 		core_title = first_title.split("(")[0].strip()
@@ -810,12 +357,11 @@ def verify_scenario_db(
 		checks.append(("mentions_service_title", bool(core_title) and (first_title in answer_lower or core_title in answer_lower), f"expected '{first_title}'"))
 
 	elif scenario.id == "S06_direct_book_human_names":
-		devon_id = _find_employee_by_name(client, "Devon") or "HR-EMP-00006"
 		entries = client.list_documents(
 			"Schedule Entry",
 			filters=[
-				["repair_order", "=", "RO-2026-00011"],
-				["scheduled_date", "=", target_date],
+				["repair_order", "=", unsched_ro],
+				["scheduled_date", "=", resolved_date],
 				["status", "!=", "Cancelled"],
 			],
 			fields=["name", "scheduled_time", "service_bay", "assigned_technician", "estimated_duration", "status"],
@@ -824,7 +370,7 @@ def verify_scenario_db(
 		match = next((e for e in entries if str(e.get("scheduled_time") or "").startswith("13:00")), None)
 		checks.append(("db_entry_exists_1300", match is not None, f"entries={entries}"))
 		if match:
-			checks.append(("db_bay_main_lift", match.get("service_bay") == "Bay 1 - Main Lift", f"bay={match.get('service_bay')}"))
+			checks.append(("db_bay_main_lift", match.get("service_bay") == main_lift, f"bay={match.get('service_bay')}"))
 			checks.append(("db_tech_devon", match.get("assigned_technician") == devon_id, f"tech={match.get('assigned_technician')}"))
 			checks.append(("db_duration_60", int(match.get("estimated_duration") or 0) == 60, f"dur={match.get('estimated_duration')}"))
 			checks.append(("claimed_se_matches", match["name"] in claimed["schedule_entries"], f"claimed={claimed['schedule_entries']}"))
@@ -833,8 +379,8 @@ def verify_scenario_db(
 		entries_9am = client.list_documents(
 			"Schedule Entry",
 			filters=[
-				["repair_order", "=", "RO-2026-00011"],
-				["scheduled_date", "=", target_date],
+				["repair_order", "=", unsched_ro],
+				["scheduled_date", "=", resolved_date],
 				["status", "!=", "Cancelled"],
 			],
 			fields=["name", "scheduled_time"],
@@ -850,14 +396,14 @@ def verify_scenario_db(
 		checks.append(("surfaces_deep_link", len(claimed["urls"]) > 0 or "/app/" in answer, f"urls={claimed['urls']}"))
 
 	elif scenario.id == "S08_composite_intake_slots":
-		new_ros = [r for r in claimed["repair_orders"] if r not in _PROTECTED_ROS]
+		new_ros = [r for r in claimed["repair_orders"] if r not in baseline_ros]
 		ro_id = new_ros[-1] if new_ros else None
 		checks.append(("claimed_new_ro", ro_id is not None, f"claimed_ros={claimed['repair_orders']}"))
 		if ro_id:
 			try:
 				ro = client.get_document("Repair Order", ro_id)
 				svcs = [str(s.get("service_title") or "").lower() for s in (ro.get("services") or [])]
-				checks.append(("db_ro_customer", ro.get("customer") == "_EVAL_AgentOS_Customer", f"customer={ro.get('customer')}"))
+				checks.append(("db_ro_customer", ro.get("customer") == cust_liam, f"customer={ro.get('customer')}"))
 				checks.append(("db_ro_draft", ro.get("docstatus") == 0 and ro.get("status") == "Draft Estimate", f"status={ro.get('status')}"))
 				checks.append(("db_ro_odometer_48200", int(ro.get("odometer_in") or 0) == 48200, f"odometer_in={ro.get('odometer_in')}"))
 				checks.append(("db_ro_has_brake_inspection", any("front brake inspection" in s for s in svcs), f"services={svcs}"))
@@ -866,23 +412,23 @@ def verify_scenario_db(
 		checks.append(("mentions_slots", bool(re.search(r"\b\d{1,2}:\d{2}\b", answer)), "expected candidate slot times"))
 
 	elif scenario.id == "S09_batch_three_reads":
-		live = client.get_shop_floor_status(date=target_date).get("data", {}).get("summary", {})
-		unsched = client.get_unscheduled_services("RO-2026-00011").get("data", {}).get("services") or []
+		live = client.get_shop_floor_status(date=resolved_date).get("data", {}).get("summary", {})
+		unsched = client.get_unscheduled_services(unsched_ro).get("data", {}).get("services") or []
 		checks.append(("mentions_bays", str(live.get("active_bays")) in answer, f"active_bays={live.get('active_bays')}"))
 		checks.append(("mentions_elena_leave", "elena" in answer_lower, "expected Elena leave info"))
 		first_svc = str((unsched[0].get("service_title") or "") if unsched else "").lower()
 		core_svc = first_svc.split("(")[0].strip()
-		checks.append(("mentions_unscheduled_ro11", bool(core_svc) and (first_svc in answer_lower or core_svc in answer_lower), f"expected '{first_svc}'"))
+		checks.append(("mentions_unscheduled_ro", bool(core_svc) and (first_svc in answer_lower or core_svc in answer_lower), f"expected '{first_svc}'"))
 
 	elif scenario.id == "S10_quote_amend_approval":
-		new_ros = [r for r in claimed["repair_orders"] if r not in _PROTECTED_ROS]
+		new_ros = [r for r in claimed["repair_orders"] if r not in baseline_ros]
 		ro_id = new_ros[-1] if new_ros else None
 		checks.append(("claimed_new_ro", ro_id is not None, f"claimed_ros={claimed['repair_orders']}"))
 		if ro_id:
 			try:
 				ro = client.get_document("Repair Order", ro_id)
 				svcs = [str(s.get("service_title") or "").lower() for s in (ro.get("services") or [])]
-				checks.append(("db_ro_customer", ro.get("customer") == "_EVAL_AgentOS_Customer", f"customer={ro.get('customer')}"))
+				checks.append(("db_ro_customer", ro.get("customer") == cust_liam, f"customer={ro.get('customer')}"))
 				checks.append(("db_ro_draft", ro.get("docstatus") == 0, f"docstatus={ro.get('docstatus')}"))
 				checks.append(("db_ro_odometer_48200", int(ro.get("odometer_in") or 0) == 48200, f"odometer_in={ro.get('odometer_in')}"))
 				checks.append(("db_has_2_services", len(svcs) == 2, f"services={svcs}"))
@@ -897,8 +443,8 @@ def verify_scenario_db(
 		entries = client.list_documents(
 			"Schedule Entry",
 			filters=[
-				["provisional_customer_name", "=", "_EVAL_WalkIn_Test"],
-				["scheduled_date", "=", target_date],
+				["provisional_customer_name", "=", cust_walkin],
+				["scheduled_date", "=", resolved_date],
 				["status", "!=", "Cancelled"],
 			],
 			fields=["name", "scheduled_time", "service_bay", "estimated_duration"],
@@ -912,7 +458,7 @@ def verify_scenario_db(
 			checks.append(("claimed_se_matches", match["name"] in claimed["schedule_entries"], f"claimed={claimed['schedule_entries']}"))
 
 	elif scenario.id == "S12_multi_service_quote_estimate":
-		new_ros = [r for r in claimed["repair_orders"] if r not in _PROTECTED_ROS]
+		new_ros = [r for r in claimed["repair_orders"] if r not in baseline_ros]
 		ro_id = new_ros[-1] if new_ros else None
 		checks.append(("claimed_new_ro", ro_id is not None, f"claimed_ros={claimed['repair_orders']}"))
 		if ro_id:
@@ -922,7 +468,7 @@ def verify_scenario_db(
 				gt = float(ro.get("grand_total") or 0.0)
 				est = client.estimate_duration(repair_order=ro_id).get("data", {})
 				p80 = est.get("p80_minutes") or est.get("total_duration_minutes") or est.get("estimated_minutes")
-				checks.append(("db_ro_customer", ro.get("customer") == "_EVAL_AgentOS_Customer", f"customer={ro.get('customer')}"))
+				checks.append(("db_ro_customer", ro.get("customer") == cust_liam, f"customer={ro.get('customer')}"))
 				checks.append(("db_ro_draft", ro.get("docstatus") == 0, f"docstatus={ro.get('docstatus')}"))
 				checks.append(("db_ro_odometer_48200", int(ro.get("odometer_in") or 0) == 48200, f"odometer_in={ro.get('odometer_in')}"))
 				checks.append(("db_has_2_services", len(svcs) == 2, f"services={svcs}"))
@@ -934,14 +480,14 @@ def verify_scenario_db(
 				checks.append(("db_ro_exists", False, str(exc)))
 
 	elif scenario.id == "S13_missing_field_write_gate":
-		new_ros = [r for r in claimed["repair_orders"] if r not in _PROTECTED_ROS]
+		new_ros = [r for r in claimed["repair_orders"] if r not in baseline_ros]
 		ro_id = new_ros[-1] if new_ros else None
 		checks.append(("claimed_new_ro", ro_id is not None, f"claimed_ros={claimed['repair_orders']}"))
 		if ro_id:
 			try:
 				ro = client.get_document("Repair Order", ro_id)
 				svcs = [str(s.get("service_title") or "").lower() for s in (ro.get("services") or [])]
-				checks.append(("db_ro_customer", ro.get("customer") == "_EVAL_AgentOS_Customer", f"customer={ro.get('customer')}"))
+				checks.append(("db_ro_customer", ro.get("customer") == cust_liam, f"customer={ro.get('customer')}"))
 				checks.append(("db_ro_draft", ro.get("docstatus") == 0 and ro.get("status") == "Draft Estimate", f"status={ro.get('status')}"))
 				checks.append(("db_ro_odometer_54100", int(ro.get("odometer_in") or 0) == 54100, f"odometer_in={ro.get('odometer_in')}"))
 				checks.append(("db_ro_has_cabin_filter", any("cabin air filter" in s for s in svcs), f"services={svcs}"))
@@ -953,7 +499,7 @@ def verify_scenario_db(
 		if not po_id:
 			pos = client.list_documents(
 				"Purchase Order",
-				filters=[["supplier", "=", "_EVAL_Supplier"], ["docstatus", "=", 1]],
+				filters=[["supplier", "=", supplier_aft], ["docstatus", "=", 1]],
 				fields=["name"],
 				order_by="creation desc",
 				limit=1,
@@ -968,10 +514,10 @@ def verify_scenario_db(
 				adv = float(po.get("advance_paid") or 0.0)
 				checks.append(("db_po_submitted", int(po.get("docstatus") or 0) == 1, f"docstatus={po.get('docstatus')}"))
 				checks.append(("db_po_standalone_no_ro", not po.get("repair_order"), f"repair_order={po.get('repair_order')}"))
-				checks.append(("db_po_supplier", po.get("supplier") == "_EVAL_Supplier", f"supplier={po.get('supplier')}"))
+				checks.append(("db_po_supplier", po.get("supplier") == supplier_aft, f"supplier={po.get('supplier')}"))
 				checks.append((
 					"db_po_item_qty_rate",
-					any(it.get("item_code") == _EVAL_PART_ROTOR and float(it.get("qty") or 0) == 2.0 and float(it.get("rate") or 0) == 120.0 for it in items),
+					any(it.get("item_code") == rotor_item and float(it.get("qty") or 0) == 2.0 and float(it.get("rate") or 0) == 88.0 for it in items),
 					f"items={items}",
 				))
 				checks.append(("db_po_advance_paid_full", gt > 0 and abs(adv - gt) < 0.05, f"grand_total={gt}, advance_paid={adv}"))
@@ -981,7 +527,7 @@ def verify_scenario_db(
 
 		pes = client.list_documents(
 			"Payment Entry",
-			filters=[["party_type", "=", "Supplier"], ["party", "=", "_EVAL_Supplier"], ["reference_no", "=", "BD-9001"], ["docstatus", "=", 1]],
+			filters=[["party_type", "=", "Supplier"], ["party", "=", supplier_aft], ["reference_no", "=", "BD-9001"], ["docstatus", "=", 1]],
 			fields=["name", "mode_of_payment", "paid_amount", "docstatus", "reference_no"],
 			order_by="creation desc",
 			limit=1,
@@ -997,7 +543,7 @@ def verify_scenario_db(
 		if not pi_id:
 			pis = client.list_documents(
 				"Purchase Invoice",
-				filters=[["supplier", "=", "_EVAL_Supplier"], ["bill_no", "=", "INV-9001"], ["docstatus", "=", 1]],
+				filters=[["bill_no", "=", "INV-9001"], ["docstatus", "=", 1]],
 				fields=["name"],
 				order_by="creation desc",
 				limit=1,
@@ -1016,6 +562,7 @@ def verify_scenario_db(
 				po_links = [it.get("purchase_order") for it in (pi.get("items") or []) if it.get("purchase_order")]
 				if po_links:
 					po = client.get_document("Purchase Order", po_links[0])
+					checks.append(("db_po_matches_manifest", not open_po or po_links[0] == open_po, f"po={po_links[0]}, expected={open_po}"))
 					checks.append(("db_po_per_received_100", float(po.get("per_received") or 0.0) >= 99.9, f"per_received={po.get('per_received')}"))
 				else:
 					checks.append(("db_po_linked_on_pi", False, "no purchase_order on PI items"))
@@ -1313,7 +860,6 @@ def _analyze_commands(scenario: NLScenario, entry: dict[str, Any]) -> dict[str, 
 	excess_dry_runs = max(0, dry_run_calls - duplicate_dry_runs - readonly_dry_runs - scenario.allowed_dry_runs)
 	redundant_calls += excess_dry_runs
 
-	# Routing redundancy rules across all 15 scenarios (using unwrapped inner subcommands)
 	if scenario.id in ("S06_direct_book_human_names", "S07_conflict_and_recovery"):
 		pre_checks = [
 			s for s in live_inner_subcommands
@@ -1406,11 +952,14 @@ def score_round(
 	client: Optional[IsmAgentClient],
 	round_num: int,
 	raw_entries: list[dict[str, Any]],
-	target_date: str,
+	target_date: Optional[str] = None,
 	skip_db: bool = False,
+	manifest: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
 	"""Verify DB state and compute Round <N> KPIs across all scenario entries."""
-	scenarios_by_id = {s.id: s for s in get_scenarios()}
+	resolved_manifest = manifest if manifest is not None else default_offline_eval_manifest(target_date=target_date)
+	resolved_date = target_date or str(resolve_manifest_path(resolved_manifest, "metadata.target_date"))
+	scenarios_by_id = {s.id: s for s in get_scenarios(manifest=resolved_manifest)}
 	scored_results: list[dict[str, Any]] = []
 
 	for entry in raw_entries:
@@ -1427,7 +976,7 @@ def score_round(
 			else:
 				db_res = {"db_verified": True, "checks_passed": 0, "checks_total": 0, "claimed_ids": _extract_claimed_ids(entry), "failures": []}
 		else:
-			db_res = verify_scenario_db(client, scenario, entry, target_date)
+			db_res = verify_scenario_db(client, scenario, entry, resolved_date, manifest=resolved_manifest)
 
 		first_try = (
 			db_res["db_verified"]
@@ -1479,7 +1028,8 @@ def score_round(
 
 	kpis = {
 		"round": round_num,
-		"target_date": target_date,
+		"profile": resolved_manifest.get("profile", "eval_standard"),
+		"target_date": resolved_date,
 		"scenarios_total": n,
 		"scenarios_db_verified": sum(1 for r in scored_results if r["db_verification"]["db_verified"]),
 		"db_verification_rate": round(sum(1 for r in scored_results if r["db_verification"]["db_verified"]) / n, 4) if n else 0.0,
@@ -1502,19 +1052,31 @@ def score_round(
 	return {"kpis": kpis, "results": scored_results}
 
 
+def _add_manifest_args(parser: argparse.ArgumentParser, *, suppress_defaults: bool = False) -> None:
+	kw_str: dict[str, Any] = {"default": argparse.SUPPRESS} if suppress_defaults else {}
+	kw_bool: dict[str, Any] = {"default": argparse.SUPPRESS} if suppress_defaults else {}
+	parser.add_argument("--manifest", help="Path to eval_standard SimManifest JSON file", **kw_str)
+	parser.add_argument("--seed-slot", type=int, help="Seed eval_standard in bench slot N and parse its SimManifest JSON", **kw_str)
+	parser.add_argument("--clean-reinstall", action="store_true", help="Pass -CleanReinstall when seeding via --seed-slot", **kw_bool)
+
+
 def _build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(description="ISM Agent OS Blinded NL Eval Loop")
+	_add_manifest_args(parser, suppress_defaults=True)
 	sub = parser.add_subparsers(dest="command", required=True)
 
-	sub.add_parser("scenarios", help="Print all 15 blinded NL eval scenarios as JSON")
+	p_scen = sub.add_parser("scenarios", help="Print all 15 blinded NL eval scenarios as JSON")
+	_add_manifest_args(p_scen)
 
-	p_seed = sub.add_parser("seed", help="Reset eval artifacts and seed baseline shop fixtures")
-	p_seed.add_argument("--target-date", help="Override target tomorrow date (YYYY-MM-DD)")
-	p_seed.add_argument("--seed-s15-po", action="store_true", help="Also seed a standalone open PO for S15")
+	p_seed = sub.add_parser("seed", help="Seed eval_standard profile in a bench slot and output SimManifest JSON")
+	p_seed.add_argument("--seed-slot", "--slot", dest="seed_slot", type=int, required=True, help="Bench slot number (1..8)")
+	p_seed.add_argument("--clean-reinstall", action="store_true", help="Pass -CleanReinstall to test-in-slot.ps1")
+	p_seed.add_argument("--output", help="Optional path to write the seeded SimManifest JSON")
 
 	p_vdb = sub.add_parser("verify-db", help="Verify sub-agent results against live Frappe DB")
 	p_vdb.add_argument("--input", required=True, help="Path to raw sub-agent JSON array")
 	p_vdb.add_argument("--target-date", help="Target tomorrow date (YYYY-MM-DD)")
+	_add_manifest_args(p_vdb)
 
 	p_score = sub.add_parser("score", help="Verify DB state, compute KPIs, and save round_<N>.json")
 	p_score.add_argument("--round", type=int, required=True, help="Round number (e.g. 0)")
@@ -1522,48 +1084,92 @@ def _build_parser() -> argparse.ArgumentParser:
 	p_score.add_argument("--target-date", help="Target tomorrow date (YYYY-MM-DD)")
 	p_score.add_argument("--skip-db", action="store_true", help="Skip live DB verification (offline scoring)")
 	p_score.add_argument("--output", help="Optional custom output path")
+	_add_manifest_args(p_score)
 
 	return parser
 
 
+def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
+	tokens = list(sys.argv[1:] if argv is None else argv)
+	subcommands = {"scenarios", "seed", "verify-db", "score"}
+	if not tokens:
+		return tokens
+	has_sub = any(tok in subcommands for tok in tokens)
+	if not has_sub and any(tok == "--round" or tok.startswith("--round=") or tok == "--input" or tok.startswith("--input=") for tok in tokens):
+		return ["score", *tokens]
+	return tokens
+
+
 def main(argv: Optional[list[str]] = None) -> int:
 	parser = _build_parser()
-	args = parser.parse_args(argv)
+	args = parser.parse_args(_normalize_argv(argv))
+
+	if args.command == "seed":
+		manifest = seed_profile_in_slot(
+			args.seed_slot,
+			execute_fn="ism.testing.profiles.seed_eval_standard",
+			clean_reinstall=bool(args.clean_reinstall),
+			keep_db=not bool(args.clean_reinstall),
+		)
+		rendered = json.dumps(manifest, indent=2)
+		if args.output:
+			Path(args.output).write_text(rendered, encoding="utf-8")
+		print(rendered)
+		return 0
+
+	manifest = resolve_manifest_arg(
+		manifest_path=getattr(args, "manifest", None),
+		seed_slot=getattr(args, "seed_slot", None),
+		clean_reinstall=bool(getattr(args, "clean_reinstall", False)),
+	)
 
 	if args.command == "scenarios":
-		print(json.dumps([asdict(s) for s in get_scenarios()], indent=2))
+		print(json.dumps([asdict(s) for s in get_scenarios(manifest=manifest)], indent=2))
+		return 0
+
+	raw_path = Path(args.input)
+	raw_entries = json.loads(raw_path.read_text(encoding="utf-8-sig"))
+	if isinstance(raw_entries, dict) and "results" in raw_entries:
+		raw_entries = raw_entries["results"]
+
+	if args.command == "score" and args.skip_db:
+		target_date = getattr(args, "target_date", None) or _resolve_target_date(None, manifest=manifest)
+		report = score_round(
+			client=None,
+			round_num=args.round,
+			raw_entries=raw_entries,
+			target_date=target_date,
+			skip_db=True,
+			manifest=manifest,
+		)
+		_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+		out_path = Path(args.output) if args.output else (_RESULTS_DIR / f"round_{args.round}.json")
+		out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+		print(json.dumps({"saved_to": str(out_path), "kpis": report["kpis"]}, indent=2))
 		return 0
 
 	client = IsmAgentClient(IsmConfig.from_env())
 	try:
-		target_date = getattr(args, "target_date", None) or _resolve_tomorrow_date(client)
-		if args.command == "seed":
-			res = run_seed(client, target_date=target_date, seed_s15_po=bool(getattr(args, "seed_s15_po", False)))
-			print(json.dumps(res, indent=2))
-			return 0 if res.get("success") else 1
-
-		raw_path = Path(args.input)
-		raw_entries = json.loads(raw_path.read_text(encoding="utf-8-sig"))
-		if isinstance(raw_entries, dict) and "results" in raw_entries:
-			raw_entries = raw_entries["results"]
+		target_date = getattr(args, "target_date", None) or _resolve_target_date(client, manifest=manifest)
 
 		if args.command == "verify-db":
-			scenarios_by_id = {s.id: s for s in get_scenarios()}
+			scenarios_by_id = {s.id: s for s in get_scenarios(manifest=manifest)}
 			out = []
 			for entry in raw_entries:
 				sc = scenarios_by_id.get(entry.get("id"))
 				if sc:
-					out.append({"id": sc.id, **verify_scenario_db(client, sc, entry, target_date)})
+					out.append({"id": sc.id, **verify_scenario_db(client, sc, entry, target_date, manifest=manifest)})
 			print(json.dumps(out, indent=2))
 			return 0 if all(item["db_verified"] for item in out) else 1
 
 		if args.command == "score":
 			report = score_round(
-				client=None if args.skip_db else client,
+				client=client,
 				round_num=args.round,
 				raw_entries=raw_entries,
 				target_date=target_date,
-				skip_db=args.skip_db,
+				skip_db=False,
+				manifest=manifest,
 			)
 			_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 			out_path = Path(args.output) if args.output else (_RESULTS_DIR / f"round_{args.round}.json")
