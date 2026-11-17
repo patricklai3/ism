@@ -12,13 +12,12 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 
 ## Operational Invariants
 
-1. **Mandatory Pre-Dispatch Summary & Required-Field Callback (ALL writes)**: Before executing ANY write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `resolve-action`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing writes):
+1. **Local Staged Confirmation (`--stage`) or Pre-Dispatch Summary (ALL writes)**: Before ANY write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `resolve-action`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing writes):
    - NEVER fabricate, guess, or substitute missing required fields (e.g. never invent `odometer_in=10000` or default `payment_method`).
-   - Run read-only lookups (`vehicle-info`, `slots`, `status`, `deferred`) and/or `python -m tools.cli --dry-run <cmd> ...` first.
-   - Return a standardized `### ISM Pre-Dispatch Summary` block to the user showing: Command, Target, Payload Fields, Missing Required Fields (`[MISSING — REQUIRED]` if absent), and Confirm Next Step.
-   - Wait for explicit user confirmation (and any missing required values) BEFORE executing the live write command. Once a user answers missing fields, present an updated `READY` summary before dispatching if any field changed.
+   - **Preferred (`--stage`)**: Run `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch --cmd "..." --cmd "..."` with `$stepN.<field>` / `$prev.<field>` chaining) on Turn 1—even when required fields are omitted. Present the returned clickable `127.0.0.1` URL (and any `missing_required` fields) to the user and end your turn (never auto-open a browser). The user completes any missing fields and clicks **Submit** locally. On follow-up turns, read created IDs via `python -m tools.cli --json stage-receipt` (`[--id <STAGE_ID>]`) or pass `@last` / `@last.<field>`.
+   - **Legacy (`--dry-run`)**: Unless `ISM_STAGE_ONLY=1` is set, you may run `python -m tools.cli --dry-run <subcmd ...>`, output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing the live write command.
 2. **Direct intent-to-command routing (read-only & after confirmation)**: **NEVER run `--help`, `-h`, or `Get-ChildItem skills/`**. Use exact CLI flags from Quick Command Index and skill files. Do NOT run redundant pre-checks (`status`, `slots`, `tech-overview`, `estimate`, or `get-doc`) when sufficient inputs are given.
-3. **Batch & composite calls**: `python -m tools.cli --json intake-slots` creates the draft quote and returns filtered slots in one call. For 2+ calls, run `python -m tools.cli --json batch --cmd "..." --cmd "..."` (alias: `ism-agent-os batch`; or `--file @cmds.json`). Wrap multi-word inner values in `'...'`. When creating a quote, amending it, and sending approval, run `quote` first, then ALWAYS combine `amend-quote` and `send-approval` in ONE `batch --cmd "amend-quote ..." --cmd "send-approval ..."` call (never two separate CLI calls).
+3. **Batch & composite calls**: `python -m tools.cli --json intake-slots` creates the draft quote and returns filtered slots in one call. For 2+ calls, run `python -m tools.cli --json batch --cmd "..." --cmd "..."` (alias: `ism-agent-os batch`; or `--file @cmds.json`). Wrap multi-word inner values in `'...'`. Chain outputs between batch steps using `$stepN.<field>` or `$prev.<field>` (e.g. `--stage batch --cmd "quote ..." --cmd "amend-quote --repair-order '$step0.data.name' ..." --cmd "send-approval --repair-order '$prev.data.name' --medium link"`). When creating, amending, and sending approval without `--stage`, run `quote` first, then combine `amend-quote` and `send-approval` in ONE `batch` call.
 4. **Quote-free service & date flags (NEVER pass inline JSON on PowerShell)**:
    - Use repeatable `--service "Title"` or `--service "Title::0.5"` on `quote` / `intake-slots`, and `--add-service "Title::0.3"` on `amend-quote`.
    - Use `@path/to/payload.json` ONLY for `--parts-json` or `--remove-indices-json`.
@@ -52,8 +51,10 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `checkout --repair-order <RO> --payment-method <METHOD> --odometer-out <KM> [--paid-amount <AMT>] --confirm`
 - `decode-vin --vin <VIN>`
 - `vehicle-info --vehicle <VEH>`
+- `--stage <subcmd ...>` (stage write command(s) for local browser form UI and return clickable `127.0.0.1` URL immediately)
+- `stage-receipt [--id <STAGE_ID>]` (read latest or specific submitted staged receipt; use `@last` / `@last.<field>` in follow-up commands)
 - `--dry-run <subcmd ...>` (preview `ISM Pre-Dispatch Summary` and check required fields without writing)
-- `batch --cmd "<subcmd ...>" --cmd "<subcmd ...>"` (wrap inner spaces in `'...'`)
+- `batch --cmd "<subcmd ...>" --cmd "<subcmd ...>"` (wrap inner spaces in `'...'`; supports `$stepN.<field>` and `$prev.<field>`)
 
 ## Valid Status Values
 

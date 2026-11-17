@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HOOK_PATH = Path(__file__).resolve().parents[2] / ".agents" / "scripts" / "enforce_ism_write_gate.py"
 
@@ -253,3 +255,71 @@ class TestIsmWriteGateHook(unittest.TestCase):
 					"transcriptPath": sub_p,
 				})
 				self.assertEqual(decision, "allow", f"Expected allow for {cmd}: {reason}")
+
+	def test_allows_stage_commands_without_summary(self) -> None:
+		for cmd in (
+			"python -m tools.cli --json --stage quote --customer Rob --vehicle VIN1 --service 'Lateral Link'",
+			"python -m tools.cli --stage book --repair-order RO-1",
+			"python -m tools.cli quote --stage --customer Rob",
+			"ism-agent-os --stage checkout --repair-order RO-1",
+			"python -m tools.cli --json --stage batch --cmd \"quote --customer Rob --vehicle VIN1 --service Brake\" --cmd \"send-approval --repair-order '$step0.data.name' --medium link\"",
+			"python -m tools.cli --json stage-receipt",
+		):
+			decision, reason = hook_mod.evaluate_hook_payload({
+				"toolCall": {"name": "run_command", "args": {"CommandLine": cmd}},
+			})
+			self.assertEqual(decision, "allow", f"Expected stage allow for {cmd}: {reason}")
+
+		# Passing literal '--stage' as a flag value without enabling --stage must still be denied
+		for spoof_cmd in (
+			"python -m tools.cli --json quote --customer Rob --vehicle VIN1 --odometer-in 48250 --notes --stage",
+			"python -m tools.cli --json quote --customer Rob --vehicle VIN1 --odometer-in 48250 --notes=--stage",
+		):
+			decision, _ = hook_mod.evaluate_hook_payload({
+				"toolCall": {"name": "run_command", "args": {"CommandLine": spoof_cmd}},
+			})
+			self.assertEqual(decision, "deny", f"Expected deny for spoof {spoof_cmd}")
+
+	def test_stage_only_env_enforces_stage_while_default_preserves_dry_run_flow(self) -> None:
+		valid_cmd = (
+			"python -m tools.cli --json quote --customer Rob --vehicle VIN1 "
+			"--odometer-in 48250 --service 'Lateral Link Diagnosis'"
+		)
+		summary = "### ISM Pre-Dispatch Summary\n- **Command**: `quote`\n- **Status**: `READY`\n- **Missing Required Fields**: `None`"
+		with tempfile.TemporaryDirectory() as tmp:
+			transcript_path = _write_transcript(
+				tmp,
+				entries=[
+					{"step_index": 1, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Odo 48250"},
+					{"step_index": 2, "type": "PLANNER_RESPONSE", "source": "MODEL", "content": summary},
+					{"step_index": 3, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Confirmed"},
+				],
+			)
+			# Default (ISM_STAGE_ONLY unset): legacy confirmed live write stays allowed
+			with patch.dict(os.environ, {}, clear=False):
+				os.environ.pop("ISM_STAGE_ONLY", None)
+				decision, reason = hook_mod.evaluate_hook_payload({
+					"toolCall": {"name": "run_command", "args": {"CommandLine": valid_cmd}},
+					"transcriptPath": transcript_path,
+				})
+				self.assertEqual(decision, "allow", f"Expected legacy allow: {reason}")
+
+			# Strict toggle ISM_STAGE_ONLY=1 denies live writes even with confirmed summary
+			with patch.dict(os.environ, {"ISM_STAGE_ONLY": "1"}):
+				decision, reason = hook_mod.evaluate_hook_payload({
+					"toolCall": {"name": "run_command", "args": {"CommandLine": valid_cmd}},
+					"transcriptPath": transcript_path,
+				})
+				self.assertEqual(decision, "deny")
+				self.assertIn("ISM_STAGE_ONLY=1", reason or "")
+
+				# --stage, --dry-run, and stage-receipt remain allowed under ISM_STAGE_ONLY=1
+				for allowed_cmd in (
+					"python -m tools.cli --json --stage quote --customer Rob --vehicle VIN1",
+					"python -m tools.cli --dry-run quote --customer Rob --vehicle VIN1 --service Test",
+					"python -m tools.cli --json stage-receipt",
+				):
+					d_ok, r_ok = hook_mod.evaluate_hook_payload({
+						"toolCall": {"name": "run_command", "args": {"CommandLine": allowed_cmd}},
+					})
+					self.assertEqual(d_ok, "allow", f"Expected allow under ISM_STAGE_ONLY=1 for {allowed_cmd}: {r_ok}")

@@ -43,7 +43,7 @@ def _add_slot_filter_args(
 	parser.add_argument("--include-resources", action="store_true", help="Include bay and technician directories")
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser(relax_required: bool = False) -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(
 		prog="ism-agent-os",
 		description="ISM Agent OS CLI for direct Frappe REST and Agent Facade operations.",
@@ -68,10 +68,19 @@ def _build_parser() -> argparse.ArgumentParser:
 		dest="dry_run",
 		help="Validate arguments and output ISM Pre-Dispatch Summary without dispatching write calls",
 	)
+	parser.add_argument(
+		"--stage",
+		action="store_true",
+		dest="stage",
+		help="Stage write command(s) for local browser confirmation UI and output a 127.0.0.1 URL",
+	)
 	sub = parser.add_subparsers(dest="command", required=True)
 
 	sub.add_parser("test", help="Verify Frappe REST and ISM Agent Facade connectivity")
 	sub.add_parser("verify-connection", help="Alias for 'test' connectivity check")
+
+	p_sr = sub.add_parser("stage-receipt", help="Read latest staged action receipt or inspect a specific stage_id")
+	p_sr.add_argument("--id", dest="stage_id", help="Optional stage_id (e.g. stg_...) to inspect")
 
 	p_batch = sub.add_parser("batch", help="Execute multiple CLI commands in one process")
 	p_batch.add_argument(
@@ -93,7 +102,19 @@ def _build_parser() -> argparse.ArgumentParser:
 	_register_floor_and_action_parsers(sub)
 	_register_vehicle_and_inspection_parsers(sub)
 	_register_parts_and_rest_parsers(sub)
-	for sp in set(sub._name_parser_map.values()):
+	seen_parsers: set[int] = set()
+	for cmd_name, sp in sub._name_parser_map.items():
+		if id(sp) in seen_parsers:
+			continue
+		seen_parsers.add(id(sp))
+		if relax_required and cmd_name not in ("batch", "test", "verify-connection", "stage-receipt"):
+			for action in sp._actions:
+				if action.option_strings:
+					action.required = False
+				elif action.nargs is None:
+					action.nargs = "?"
+			for grp in sp._mutually_exclusive_groups:
+				grp.required = False
 		sp.add_argument(
 			"--dry-run",
 			"--preview",
@@ -101,6 +122,13 @@ def _build_parser() -> argparse.ArgumentParser:
 			dest="dry_run",
 			default=argparse.SUPPRESS,
 			help="Validate arguments and output ISM Pre-Dispatch Summary without dispatching write calls",
+		)
+		sp.add_argument(
+			"--stage",
+			action="store_true",
+			dest="stage",
+			default=argparse.SUPPRESS,
+			help="Stage write command(s) for local browser confirmation UI and output a 127.0.0.1 URL",
 		)
 	return parser
 

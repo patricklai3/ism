@@ -41,11 +41,12 @@ description: >-
 3. **Direct booking & conflict/ambiguity recovery**: When the user provides date and time (plus RO or provisional customer/vehicle), run `--dry-run book` / `book` directly. When the user supplies a date, time, and bay name (even an ambiguous name like `'Bay'`), do **NOT** pre-query `slots` before `--dry-run book` / `book` — pass the user's bay string directly to `--dry-run book` / `book` first and pick an `[Available]` matching bay from the 417 error. If `book` returns an ambiguous-bay 417 listing candidate bays with `[Available]` / `[Busy]` and equipment tags, retry `book` immediately with an `[Available]` matching bay (or run `slots --tags Lift --min-time <HH:MM>` then `book` if availability isn't shown). If a bay/tech conflict occurs, report the conflict, resource IDs, suggested alternative slots, and the returned deep link(s) from `urls` (conflicting entry / Calendar URL).
 4. **Batch multi-step flows**: Combine 2+ calls (e.g., `unscheduled` + `slots`, or `status` + `tech-overview`) with `python -m tools.cli --json batch --cmd "..." --cmd "..."` (or `--file @cmds.json`) instead of PowerShell stdin pipes.
 
-## Required Fields & Pre-Dispatch Callback
+## Required Fields, `--stage` & Pre-Dispatch Callback
 
 - **`create-ro-from-entry` required fields**: `--schedule-entry` and `--odometer-in` (`>= 0`; NEVER guess or omit).
 - **`book` / `reschedule` / `appointment-status` required fields**: `--date` & `--time` (`book` also needs `--repair-order` or `--provisional-customer`); `--schedule-entry` + >= 1 change (`reschedule`); `--schedule-entry` + `--status` (`appointment-status`).
-- **Mandatory Callback**: Run `slots` / `status` / `--dry-run` first, output `### ISM Pre-Dispatch Summary` (flagging any missing required fields), and wait for user confirmation before live writes.
+- **Preferred Turn-1 Staged Form (`--stage`)**: Stage `book`, `reschedule`, `appointment-status`, `create-ro-from-entry`, or `intake-slots` via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch` with `$stepN.<field>` / `$prev.<field>`), present the returned `127.0.0.1` URL (conflict alternatives render as one-click **Select Slot & Retry** pills in the UI), and use `python -m tools.cli --json stage-receipt` or `@last` on follow-up turns.
+- **Legacy Callback (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), run `slots` / `status` / `--dry-run` first, output `### ISM Pre-Dispatch Summary`, and wait for user confirmation before live writes.
 
 ## Verification
 

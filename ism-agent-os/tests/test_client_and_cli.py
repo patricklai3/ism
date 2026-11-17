@@ -1424,6 +1424,242 @@ class TestCli(unittest.TestCase):
 		self.assertEqual(captured[0]["payment_method"], "Debit / Interac")
 		self.assertEqual(captured[0]["reference_no"], "REF-1")
 
+	def test_cli_stage_single_and_batch_without_client_or_browser(self) -> None:
+		from tools.stage_store import load_stage_record
+
+		with tempfile.TemporaryDirectory() as tmp, \
+			patch.dict(os.environ, {"ISM_STAGED_DIR": tmp}), \
+			patch("tools.cli.ensure_server_running", return_value={"port": 54321, "pid": 4242}) as mock_srv, \
+			patch("webbrowser.open") as mock_browser, \
+			patch("urllib.request.urlopen") as mock_open, \
+			patch("tools.cli.IsmAgentClient") as mock_client:
+
+			# 1. Single quote missing --odometer-in stages immediately with exit 0
+			with patch("sys.stdout", new_callable=io.StringIO) as out:
+				code = cli.main([
+					"--json",
+					"--stage",
+					"quote",
+					"--customer",
+					"Rob",
+					"--vehicle",
+					"5YJ3E1EA1PF200101",
+					"--service",
+					"Lateral Link Diagnosis::1.0",
+				])
+			self.assertEqual(code, 0)
+			res = json.loads(out.getvalue())
+			self.assertTrue(res["success"])
+			self.assertTrue(res["staged"])
+			self.assertFalse(res["ready"])
+			self.assertIn("quote:--odometer-in", res["missing_required"])
+			self.assertTrue(res["url"].startswith("http://127.0.0.1:54321/?id=stg_"))
+			self.assertIn("&token=", res["url"])
+			rec = load_stage_record(res["stage_id"], staged_dir=tmp)
+			self.assertIsNotNone(rec)
+			self.assertEqual(rec["status"], "pending")
+
+			# 2. book missing argparse-required --date/--time and deposit missing positional repair_order
+			with patch("sys.stdout", new_callable=io.StringIO) as out:
+				code_book = cli.main(["--json", "--stage", "book", "--repair-order", "RO-2026-00011"])
+			self.assertEqual(code_book, 0)
+			res_book = json.loads(out.getvalue())
+			self.assertFalse(res_book["ready"])
+			self.assertIn("book:--date", res_book["missing_required"])
+			self.assertIn("book:--time", res_book["missing_required"])
+
+			with patch("sys.stdout", new_callable=io.StringIO) as out:
+				code_dep = cli.main(["--json", "--stage", "deposit"])
+			self.assertEqual(code_dep, 0)
+			res_dep = json.loads(out.getvalue())
+			self.assertFalse(res_dep["ready"])
+			self.assertIn("deposit:repair_order", res_dep["missing_required"])
+			self.assertIn("deposit:--amount", res_dep["missing_required"])
+
+			# 3. Multi-step chained batch staging with $step0 and $prev
+			with patch("sys.stdout", new_callable=io.StringIO) as out:
+				code_batch = cli.main([
+					"--json",
+					"--stage",
+					"batch",
+					"--cmd",
+					"quote --customer Rob --vehicle 5YJ3E1EA1PF200101 --service 'Brake Service::1.0'",
+					"--cmd",
+					"amend-quote --repair-order '$step0.data.name' --add-service 'Wiper::0.3'",
+					"--cmd",
+					"send-approval --repair-order '$prev.data.name' --medium link",
+				])
+			self.assertEqual(code_batch, 0)
+			res_batch = json.loads(out.getvalue())
+			self.assertTrue(res_batch["staged"])
+			self.assertFalse(res_batch["ready"])
+			self.assertEqual(len(res_batch["commands"]), 3)
+			self.assertEqual(res_batch["missing_required"], ["quote:--odometer-in"])
+			batch_rec = load_stage_record(res_batch["stage_id"], staged_dir=tmp)
+			self.assertEqual(batch_rec["mode"], "batch")
+			ro_field = next(f for f in batch_rec["commands"][1]["fields"] if f["name"] == "repair_order")
+			self.assertTrue(ro_field["is_step_ref"])
+
+			# 4. Out-of-bounds $stepN / $prev in batch or single command rejected before staging
+			for bad_argv in (
+				["--stage", "quote", "--customer", "$step0.data.name", "--vehicle", "VIN1", "--notes", "Test"],
+				[
+					"--stage",
+					"batch",
+					"--cmd",
+					"quote --customer Rob --vehicle VIN1 --odometer-in 100 --notes Test",
+					"--cmd",
+					"amend-quote --repair-order '$step2.data.name' --notes Check",
+				],
+				[
+					"--stage",
+					"batch",
+					"--cmd",
+					"amend-quote --repair-order '$prev.data.name' --notes Check",
+				],
+				["--stage", "--dry-run", "quote", "--customer", "Rob", "--vehicle", "VIN1", "--notes", "Test"],
+			):
+				with patch("sys.stderr", new_callable=io.StringIO):
+					self.assertEqual(cli.main(bad_argv), 1, f"Expected exit 1 for {bad_argv}")
+
+			mock_srv.assert_called()
+			mock_browser.assert_not_called()
+			mock_open.assert_not_called()
+			mock_client.assert_not_called()
+
+	def test_cli_batch_step_chaining_and_at_last_receipt_recall(self) -> None:
+		from tools.stage_store import create_stage_record, record_receipt
+
+		def _mock_urlopen_seq(req, timeout=30):
+			body = json.loads(req.data.decode("utf-8")) if req.data else {}
+			url = req.full_url
+			if url.endswith("/api/method/ism.api.agent.create_quote"):
+				return _FakeHttpResponse({
+					"message": {
+						"success": True,
+						"data": {"name": "RO-2026-00999", "customer": body.get("customer_name")},
+						"urls": {"desk": "http://localhost:8000/app/repair-order/RO-2026-00999"},
+					}
+				})
+			if url.endswith("/api/method/ism.api.agent.amend_quote"):
+				return _FakeHttpResponse({
+					"message": {"success": True, "data": {"name": body["repair_order"], "amended": True}}
+				})
+			if url.endswith("/api/method/ism.api.agent.send_quote_for_approval"):
+				return _FakeHttpResponse({
+					"message": {
+						"success": True,
+						"data": {"name": body["repair_order"]},
+						"urls": {"approval": "http://localhost:8000/quote-approval?token=abc"},
+					}
+				})
+			if "/api/resource/Repair%20Order/RO-2026-00999" in url:
+				return _FakeHttpResponse({"data": {"name": "RO-2026-00999", "odometer_in": 48250}})
+			raise AssertionError(f"Unexpected URL: {url}")
+
+		# Live batch execution resolves $step0.data.name and $prev.data.name
+		with patch.dict(os.environ, {"FRAPPE_URL": "http://localhost:8000", "FRAPPE_API_KEY": "k", "FRAPPE_API_SECRET": "s"}), \
+			patch("urllib.request.urlopen", side_effect=_mock_urlopen_seq), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code = cli.main([
+				"--json",
+				"batch",
+				"--stop-on-error",
+				"--cmd",
+				"quote --customer 'Jane Doe' --vehicle 5YJ3E1EA1PF200101 --odometer-in 48250 --service 'Brake Service::1.0'",
+				"--cmd",
+				"amend-quote --repair-order '$step0.data.name' --add-service 'Wiper::0.3'",
+				"--cmd",
+				"send-approval --repair-order '$prev.data.name' --medium link",
+			])
+		self.assertEqual(code, 0, out.getvalue())
+		batch_out = json.loads(out.getvalue())
+		self.assertTrue(batch_out["success"])
+		self.assertEqual(batch_out["results"][1]["result"]["data"]["name"], "RO-2026-00999")
+		self.assertEqual(batch_out["results"][2]["result"]["data"]["name"], "RO-2026-00999")
+
+		# Step failure blocks dependent $step0 references cleanly
+		def _fail_first(req, timeout=30):
+			return _FakeHttpResponse({"message": {"success": False, "error": "Vehicle not found"}})
+
+		with patch.dict(os.environ, {"FRAPPE_URL": "http://localhost:8000", "FRAPPE_API_KEY": "k", "FRAPPE_API_SECRET": "s"}), \
+			patch("urllib.request.urlopen", side_effect=_fail_first), \
+			patch("sys.stdout", new_callable=io.StringIO) as out:
+			code_fail = cli.main([
+				"--json",
+				"batch",
+				"--cmd",
+				"quote --customer 'Jane Doe' --vehicle BAD --odometer-in 48250 --notes Test",
+				"--cmd",
+				"amend-quote --repair-order '$step0.data.name' --notes Check",
+			])
+		self.assertEqual(code_fail, 1)
+		fail_res = json.loads(out.getvalue())
+		self.assertFalse(fail_res["results"][1]["ok"])
+		self.assertIn("did not succeed", fail_res["results"][1]["error"])
+
+		# stage-receipt and @last / @last.<field> recall while preserving bob@last.com
+		with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"ISM_STAGED_DIR": tmp}):
+			rec = create_stage_record({"ready": True, "missing_required": [], "steps": []}, staged_dir=tmp)
+			record_receipt(
+				rec["stage_id"],
+				{
+					"success": True,
+					"data": {"name": "RO-2026-00999", "grand_total": 310.75},
+					"urls": {"desk": "http://localhost:8000/app/repair-order/RO-2026-00999"},
+				},
+				commands=["quote"],
+				mode="single",
+				staged_dir=tmp,
+			)
+
+			with patch("urllib.request.urlopen") as mock_open, \
+				patch("sys.stdout", new_callable=io.StringIO) as out1:
+				rc1 = cli.main(["--json", "stage-receipt"])
+			with patch("urllib.request.urlopen") as mock_open2, \
+				patch("sys.stdout", new_callable=io.StringIO) as out2:
+				rc2 = cli.main(["--json", "stage-receipt", "--id", rec["stage_id"]])
+			self.assertEqual(rc1, 0)
+			self.assertEqual(rc2, 0)
+			mock_open.assert_not_called()
+			mock_open2.assert_not_called()
+			self.assertEqual(json.loads(out1.getvalue())["data"]["primary_id"], "RO-2026-00999")
+			self.assertEqual(json.loads(out2.getvalue())["data"]["primary_id"], "RO-2026-00999")
+
+			with patch.dict(os.environ, {"FRAPPE_URL": "http://localhost:8000", "FRAPPE_API_KEY": "k", "FRAPPE_API_SECRET": "s"}), \
+				patch("urllib.request.urlopen", side_effect=_mock_urlopen_seq), \
+				patch("sys.stdout", new_callable=io.StringIO) as out:
+				rc_get = cli.main(["--json", "get-doc", "--doctype", "Repair Order", "--name", "@last"])
+			self.assertEqual(rc_get, 0)
+			self.assertEqual(json.loads(out.getvalue())["name"], "RO-2026-00999")
+
+			captured_quote: list[dict] = []
+
+			def _capture_quote(req, timeout=30):
+				captured_quote.append(json.loads(req.data.decode("utf-8")))
+				return _FakeHttpResponse({"message": {"success": True, "data": {"name": "RO-2026-01000"}}})
+
+			with patch.dict(os.environ, {"FRAPPE_URL": "http://localhost:8000", "FRAPPE_API_KEY": "k", "FRAPPE_API_SECRET": "s"}), \
+				patch("urllib.request.urlopen", side_effect=_capture_quote), \
+				patch("sys.stdout", new_callable=io.StringIO):
+				rc_email = cli.main([
+					"--json",
+					"quote",
+					"--customer",
+					"Bob",
+					"--vehicle",
+					"VIN1",
+					"--odometer-in",
+					"50000",
+					"--email",
+					"bob@last.com",
+					"--notes",
+					"Follow-up for @last.repair_order",
+				])
+			self.assertEqual(rc_email, 0)
+			self.assertEqual(captured_quote[0]["customer_email"], "bob@last.com")
+			self.assertEqual(captured_quote[0]["notes"], "Follow-up for RO-2026-00999")
+
 
 if __name__ == "__main__":
 	unittest.main()
