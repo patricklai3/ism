@@ -24,6 +24,7 @@ PRIMARY_SYNC_SCRIPTS = {
 DIRECT_WSL_OR_SLOT_SCRIPTS = {
 	"provision-slots.sh",
 	"run-in-slot.sh",
+	"slot-common.sh",
 }
 
 PROTECTED_BENCH_MARKERS = (
@@ -38,6 +39,9 @@ PROTECTED_BENCH_MARKERS = (
 	"wt3.localhost",
 	"wt4.localhost",
 	"wt5.localhost",
+	"wt6.localhost",
+	"wt7.localhost",
+	"wt8.localhost",
 )
 
 EXEC_INFRA_TOOLS = {
@@ -406,9 +410,11 @@ def _segment_script_names(tokens: list[str]) -> set[str]:
 
 def _is_provision_status_only(tokens: list[str]) -> bool:
 	low_tokens = {tok.lower() for tok in tokens}
-	has_status = "-status" in low_tokens
+	has_readonly = ("-status" in low_tokens) or any(
+		tok == "-history" or tok.startswith("-history:") for tok in low_tokens
+	)
 	has_mutating = bool(low_tokens & {"-recreate", "-refreshgolden", "-slots"})
-	return has_status and not has_mutating
+	return has_readonly and not has_mutating
 
 
 def _has_infra_exec_tool(tokens: list[str]) -> bool:

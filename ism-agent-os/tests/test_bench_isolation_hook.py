@@ -92,6 +92,8 @@ class TestBenchIsolationHook(unittest.TestCase):
 			"try { $null = 1 } catch {}; rtk git status",
 			"powershell -ExecutionPolicy Bypass -File ism-frappe\\scripts\\test-in-slot.ps1 -Module ism.tests.test_estimation_math",
 			"powershell -NoProfile -File ism-frappe\\scripts\\provision-bench-slots.ps1 -Status",
+			"powershell -NoProfile -File ism-frappe\\scripts\\provision-bench-slots.ps1 -History 20",
+			"powershell -NoProfile -File ism-frappe\\scripts\\provision-bench-slots.ps1 -Status -History 10",
 		]
 		for ctx in (self.linked_wt, self.branch_clone):
 			for cmd in safe_cmds:
@@ -123,6 +125,7 @@ class TestBenchIsolationHook(unittest.TestCase):
 			"powershell -ExecutionPolicy Bypass -File ism-frappe\\scripts\\provision-bench-slots.ps1 -Recreate",
 			"powershell -ExecutionPolicy Bypass -File ism-frappe\\scripts\\provision-bench-slots.ps1 -RefreshGolden",
 			"powershell -ExecutionPolicy Bypass -File ism-frappe\\scripts\\provision-bench-slots.ps1 -Status -Recreate",
+			"powershell -ExecutionPolicy Bypass -File ism-frappe\\scripts\\provision-bench-slots.ps1 -History 20 -Recreate",
 		]
 		for ctx in (self.linked_wt, self.branch_clone):
 			for cmd in blocked:
@@ -157,6 +160,7 @@ class TestBenchIsolationHook(unittest.TestCase):
 		bypasses = [
 			f'cd "{self.linked_wt}" && wsl -d Ubuntu docker exec devcontainer-frappe-1 bench --site development.localhost migrate',
 			"wsl -d Ubuntu docker exec -w /workspace/development/bench-slots/slot-1 devcontainer-frappe-1 bench --site wt1.localhost run-tests",
+			"wsl -d Ubuntu docker exec -w /workspace/development/bench-slots/slot-6 devcontainer-frappe-1 bench --site wt6.localhost run-tests",
 			"wsl -d Ubuntu rsync -rtvc /mnt/c/wt/ /home/real2/projects/.project/frappe_docker/development/frappe-bench/apps/ism/",
 			"wsl -d Ubuntu docker exec devcontainer-mariadb-1 mariadb -uroot -p123 _c6b75eebb8edc84d -e 'SHOW TABLES'",
 			"wsl -d Ubuntu docker exec devcontainer-mariadb-1 mariadb -uroot -p123 _ism_slot_1 -e 'SHOW TABLES'",
