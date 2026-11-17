@@ -133,3 +133,12 @@ Read the matching `SKILL.md` before starting non-trivial work:
 - Refactoring or final check: `safe-refactor` / `verify-and-stop`
 
 Prefer `ast-outline grep`, `rg`, and `git` CLI commands over PowerShell `Get-ChildItem | Select-String` so `ast-outline` and `rtk` compression apply.
+
+## Parallel Worktrees & Frappe Testing
+
+- Never run `sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl` / `docker exec` commands targeting `frappe-bench` or `development.localhost` from a worktree or non-`main` branch (enforced by `.agents/scripts/enforce_bench_isolation.py` via `PreToolUse`).
+- Run isolated migrations, tests, scripts, and previews from any worktree with:
+  `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module <dotted.test.module>`
+  (`slot-1`..`slot-4`, `wt1..wt4.localhost`, ports `8001`–`8004`, Redis `/1`–`/4`, leased via kernel `flock`).
+- Check slot lease status from any checkout with `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\provision-bench-slots.ps1 -Status`.
+- Only the coordinator on canonical `D:\ism` (`main`) runs `ism-frappe\scripts\promote-to-main.ps1` after merging branches.

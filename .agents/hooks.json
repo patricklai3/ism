@@ -28,5 +28,20 @@
         ]
       }
     ]
+  },
+  "enforce-bench-isolation": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python d:\\ism\\.agents\\scripts\\enforce_bench_isolation.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
   }
 }
