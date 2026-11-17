@@ -1,0 +1,83 @@
+name: Sync ism-frappe Subtree to Deploy Repo
+
+on:
+  push:
+    branches:
+      - staging
+      - production
+      - main
+    paths:
+      - "ism-frappe/**"
+      - ".github/workflows/sync-ism-frappe.yml"
+  workflow_dispatch:
+    inputs:
+      force_push:
+        description: "Use --force-with-lease when pushing to the deploy repository"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: sync-ism-frappe-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  sync-subtree:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout monorepo with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate deploy repo configuration
+        env:
+          DEPLOY_REPO: ${{ vars.ISM_FRAPPE_DEPLOY_REPO }}
+          DEPLOY_KEY: ${{ secrets.ISM_FRAPPE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$DEPLOY_REPO" ]; then
+            echo "::error::Repository variable ISM_FRAPPE_DEPLOY_REPO is not set (expected e.g. 'org/ism-frappe')."
+            exit 1
+          fi
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::Repository secret ISM_FRAPPE_DEPLOY_KEY is not set (expected SSH deploy private key with write access to $DEPLOY_REPO)."
+            exit 1
+          fi
+
+      - name: Configure SSH deploy key
+        env:
+          DEPLOY_KEY: ${{ secrets.ISM_FRAPPE_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+
+      - name: Split ism-frappe subtree and verify app root
+        id: split
+        run: |
+          SPLIT_SHA="$(git subtree split --prefix=ism-frappe HEAD)"
+          echo "sha=${SPLIT_SHA}" >> "$GITHUB_OUTPUT"
+          git cat-file -e "${SPLIT_SHA}:pyproject.toml"
+          git cat-file -e "${SPLIT_SHA}:ism/hooks.py"
+          echo "Verified split commit ${SPLIT_SHA} contains pyproject.toml and ism/hooks.py at root."
+
+      - name: Push split branch to deploy repository
+        env:
+          DEPLOY_REPO: ${{ vars.ISM_FRAPPE_DEPLOY_REPO }}
+          SPLIT_SHA: ${{ steps.split.outputs.sha }}
+          FORCE_PUSH: ${{ inputs.force_push }}
+        run: |
+          DEPLOY_URL="git@github.com:${DEPLOY_REPO}.git"
+          TARGET_REF="refs/heads/${GITHUB_REF_NAME}"
+          PUSH_ARGS=()
+          if [ "$FORCE_PUSH" = "true" ]; then
+            REMOTE_SHA="$(git ls-remote "$DEPLOY_URL" "$TARGET_REF" | awk '{print $1}')"
+            if [ -n "$REMOTE_SHA" ]; then
+              PUSH_ARGS+=(--force-with-lease="${TARGET_REF}:${REMOTE_SHA}")
+            else
+              PUSH_ARGS+=(--force-with-lease="${TARGET_REF}:")
+            fi
+          fi
+          git push "${PUSH_ARGS[@]}" "$DEPLOY_URL" "${SPLIT_SHA}:${TARGET_REF}"
