@@ -66,5 +66,5 @@ Eliminate the post-confirmation agent execution turn in `ism-agent-os` by adding
   - Update `test_write_gate_hook.py`: test `--stage` allow without summary, legacy `--dry-run -> confirm -> live`, and `ISM_STAGE_ONLY=1` strict denial.
   - Add `test_stage_server.py`: test `403` Origin/nonce guards, `400` missing-field validation keeping `pending`, `200` execution writing `latest.json`, `409` double-submit lock, chained batch execution, and conflict retry payload.
   - Run full suite: `python -m unittest discover -s ism-agent-os/tests -t ism-agent-os -v`.
-- [ ] **4.3 Live Slot Smoke Verification**
+- [x] **4.3 Live Slot Smoke Verification**
   - Stage `quote` missing `--odometer-in` via `tools.cli --json --stage`, verify CLI exits immediately with no browser auto-open, open printed URL manually, enter odometer and submit, verify `RO-...` in Frappe and follow-up `stage-receipt` recall.
