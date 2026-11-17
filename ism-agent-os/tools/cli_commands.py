@@ -24,6 +24,7 @@ from .cli_parsing import (
 )
 from .cli_validation import READ_ONLY_COMMANDS, validate_temporal_args, validate_write_command_args
 from .client import IsmAgentClient, IsmApiError
+from .pricing import calculate_part_price, load_pricing_config
 
 try:
 	from .ingestion.supplier_catalog import SupplierCatalogSanitizer
@@ -87,9 +88,34 @@ def _cmd_amend_quote(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> dict[
 	)
 
 
+def _canonical_item_code(part_source: str, part_number: str, part_condition: str) -> str:
+	src = "OEM" if str(part_source or "").strip().upper().startswith("OEM") else "AFT"
+	cond_low = str(part_condition or "New").strip().lower()
+	cond = "USED" if "used" in cond_low else ("REC" if cond_low.startswith(("rec", "rem", "reb")) else "NEW")
+	clean_part = re.sub(r"[^A-Za-z0-9_\-]", "", str(part_number or "").strip().upper()) or "UNKNOWN"
+	return f"{src}-{clean_part}-{cond}"
+
+
+def _cmd_price_part(a: argparse.Namespace, _c: Optional[IsmAgentClient], _s: bool) -> dict[str, Any]:
+	cfg = load_pricing_config(a.config) if getattr(a, "config", None) else None
+	result = calculate_part_price(
+		tesla_oem_price=a.tesla_price,
+		cost=a.cost,
+		part_source=a.source,
+		part_condition=a.condition,
+		override_rate=a.override_rate,
+		part_number=a.part_number,
+		part_name=a.part_name,
+		config=cfg,
+	)
+	return {"success": True, "data": result}
+
+
 def _cmd_ingest_parts(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> dict[str, Any]:
 	raw = _read_utf8_file(a.file, label="Parts catalog")
 	sanitizer = SupplierCatalogSanitizer()
+	pricing_cfg = load_pricing_config(a.pricing_config) if getattr(a, "pricing_config", None) else None
+	preserve_rate = bool(getattr(a, "preserve_rate", False))
 	if str(a.file).lower().endswith(".json") or raw.lstrip().startswith(("[", "{")):
 		parsed = json.loads(raw)
 		if isinstance(parsed, dict):
@@ -104,22 +130,78 @@ def _cmd_ingest_parts(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> dict
 		else:
 			raise ValueError(f"Parts JSON must be a list or object with 'items', got {type(parsed).__name__}.")
 		items = sanitizer.normalize_items(
-			raw_items, default_source=a.source, default_condition=a.condition
+			raw_items,
+			default_source=a.source,
+			default_condition=a.condition,
+			preserve_explicit_rate=preserve_rate,
+			pricing_config=pricing_cfg,
 		)
 	else:
 		items = sanitizer.parse_rows(
-			raw, default_source=a.source, default_condition=a.condition
+			raw,
+			default_source=a.source,
+			default_condition=a.condition,
+			preserve_explicit_rate=preserve_rate,
+			pricing_config=pricing_cfg,
 		)
 	if not items:
 		raise ValueError(f"No valid parts found in '{a.file}'.")
-	return c.import_supplier_catalog(
-		items=items,
+
+	uniform_tesla = getattr(a, "tesla_price", None)
+	if uniform_tesla is not None and float(uniform_tesla) > 0.0:
+		for item in items:
+			if "_pricing" in item:
+				continue
+			existing_rate = float(item.get("unit_rate") or 0.0)
+			override_val = existing_rate if (preserve_rate and existing_rate > 0.0) else None
+			cost_val = float(item.get("valuation_rate") or 0.0)
+			pricing_meta = calculate_part_price(
+				tesla_oem_price=float(uniform_tesla),
+				cost=cost_val if cost_val > 0.0 else None,
+				part_source=item.get("part_source", a.source),
+				part_condition=item.get("part_condition", a.condition),
+				override_rate=override_val,
+				part_number=item.get("oem_part_number") or item.get("part_number"),
+				part_name=item.get("part_name"),
+				config=pricing_cfg,
+			)
+			item["unit_rate"] = pricing_meta["sell_price"]
+			item["_pricing"] = pricing_meta
+
+	pricing_summary: list[dict[str, Any]] = []
+	frappe_items: list[dict[str, Any]] = []
+	for item in items:
+		meta = item.get("_pricing")
+		if isinstance(meta, dict):
+			pricing_summary.append({"part_number": item.get("part_number"), **meta})
+		frappe_items.append({k: v for k, v in item.items() if k != "_pricing"})
+
+	res = c.import_supplier_catalog(
+		items=frappe_items,
 		supplier=a.supplier,
 		default_source=a.source,
 		default_condition=a.condition,
 		service_package=a.service_package,
 		include_summary=s,
 	)
+	if bool(getattr(a, "sync_rates", False)):
+		synced: list[str] = []
+		for item in frappe_items:
+			rate_val = float(item.get("unit_rate") or 0.0)
+			if rate_val <= 0.0:
+				continue
+			code = _canonical_item_code(
+				item.get("part_source", a.source),
+				item.get("part_number", ""),
+				item.get("part_condition", a.condition),
+			)
+			c.update_document("Item", code, {"standard_rate": rate_val})
+			synced.append(code)
+		if isinstance(res, dict):
+			res["synced_rates"] = synced
+	if pricing_summary and isinstance(res, dict):
+		res["pricing_summary"] = pricing_summary
+	return res
 
 
 def _cmd_inspection_templates(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> dict[str, Any]:
@@ -483,6 +565,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 		include_summary=s,
 	),
 	"ingest-parts": _cmd_ingest_parts,
+	"price-part": _cmd_price_part,
 	"alternates": lambda a, c, s: c.get_component_alternates(
 		service_package=a.service_package,
 		component_slot=a.component_slot,

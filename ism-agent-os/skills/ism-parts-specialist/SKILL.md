@@ -13,9 +13,17 @@ description: >-
 
 ## 1. Bulk Import Supplier Catalogs
 
-1. Prepare CSV, TSV, pipe-delimited, or JSON rows with part number, description, source, condition, rate, cost, quantity, revision, and OEM number.
-2. Run `python -m tools.cli --json ingest-parts <file> --service-package <PKG>` (with required `--service-package` to nest the part under at least one `Service Package`, plus `--supplier`, `--source`, `--condition`) to sanitize rows into structured JSON items and import them.
-3. Review `total_created`, `total_updated`, and `total_errors` in `data`.
+1. Prepare CSV, TSV, pipe-delimited, or JSON rows with part number, description, source, condition, rate, cost, quantity, revision, OEM number, and optional `tesla_oem_price` (CAD).
+2. When `tesla_oem_price` is present, `ingest-parts` automatically calculates `unit_rate` via `rules/parts_pricing.json` (`-30%` baseline, small-ticket match `<= $20`, and cost-markup floor), overriding raw catalog `rate` unless `--preserve-rate` is passed. Pass `--sync-rates` to update `Item.standard_rate` on existing Frappe items.
+3. Run `python -m tools.cli --json ingest-parts <file> --service-package <PKG>` (with required `--service-package` to nest the part under at least one `Service Package`, plus `--supplier`, `--source`, `--condition`).
+4. Review `total_created`, `total_updated`, `total_errors`, and `pricing_summary` (internal only) in output.
+
+## 1b. Tesla-Offset Part Pricing (`price-part`)
+
+1. **Reuse stored Frappe rate first**: If the Frappe `Item` already has a non-zero `standard_rate` on a repeat quote, reuse it unless a fresh Tesla price check is requested.
+2. **Search Tesla Canada**: Open `https://parts.tesla.com/en-CA/find-part?searchTerm=<query>` using the OEM part number first, or the part name if unlisted or superseded.
+3. **Exercise discretion**: Confirm the region is Canada (`en-CA`, CAD), verify vehicle model/generation compatibility across broad name results, and resolve superseded part numbers.
+4. **Compute & audit internally**: Run `python -m tools.cli --json price-part --tesla-price <CAD> [--cost <CAD>] [--source OEM|Aftermarket] [--condition New|Used|Reconditioned] [--part-number <NO>]`. Surface the pricing rule and warnings (`above_tesla`, missing cost, or cost-plus fallback) in `### ISM Pre-Dispatch Summary` only—never in customer-facing quote or invoice text.
 
 ## 2. Ingest Tesla Service Manual Procedures
 

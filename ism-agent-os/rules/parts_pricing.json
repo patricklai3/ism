@@ -1,0 +1,17 @@
+{
+  "currency": "CAD",
+  "tesla_search_url_template": "https://parts.tesla.com/en-CA/find-part?searchTerm={query}",
+  "baseline_discount_pct": 30.0,
+  "condition_discount_overrides": {
+    "New": null,
+    "Used": null,
+    "Reconditioned": null
+  },
+  "small_ticket_max_tesla_price": 20.0,
+  "small_ticket_discount_pct": 0.0,
+  "min_sell_price": 5.0,
+  "min_cost_markup_pct": 25.0,
+  "min_cost_margin_dollars": 5.0,
+  "fallback_cost_markup_pct": 40.0,
+  "rounding_increment": 0.01
+}

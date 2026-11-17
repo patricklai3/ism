@@ -10,11 +10,14 @@ from typing import Any, Optional, Sequence, Union
 
 if __package__ and __package__.startswith("ism_agent_os"):
 	from ..client import IsmAgentClient
+	from ..pricing import PricingConfig, calculate_part_price
 else:
 	try:
 		from tools.client import IsmAgentClient
+		from tools.pricing import PricingConfig, calculate_part_price
 	except ImportError:
 		from ism_agent_os.client import IsmAgentClient
+		from ism_agent_os.pricing import PricingConfig, calculate_part_price
 
 _HEADER_ALIASES = {
 	"part": "part_num",
@@ -60,6 +63,11 @@ _HEADER_ALIASES = {
 	"uom": "stock_uom",
 	"supplier": "supplier",
 	"supplier_part_no": "supplier_part_no",
+	"tesla_price": "tesla_oem_price",
+	"tesla_oem_price": "tesla_oem_price",
+	"oem_price": "tesla_oem_price",
+	"tesla_msrp": "tesla_oem_price",
+	"tesla_retail": "tesla_oem_price",
 }
 
 _CANONICAL_PIPE_HEADER = "Part# | Description | Source | Condition | Rate | Cost | Qty | Revision | OEM#"
@@ -73,16 +81,32 @@ class SupplierCatalogSanitizer:
 		raw_text: str,
 		default_source: str = "Aftermarket",
 		default_condition: str = "New",
+		*,
+		apply_pricing: bool = True,
+		preserve_explicit_rate: bool = False,
+		pricing_config: Optional[PricingConfig] = None,
 	) -> list[dict[str, Any]]:
 		"""Parse raw CSV/TSV/pipe/semicolon catalog text into canonical structured dicts."""
 		records = _iter_parsed_records(raw_text, default_source, default_condition)
-		return [_record_to_structured_item(rec) for rec in records]
+		return [
+			_record_to_structured_item(
+				rec,
+				apply_pricing=apply_pricing,
+				preserve_explicit_rate=preserve_explicit_rate,
+				pricing_config=pricing_config,
+			)
+			for rec in records
+		]
 
 	def normalize_items(
 		self,
 		raw_items: Union[str, Sequence[dict[str, Any]], dict[str, Any]],
 		default_source: str = "Aftermarket",
 		default_condition: str = "New",
+		*,
+		apply_pricing: bool = True,
+		preserve_explicit_rate: bool = False,
+		pricing_config: Optional[PricingConfig] = None,
 	) -> list[dict[str, Any]]:
 		"""Normalize raw catalog text or dict rows into canonical bulk_import_parts items."""
 		if isinstance(raw_items, str):
@@ -90,6 +114,9 @@ class SupplierCatalogSanitizer:
 				raw_items,
 				default_source=default_source,
 				default_condition=default_condition,
+				apply_pricing=apply_pricing,
+				preserve_explicit_rate=preserve_explicit_rate,
+				pricing_config=pricing_config,
 			)
 
 		rows = [raw_items] if isinstance(raw_items, dict) else list(raw_items or [])
@@ -100,7 +127,14 @@ class SupplierCatalogSanitizer:
 		for row in rows:
 			if not isinstance(row, dict):
 				continue
-			canonical = _canonicalize_dict_row(row, norm_source, norm_condition)
+			canonical = _canonicalize_dict_row(
+				row,
+				norm_source,
+				norm_condition,
+				apply_pricing=apply_pricing,
+				preserve_explicit_rate=preserve_explicit_rate,
+				pricing_config=pricing_config,
+			)
 			if canonical:
 				normalized.append(canonical)
 		return normalized
@@ -154,7 +188,7 @@ class SupplierCatalogSanitizer:
 		results: list[dict[str, Any]] = []
 		step = max(1, chunk_size)
 		for start in range(0, len(items), step):
-			batch_items = items[start : start + step]
+			batch_items = [{k: v for k, v in it.items() if k != "_pricing"} for it in items[start : start + step]]
 			res = client.import_supplier_catalog(
 				items=batch_items,
 				supplier=supplier,
@@ -200,6 +234,10 @@ def _build_structured_item(
 	mapped: dict[str, Any],
 	default_source: str = "Aftermarket",
 	default_condition: str = "New",
+	*,
+	apply_pricing: bool = True,
+	preserve_explicit_rate: bool = False,
+	pricing_config: Optional[PricingConfig] = None,
 ) -> Optional[dict[str, Any]]:
 	part_num = str(mapped.get("part_num") or "").strip()
 	if not part_num:
@@ -211,18 +249,38 @@ def _build_structured_item(
 	condition = _normalize_condition_label(cond_raw if cond_raw not in (None, "") else default_condition)
 	oem_num = str(mapped.get("oem_num") or "").strip()
 	desc = str(mapped.get("description") or part_num).replace("|", "/").strip() or part_num
+	unit_rate = _parse_float(mapped.get("rate"), 0.0)
+	valuation_rate = _parse_float(mapped.get("cost"), 0.0)
+	tesla_oem_price = _parse_float(mapped.get("tesla_oem_price"), 0.0)
+
+	pricing_meta: Optional[dict[str, Any]] = None
+	if apply_pricing and tesla_oem_price > 0.0:
+		override_val = unit_rate if (preserve_explicit_rate and unit_rate > 0.0) else None
+		pricing_meta = calculate_part_price(
+			tesla_oem_price=tesla_oem_price,
+			cost=valuation_rate if valuation_rate > 0.0 else None,
+			part_source=source,
+			part_condition=condition,
+			override_rate=override_val,
+			part_number=oem_num or part_num,
+			part_name=desc,
+			config=pricing_config,
+		)
+		unit_rate = pricing_meta["sell_price"]
 
 	item: dict[str, Any] = {
 		"part_number": part_num,
 		"part_name": desc,
 		"part_source": source,
 		"part_condition": condition,
-		"unit_rate": _parse_float(mapped.get("rate"), 0.0),
-		"valuation_rate": _parse_float(mapped.get("cost"), 0.0),
+		"unit_rate": unit_rate,
+		"valuation_rate": valuation_rate,
 		"qty": _parse_float(mapped.get("qty"), 1.0),
 		"revision": str(mapped.get("revision") or "").strip(),
 		"oem_part_number": oem_num or (part_num if source == "OEM" else ""),
 	}
+	if pricing_meta is not None:
+		item["_pricing"] = pricing_meta
 	for extra in ("brand", "warranty_period", "stock_uom", "supplier", "supplier_part_no", "service_package"):
 		val = mapped.get(extra)
 		if val is not None and str(val).strip():
@@ -232,14 +290,32 @@ def _build_structured_item(
 	return item
 
 
-def _record_to_structured_item(record: dict[str, str]) -> dict[str, Any]:
-	return _build_structured_item(record) or {}
+def _record_to_structured_item(
+	record: dict[str, str],
+	*,
+	apply_pricing: bool = True,
+	preserve_explicit_rate: bool = False,
+	pricing_config: Optional[PricingConfig] = None,
+) -> dict[str, Any]:
+	return (
+		_build_structured_item(
+			record,
+			apply_pricing=apply_pricing,
+			preserve_explicit_rate=preserve_explicit_rate,
+			pricing_config=pricing_config,
+		)
+		or {}
+	)
 
 
 def _canonicalize_dict_row(
 	row: dict[str, Any],
 	default_source: str,
 	default_condition: str,
+	*,
+	apply_pricing: bool = True,
+	preserve_explicit_rate: bool = False,
+	pricing_config: Optional[PricingConfig] = None,
 ) -> Optional[dict[str, Any]]:
 	mapped: dict[str, Any] = {}
 	for key, value in row.items():
@@ -249,7 +325,14 @@ def _canonicalize_dict_row(
 		canonical_key = _HEADER_ALIASES.get(norm_key, norm_key)
 		if canonical_key not in mapped or mapped[canonical_key] == "":
 			mapped[canonical_key] = value
-	return _build_structured_item(mapped, default_source=default_source, default_condition=default_condition)
+	return _build_structured_item(
+		mapped,
+		default_source=default_source,
+		default_condition=default_condition,
+		apply_pricing=apply_pricing,
+		preserve_explicit_rate=preserve_explicit_rate,
+		pricing_config=pricing_config,
+	)
 
 
 def _normalize_source_label(value: Optional[str]) -> str:
@@ -337,6 +420,7 @@ def _extract_row(
 		"qty": _clean_number(get("qty", "1"), default="1"),
 		"revision": get("revision", ""),
 		"oem_num": get("oem_num", ""),
+		"tesla_oem_price": _clean_number(get("tesla_oem_price", ""), default=""),
 	}
 
 

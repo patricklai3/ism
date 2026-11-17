@@ -2,10 +2,9 @@
 
 All 12 production-readiness items are partitioned into **2 sequential Swarm Runs** (3–4 parallel workers + 1 verifier per swarm).
 
-**Execution model (worktree-isolated parallel workers):**
-1. **Separate git worktrees (`workspace: "share"`):** Every worker runs in its own isolated git worktree so git index locks, partial edits, and local test runs never interfere across workers.
-2. **Disjoint file ownership = conflict-free merges:** Because each worker within a swarm owns a strictly disjoint set of `.py`, `.js`, and `.json` files (including separate test files), merging all worker branches back into the main branch is fast and conflict-free.
-3. **Schema gate:** Swarm 1 lands all DocType `.json` schema fields, roles, pricing math, alerts, and Tesla VIN/manual backend updates. Merge Swarm 1 worktrees, run `bench migrate` once, then launch Swarm 2 worktrees for billing/ledger hooks, Desk UI modals/buttons, print format cleanup, and `ism-agent-os` CLI parity.
+**Why 2 swarms instead of 1:**
+1. **Zero file collisions:** Within each swarm, every worker owns a strictly disjoint set of `.py`, `.js`, and `.json` files (including separate test files). No two workers edit the same file.
+2. **Schema gate:** Swarm 1 lands all DocType `.json` schema fields, roles, pricing math, alerts, and Tesla VIN/manual backend updates. Run `bench migrate` once after Swarm 1, then run Swarm 2 for billing/ledger hooks, Desk UI modals/buttons, print format cleanup, and `ism-agent-os` CLI parity.
 
 ---
 

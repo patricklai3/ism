@@ -132,8 +132,11 @@ def main(argv: Optional[list[str]] = None) -> int:
 		handler = _COMMAND_HANDLERS.get(args.command)
 		if not handler:
 			return 1
-		with IsmAgentClient(config) as client:
-			res = handler(args, client, show_summary)
+		if args.command == "price-part":
+			res = handler(args, None, show_summary)
+		else:
+			with IsmAgentClient(config) as client:
+				res = handler(args, client, show_summary)
 		_print_result(res, raw_json=args.json)
 		if isinstance(res, dict) and res.get("success") is False:
 			return 1

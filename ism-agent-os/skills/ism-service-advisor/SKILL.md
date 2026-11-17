@@ -25,6 +25,7 @@ description: >-
 | Duplicate symmetrical LH/RH service row | `python -m tools.cli --json duplicate-side --repair-order <RO> --service-row <ROW>` |
 | List or add open deferred services | `python -m tools.cli --json deferred [--repair-order <RO> \| --vehicle <VEH>]` / `python -m tools.cli --json add-deferred --repair-order <RO> --item <ITEM>` |
 | Check live parts stock for an RO | `python -m tools.cli --json check-stock --repair-order <RO>` |
+| Calculate Tesla-offset part sell price (CAD) | `python -m tools.cli --json price-part [--tesla-price <CAD>] [--cost <CAD>] [--part-number <NO>] [--part-name <NAME>]` |
 | Send quote for customer approval | `python -m tools.cli --json send-approval --repair-order <RO> [--medium sms\|email\|link] [--phone <NUM>] [--recipient <ADDR>]` (combine with `amend-quote` via `batch` if amending first) |
 | Check-in inspection templates / apply / read / record | `python -m tools.cli --json inspection-templates [--template <NAME>]`, `apply-inspection`, `get-inspection`, `record-inspection` |
 | Multi-step advisor flow in one process | `python -m tools.cli --json batch --cmd "amend-quote --repair-order <RO> --add-service '<NAME>::<HRS>'" --cmd "send-approval --repair-order <RO> --medium link"` (alias: `ism-agent-os batch`) |
@@ -38,7 +39,7 @@ description: >-
    - Use `@path/to/payload.json` only if you need `--parts-json` (`[{"item_code":"...","qty":1}]`) or `--remove-indices-json` (`[0]`); never pass inline JSON strings on PowerShell.
 3. **One-call `intake-slots` & `batch --cmd`**: `intake-slots` creates the draft quote and returns filtered slots directly (no follow-up `slots` call needed). ALWAYS combine chained steps (`amend-quote` + `send-approval`, or `decode-vin` + `vehicle-info`) into one `batch` call (`python -m tools.cli --json batch --cmd "amend-quote ..." --cmd "send-approval ... --medium link"` or `python -m tools.cli --json batch --cmd "decode-vin --vin <VIN>" --cmd "vehicle-info --vehicle <VIN>"`) — do **NOT** run `amend-quote` + `send-approval` or `decode-vin` + `vehicle-info` as separate CLI calls. Also use `python -m tools.cli --json batch --cmd "..." --cmd "..."` for other chained calls, wrapping multi-word inner values in single quotes (`'...'`).
 4. **Surface deferred services**: Check `data.deferred_services` (`deferred_count > 0`) returned by `quote` or `vehicle-info`. Highlight any `safety_hazard` items immediately and offer `add-deferred`.
-5. **Server math & links**: Never compute labor rates, parts totals, or 13% HST manually. Return server totals from `data` and Desk/Print/Approval links from `urls` (pass `--summary` only if a markdown `summary_card` is requested).
+5. **Server math, parts pricing & links**: Never compute labor rates, durations, or 13% HST manually; calculate part selling rates via `price-part` (reusing non-zero Frappe `Item.standard_rate` on repeat quotes unless a fresh Tesla lookup at `https://parts.tesla.com/en-CA/find-part?searchTerm=<query>` is requested, and keeping Tesla comparison data out of customer-facing quote text). Return server totals from `data` and Desk/Print/Approval links from `urls` (pass `--summary` only if a markdown `summary_card` is requested).
 
 ## Required Fields & Pre-Dispatch Callback
 

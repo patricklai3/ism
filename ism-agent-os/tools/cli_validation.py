@@ -18,6 +18,7 @@ READ_ONLY_COMMANDS = frozenset({
 	"check-stock",
 	"alternates",
 	"fetch-tesla",
+	"price-part",
 	"decode-vin",
 	"search-vehicles",
 	"vehicle-info",
