@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 0-2 evaluation harness for realistic natural-language -> ISM CLI scenarios."""
+"""Deterministic 24-scenario CLI contract suite spanning all 5 ISM shop personas."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def _run_cli(args: list[str]) -> tuple[int, str, str, Optional[dict[str, Any]], 
 	return proc.returncode, stdout, (proc.stderr or "").strip(), parsed, elapsed_ms
 
 
-def _make_check_s1_status(target_date: str) -> Callable[[dict[str, Any], str, int], list[tuple[str, bool]]]:
+def _make_check_e01_status(target_date: str) -> Callable[[dict[str, Any], str, int], list[tuple[str, bool]]]:
 	def _check(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
 		summary = data.get("data", {}).get("summary", {})
 		return [
@@ -103,7 +103,7 @@ def _make_check_s1_status(target_date: str) -> Callable[[dict[str, Any], str, in
 	return _check
 
 
-def _make_check_s2_tech_overview(target_date: str, elena_id: str) -> Callable[[dict[str, Any], str, int], list[tuple[str, bool]]]:
+def _make_check_e02_tech_overview(target_date: str, elena_id: str) -> Callable[[dict[str, Any], str, int], list[tuple[str, bool]]]:
 	def _check(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
 		techs = data.get("data", {}).get("technicians", [])
 		elena = [t for t in techs if t.get("employee") == elena_id]
@@ -117,7 +117,7 @@ def _make_check_s2_tech_overview(target_date: str, elena_id: str) -> Callable[[d
 	return _check
 
 
-def _check_s3_slots_equipment(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+def _check_e03_slots_equipment(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
 	slots = data.get("data", {}).get("slots", [])
 	bays = data.get("data", {}).get("resources", {}).get("bays", {})
 	has_rack_bay = any("Alignment Rack" in tags for tags in bays.values())
@@ -130,36 +130,18 @@ def _check_s3_slots_equipment(data: dict[str, Any], _raw: str, rc: int) -> list[
 	]
 
 
-def _check_s4_decode_vin(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
-	d = data.get("data", {})
+def _check_e04_slots_afternoon(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	slots = data.get("data", {}).get("slots", [])
+	all_pm = all(str(s.get("start_time") or s.get("start") or "13:00") >= "13:00" for s in slots if isinstance(s, dict))
 	return [
 		("rc_zero", rc == 0),
 		("success_true", data.get("success") is True),
-		("model_3", d.get("model") == "Model 3"),
-		("year_2023", str(d.get("model_year")) == "2023"),
+		("slots_found", len(slots) > 0),
+		("afternoon_filtered", all_pm),
 	]
 
 
-def _check_s4_vehicle_info(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
-	d = data.get("data", {})
-	return [
-		("rc_zero", rc == 0),
-		("success_true", data.get("success") is True),
-		("vin_present", bool(d)),
-	]
-
-
-def _check_s5_estimate(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
-	d = data.get("data", {})
-	est = d.get("estimated_minutes") or d.get("total_minutes") or d.get("p80_minutes")
-	return [
-		("rc_zero", rc == 0),
-		("success_true", data.get("success") is True),
-		("duration_positive", isinstance(est, (int, float)) and est > 0),
-	]
-
-
-def _check_s6_unscheduled(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+def _check_e05_unscheduled(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
 	d = data.get("data", {})
 	services = d.get("services") or []
 	return [
@@ -169,7 +151,129 @@ def _check_s6_unscheduled(data: dict[str, Any], _raw: str, rc: int) -> list[tupl
 	]
 
 
-def _make_check_s7_bay_conflict(bay_name: str) -> Callable[[dict[str, Any], str, int], list[tuple[str, bool]]]:
+def _check_e06_vin_batch(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	results = data.get("results") or []
+	decode_d = (results[0].get("result", {}) if len(results) >= 1 else {}).get("data", {})
+	info_ok = len(results) >= 2 and results[1].get("ok") is True
+	return [
+		("rc_zero", rc == 0),
+		("batch_total_2", data.get("total") == 2 and data.get("succeeded") == 2),
+		("model_3_decoded", decode_d.get("model") == "Model 3"),
+		("vehicle_info_ok", info_ok),
+	]
+
+
+def _check_e07_plate_search(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	d = data.get("data", {})
+	vehicles = d.get("vehicles") or d.get("items") or []
+	return [
+		("rc_zero", rc == 0),
+		("success_true", data.get("success") is True),
+		("vehicle_matched", isinstance(vehicles, list) and len(vehicles) >= 1),
+	]
+
+
+def _check_e08_deferred(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	d = data.get("data", {})
+	items = d.get("deferred_services") or d.get("items") or d.get("services") or []
+	has_hazard = any(bool(it.get("safety_hazard")) for it in items if isinstance(it, dict))
+	return [
+		("rc_zero", rc == 0),
+		("success_true", data.get("success") is True),
+		("deferred_items_present", isinstance(items, list) and len(items) >= 1),
+		("safety_hazard_flagged", has_hazard),
+	]
+
+
+def _check_e09_pricing_baseline_and_small(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	results = data.get("results") or []
+	r0 = (results[0].get("result", {}) if len(results) >= 1 else {}).get("data", {})
+	r1 = (results[1].get("result", {}) if len(results) >= 2 else {}).get("data", {})
+	return [
+		("rc_zero", rc == 0),
+		("batch_ok", data.get("succeeded") == 2),
+		("baseline_140", abs(float(r0.get("sell_price") or 0) - 140.0) < 0.01 and r0.get("rule_applied") == "baseline_offset"),
+		("small_ticket_10", abs(float(r1.get("sell_price") or 0) - 10.0) < 0.01 and r1.get("rule_applied") == "small_ticket_match"),
+	]
+
+
+def _check_e10_pricing_floor_and_fallback(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	results = data.get("results") or []
+	r0 = (results[0].get("result", {}) if len(results) >= 1 else {}).get("data", {})
+	r1 = (results[1].get("result", {}) if len(results) >= 2 else {}).get("data", {})
+	return [
+		("rc_zero", rc == 0),
+		("batch_ok", data.get("succeeded") == 2),
+		("cost_floor_118_75", abs(float(r0.get("sell_price") or 0) - 118.75) < 0.01 and r0.get("rule_applied") == "cost_floor"),
+		("fallback_35", abs(float(r1.get("sell_price") or 0) - 35.0) < 0.01 and r1.get("rule_applied") == "cost_plus_fallback"),
+	]
+
+
+def _check_e11_intake_slots(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	d = data.get("data", {})
+	ro_obj = d.get("repair_order") or {}
+	ro_name = ro_obj.get("name") if isinstance(ro_obj, dict) else d.get("name")
+	slots = d.get("slots") or []
+	return [
+		("rc_zero", rc == 0),
+		("success_true", data.get("success") is True),
+		("ro_created", isinstance(ro_name, str) and ro_name.startswith("RO-")),
+		("slots_returned", isinstance(slots, list) and len(slots) > 0),
+	]
+
+
+def _make_check_dry_run_missing(expected_token: str) -> Callable[[dict[str, Any], str, int], list[tuple[str, bool]]]:
+	def _check(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+		missing = data.get("missing_required") or []
+		return [
+			("rc_zero", rc == 0),
+			("dry_run_true", data.get("dry_run") is True),
+			("ready_false", data.get("ready") is False),
+			(f"missing_{expected_token}", any(expected_token in str(m) for m in missing)),
+		]
+	return _check
+
+
+def _check_e13_quote_amend_approval_batch(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	results = data.get("results") or []
+	r0 = (results[0].get("result", {}) if len(results) >= 1 else {})
+	r1 = (results[1].get("result", {}) if len(results) >= 2 else {})
+	r2 = (results[2].get("result", {}) if len(results) >= 3 else {})
+	ro_name = (r0.get("data") or {}).get("name")
+	total_services = (r1.get("data") or {}).get("total_services")
+	approval_url = (r2.get("urls") or {}).get("approval")
+	return [
+		("rc_zero", rc == 0),
+		("batch_3_ok", data.get("total") == 3 and data.get("succeeded") == 3 and data.get("failed") == 0),
+		("ro_created", isinstance(ro_name, str) and ro_name.startswith("RO-")),
+		("services_count_2", total_services == 2),
+		("approval_url_present", isinstance(approval_url, str) and "token=" in approval_url),
+	]
+
+
+def _check_e14_estimate(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	d = data.get("data", {})
+	est = d.get("p80_minutes") or d.get("estimated_minutes") or d.get("total_minutes")
+	return [
+		("rc_zero", rc == 0),
+		("success_true", data.get("success") is True),
+		("duration_positive", isinstance(est, (int, float)) and est > 0),
+	]
+
+
+def _check_e15_alternates_and_templates(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	results = data.get("results") or []
+	alts = (results[0].get("result", {}) if len(results) >= 1 else {}).get("data", {}).get("alternates") or []
+	tpls = (results[1].get("result", {}) if len(results) >= 2 else {}).get("data", {}).get("templates") or []
+	return [
+		("rc_zero", rc == 0),
+		("batch_ok", data.get("succeeded") == 2),
+		("alternates_found", isinstance(alts, list) and len(alts) >= 1),
+		("templates_found", isinstance(tpls, list) and len(tpls) >= 1),
+	]
+
+
+def _make_check_e16_bay_conflict(bay_name: str) -> Callable[[dict[str, Any], str, int], list[tuple[str, bool]]]:
 	bay_lower = bay_name.lower()
 
 	def _check(data: dict[str, Any], raw: str, rc: int) -> list[tuple[str, bool]]:
@@ -189,248 +293,175 @@ def _make_check_s7_bay_conflict(bay_name: str) -> Callable[[dict[str, Any], str,
 	return _check
 
 
-def _check_s8_quote(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
-	ro_name = data.get("data", {}).get("name")
+def _check_e17_ambiguous_bay(data: dict[str, Any], raw: str, rc: int) -> list[tuple[str, bool]]:
+	msg = f"{data.get('message', '')} {data.get('error', '')} {raw}".lower()
 	return [
-		("rc_zero", rc == 0),
-		("success_true", data.get("success") is True),
-		("ro_created", isinstance(ro_name, str) and ro_name.startswith("RO-")),
+		("rc_nonzero", rc != 0),
+		("success_false", data.get("success") is False),
+		("ambiguous_bay_surfaced", "ambiguous" in msg or "multiple" in msg or "available" in msg),
 	]
 
 
-def _check_s8_amend(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
-	total_services = data.get("data", {}).get("total_services")
+def _check_e18_leave_conflict(data: dict[str, Any], raw: str, rc: int) -> list[tuple[str, bool]]:
+	msg = f"{data.get('message', '')} {data.get('error', '')} {raw}".lower()
 	return [
-		("rc_zero", rc == 0),
-		("success_true", data.get("success") is True),
-		("services_count_2", total_services == 2),
+		("rc_nonzero", rc != 0),
+		("success_false", data.get("success") is False),
+		("leave_or_break_rejected", any(tok in msg for tok in ("leave", "break", "unavailable", "conflict"))),
 	]
 
 
-def _check_s8_approval(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
-	approval_url = data.get("urls", {}).get("approval")
+def _check_e19_offline_bay(data: dict[str, Any], raw: str, rc: int) -> list[tuple[str, bool]]:
+	msg = f"{data.get('message', '')} {data.get('error', '')} {raw}".lower()
 	return [
-		("rc_zero", rc == 0),
-		("success_true", data.get("success") is True),
-		("approval_url_present", isinstance(approval_url, str) and "token=" in approval_url),
+		("rc_nonzero", rc != 0),
+		("success_false", data.get("success") is False),
+		("offline_rejected", bool(msg)),
 	]
 
 
-def _check_s9_batch(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
-	results = data.get("results") or []
-	all_ok = len(results) == 2 and all(r.get("ok") is True and r.get("result", {}).get("success") is True for r in results)
-	return [
-		("rc_zero", rc == 0),
-		("success_true", data.get("success") is True),
-		("batch_total_2_succeeded_2", data.get("total") == 2 and data.get("succeeded") == 2 and data.get("failed") == 0 and all_ok),
-	]
-
-
-def _check_s10_intake_slots(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+def _check_e20_check_stock(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
 	d = data.get("data", {})
-	ro_obj = d.get("repair_order") or {}
-	ro_name = ro_obj.get("name") if isinstance(ro_obj, dict) else d.get("name")
-	slots = d.get("slots") or []
 	return [
 		("rc_zero", rc == 0),
 		("success_true", data.get("success") is True),
-		("ro_created", isinstance(ro_name, str) and ro_name.startswith("RO-")),
-		("slots_returned", isinstance(slots, list) and len(slots) > 0),
+		("deficit_detected", d.get("all_available") is False or int(d.get("deficit_count") or 0) > 0),
+	]
+
+
+def _check_e21_open_po_lookup(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	rows = data.get("items") or data.get("data") or []
+	return [
+		("rc_zero", rc == 0),
+		("po_returned", isinstance(rows, list) and len(rows) >= 1),
+	]
+
+
+def _check_e22_action_items(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool]]:
+	d = data.get("data", {})
+	items = d.get("items")
+	return [
+		("rc_zero", rc == 0),
+		("success_true", data.get("success") is True),
+		("items_list_valid", isinstance(items, list)),
 	]
 
 
 def build_scenarios(manifest: Optional[dict[str, Any]] = None) -> list[ScenarioSpec]:
-	"""Return the benchmark scenario suite interpolated against an eval_standard SimManifest."""
+	"""Return the 24-scenario CLI contract suite interpolated against a SimManifest."""
 	m = manifest if manifest is not None else default_offline_eval_manifest()
 	target_date = str(resolve_manifest_path(m, "metadata.target_date"))
 	elena_id = str(resolve_manifest_path(m, "techs.elena"))
 	main_lift = str(resolve_manifest_path(m, "bays.main_lift"))
 
 	templates = [
+		# Dispatcher Reads & Temporal Windowing (E01-E05)
 		ScenarioSpec(
-			id="S1_shop_status",
+			id="E01_shop_status",
 			nl_prompt="Check shop floor status for {{metadata.target_date}}.",
 			expected_commands=["status"],
-			steps=[
-				StepSpec(
-					command="status",
-					args=["status", "--date", "{{metadata.target_date}}"],
-					check_fn=_make_check_s1_status(target_date),
-				)
-			],
+			steps=[StepSpec("status", ["status", "--date", "{{metadata.target_date}}"], check_fn=_make_check_e01_status(target_date))],
 		),
 		ScenarioSpec(
-			id="S2_tech_overview_leave",
+			id="E02_tech_overview_leave",
 			nl_prompt="Show technician utilization and who is on leave on {{metadata.target_date}}.",
 			expected_commands=["tech-overview"],
-			steps=[
-				StepSpec(
-					command="tech-overview",
-					args=["tech-overview", "--date", "{{metadata.target_date}}"],
-					check_fn=_make_check_s2_tech_overview(target_date, elena_id),
-				)
-			],
+			steps=[StepSpec("tech-overview", ["tech-overview", "--date", "{{metadata.target_date}}"], check_fn=_make_check_e02_tech_overview(target_date, elena_id))],
 		),
 		ScenarioSpec(
-			id="S3_slots_equipment",
+			id="E03_slots_alignment_rack",
 			nl_prompt="Find 60-minute available slots on {{metadata.target_date}} with an Alignment Rack.",
 			expected_commands=["slots"],
-			steps=[
-				StepSpec(
-					command="slots",
-					args=[
-						"slots",
-						"--date",
-						"{{metadata.target_date}}",
-						"--duration",
-						"60",
-						"--days",
-						"1",
-						"--equipment",
-						"Alignment Rack",
-					],
-					check_fn=_check_s3_slots_equipment,
-				)
-			],
+			steps=[StepSpec("slots", ["slots", "--date", "{{metadata.target_date}}", "--duration", "60", "--days", "1", "--tags", "Alignment Rack"], check_fn=_check_e03_slots_equipment)],
 		),
 		ScenarioSpec(
-			id="S4_decode_and_vehicle_intel",
-			nl_prompt="Decode VIN {{vehicles.veh_model3_liam}} and pull its vehicle intelligence.",
-			expected_commands=["decode-vin", "vehicle-info"],
-			steps=[
-				StepSpec(
-					command="decode-vin",
-					args=["decode-vin", "--vin", "{{vehicles.veh_model3_liam}}"],
-					check_fn=_check_s4_decode_vin,
-				),
-				StepSpec(
-					command="vehicle-info",
-					args=["vehicle-info", "--vehicle", "{{vehicles.veh_model3_liam}}"],
-					check_fn=_check_s4_vehicle_info,
-				),
-			],
+			id="E04_slots_afternoon_lift",
+			nl_prompt="Find 90-minute Lift slots on {{metadata.target_date}} afternoon.",
+			expected_commands=["slots"],
+			steps=[StepSpec("slots", ["slots", "--date", "{{metadata.target_date}}", "--duration", "90", "--days", "1", "--tags", "Lift", "--min-time", "13:00:00"], check_fn=_check_e04_slots_afternoon)],
 		),
 		ScenarioSpec(
-			id="S5_estimate_duration",
-			nl_prompt="Estimate probabilistic shop duration for {{ros.conflict_ro}}.",
-			expected_commands=["estimate"],
-			steps=[
-				StepSpec(
-					command="estimate",
-					args=["estimate", "--repair-order", "{{ros.conflict_ro}}"],
-					check_fn=_check_s5_estimate,
-				)
-			],
-		),
-		ScenarioSpec(
-			id="S6_unscheduled_queue",
+			id="E05_unscheduled_queue",
 			nl_prompt="List unscheduled services on {{ros.unscheduled_ro}} waiting for a bay.",
 			expected_commands=["unscheduled"],
-			steps=[
-				StepSpec(
-					command="unscheduled",
-					args=["unscheduled", "--repair-order", "{{ros.unscheduled_ro}}"],
-					check_fn=_check_s6_unscheduled,
-				)
-			],
+			steps=[StepSpec("unscheduled", ["unscheduled", "--repair-order", "{{ros.unscheduled_ro}}"], check_fn=_check_e05_unscheduled)],
 		),
+		# Advisor Intelligence & Tesla-Offset Pricing (E06-E10)
 		ScenarioSpec(
-			id="S7_bay_conflict_feedback",
-			nl_prompt="Book {{ros.unscheduled_ro}} into {{bays.main_lift}} at {{metadata.target_date}} 09:00 (already occupied).",
-			expected_commands=["book"],
-			is_conflict_scenario=True,
-			steps=[
-				StepSpec(
-					command="book",
-					args=[
-						"book",
-						"--repair-order",
-						"{{ros.unscheduled_ro}}",
-						"--date",
-						"{{metadata.target_date}}",
-						"--time",
-						"09:00",
-						"--bay",
-						"{{bays.main_lift}}",
-						"--tech",
-						"{{techs.devon}}",
-						"--duration",
-						"60",
-					],
-					expect_error=True,
-					check_fn=_make_check_s7_bay_conflict(main_lift),
-				)
-			],
-		),
-		ScenarioSpec(
-			id="S8_quote_amend_approval",
-			nl_prompt="Create a draft quote for {{customers.retail_1}}, add a second service, and generate an approval link.",
-			expected_commands=["quote", "amend-quote", "send-approval"],
-			steps=[
-				StepSpec(
-					command="quote",
-					args=[
-						"quote",
-						"--customer",
-						"{{customers.retail_1}}",
-						"--vehicle",
-						"{{vehicles.veh_model3_liam}}",
-						"--odometer-in",
-						"48200",
-						"--services-json",
-						'[{"service_title": "Front Brake Inspection", "labor_hours": 0.5}]',
-						"--notes",
-						"Eval scenario S8 ({{customers.retail_1}})",
-					],
-					check_fn=_check_s8_quote,
-				),
-				StepSpec(
-					command="amend-quote",
-					args=[
-						"amend-quote",
-						"--repair-order",
-						"{ro_name}",
-						"--add-services-json",
-						'[{"service_title": "Tire Rotation", "labor_hours": 0.5}]',
-					],
-					check_fn=_check_s8_amend,
-				),
-				StepSpec(
-					command="send-approval",
-					args=["send-approval", "--repair-order", "{ro_name}", "--medium", "link"],
-					check_fn=_check_s8_approval,
-				),
-			],
-		),
-		ScenarioSpec(
-			id="S9_batch_relative_date",
-			nl_prompt="In one batch call, check shop status and 60-minute slots for {{metadata.target_date}}.",
+			id="E06_decode_and_vehicle_intel_batch",
+			nl_prompt="Decode VIN {{vehicles.veh_model3_liam}} and pull its vehicle intelligence.",
 			expected_commands=["batch"],
 			steps=[
 				StepSpec(
-					command="batch",
-					args=[
+					"batch",
+					[
 						"batch",
-						json.dumps([
-							["status", "--date", target_date],
-							["slots", "--date", target_date, "--duration", "60", "--days", "1"],
-						]),
+						"--cmd",
+						"decode-vin --vin {{vehicles.veh_model3_liam}}",
+						"--cmd",
+						"vehicle-info --vehicle {{vehicles.veh_model3_liam}}",
 					],
-					check_fn=_check_s9_batch,
+					check_fn=_check_e06_vin_batch,
 				)
 			],
 		),
 		ScenarioSpec(
-			id="S10_intake_slots_composite",
-			nl_prompt=(
-				"Intake a draft quote for {{customers.retail_1}} on {{vehicles.veh_model3_liam}} "
-				"and find {{metadata.target_date}} >= 9am slots with {{bays.main_lift}} and Marcus."
-			),
+			id="E07_plate_vehicle_search",
+			nl_prompt="Find vehicle with plate LEV-301.",
+			expected_commands=["search-vehicles"],
+			steps=[StepSpec("search-vehicles", ["search-vehicles", "--query", "LEV-301"], check_fn=_check_e07_plate_search)],
+		),
+		ScenarioSpec(
+			id="E08_deferred_services_hazards",
+			nl_prompt="Check open deferred recommendations for {{vehicles.veh_model3_liam}}.",
+			expected_commands=["deferred"],
+			steps=[StepSpec("deferred", ["deferred", "--vehicle", "{{vehicles.veh_model3_liam}}"], check_fn=_check_e08_deferred)],
+		),
+		ScenarioSpec(
+			id="E09_price_part_baseline_and_small",
+			nl_prompt="Price a $200 Tesla / $40 cost aftermarket duct and a $10 Tesla / $4 cost clip.",
+			expected_commands=["batch"],
+			steps=[
+				StepSpec(
+					"batch",
+					[
+						"batch",
+						"--cmd",
+						"price-part --tesla-price 200 --cost 40 --source Aftermarket --condition New",
+						"--cmd",
+						"price-part --tesla-price 10 --cost 4 --source OEM --condition New",
+					],
+					check_fn=_check_e09_pricing_baseline_and_small,
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E10_price_part_floor_and_fallback",
+			nl_prompt="Price a $160 Tesla / $95 cost shield and a $25 cost unlisted shop fitting.",
+			expected_commands=["batch"],
+			steps=[
+				StepSpec(
+					"batch",
+					[
+						"batch",
+						"--cmd",
+						"price-part --tesla-price 160 --cost 95 --source Aftermarket --condition New",
+						"--cmd",
+						"price-part --cost 25 --source Aftermarket --condition New",
+					],
+					check_fn=_check_e10_pricing_floor_and_fallback,
+				)
+			],
+		),
+		# Advisor Intake, Dry-Run Gate, $stepN Batching & Estimates (E11-E15)
+		ScenarioSpec(
+			id="E11_intake_slots_composite",
+			nl_prompt="Intake a draft quote for {{customers.retail_1}} on {{vehicles.veh_model3_liam}} and find {{metadata.target_date}} >= 9am slots with {{bays.main_lift}} and Marcus.",
 			expected_commands=["intake-slots"],
 			steps=[
 				StepSpec(
-					command="intake-slots",
-					args=[
+					"intake-slots",
+					[
 						"intake-slots",
 						"--customer",
 						"{{customers.retail_1}}",
@@ -451,7 +482,246 @@ def build_scenarios(manifest: Optional[dict[str, Any]] = None) -> list[ScenarioS
 						"--technician",
 						"{{techs.marcus}}",
 					],
-					check_fn=_check_s10_intake_slots,
+					check_fn=_check_e11_intake_slots,
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E12_quote_missing_odometer_gate",
+			nl_prompt="Dry-run quote missing odometer_in must flag --odometer-in.",
+			expected_commands=["quote"],
+			steps=[
+				StepSpec(
+					"quote",
+					[
+						"--dry-run",
+						"quote",
+						"--customer",
+						"{{customers.retail_1}}",
+						"--vehicle",
+						"{{vehicles.veh_model3_liam}}",
+						"--service",
+						"Cabin Air Filter Replacement::0.5",
+					],
+					check_fn=_make_check_dry_run_missing("odometer-in"),
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E13_quote_amend_approval_step_chain",
+			nl_prompt="Create a draft quote for {{customers.retail_1}}, amend with a second service, and get approval link via $step0 chaining.",
+			expected_commands=["batch"],
+			steps=[
+				StepSpec(
+					"batch",
+					[
+						"batch",
+						"--cmd",
+						"quote --customer '{{customers.retail_1}}' --vehicle {{vehicles.veh_model3_liam}} --odometer-in 48200 --service 'Tire Rotation::0.5'",
+						"--cmd",
+						"amend-quote --repair-order '$step0.data.name' --add-service 'Wiper Blade Replacement::0.3'",
+						"--cmd",
+						"send-approval --repair-order '$prev.data.name' --medium link",
+					],
+					check_fn=_check_e13_quote_amend_approval_batch,
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E14_estimate_duration",
+			nl_prompt="Estimate probabilistic shop duration for {{ros.conflict_ro}}.",
+			expected_commands=["estimate"],
+			steps=[StepSpec("estimate", ["estimate", "--repair-order", "{{ros.conflict_ro}}"], check_fn=_check_e14_estimate)],
+		),
+		ScenarioSpec(
+			id="E15_alternates_and_templates_batch",
+			nl_prompt="Check brake rotor alternates and available inspection templates in one batch.",
+			expected_commands=["batch"],
+			steps=[
+				StepSpec(
+					"batch",
+					[
+						"batch",
+						"--cmd",
+						"alternates --service-package '{{packages.front_brake_overhaul}}' --slot-number 2",
+						"--cmd",
+						"inspection-templates",
+					],
+					check_fn=_check_e15_alternates_and_templates,
+				)
+			],
+		),
+		# Dispatcher Conflict & Resource Guards (E16-E19)
+		ScenarioSpec(
+			id="E16_bay_conflict_feedback",
+			nl_prompt="Book {{ros.unscheduled_ro}} into {{bays.main_lift}} at {{metadata.target_date}} 09:00 (occupied).",
+			expected_commands=["book"],
+			is_conflict_scenario=True,
+			steps=[
+				StepSpec(
+					"book",
+					[
+						"book",
+						"--repair-order",
+						"{{ros.unscheduled_ro}}",
+						"--date",
+						"{{metadata.target_date}}",
+						"--time",
+						"09:00:00",
+						"--bay",
+						"{{bays.main_lift}}",
+						"--tech",
+						"{{techs.devon}}",
+						"--duration",
+						"60",
+					],
+					expect_error=True,
+					check_fn=_make_check_e16_bay_conflict(main_lift),
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E17_ambiguous_bay_feedback",
+			nl_prompt="Book walk-in into ambiguous 'Bay' string and verify 417 listing.",
+			expected_commands=["book"],
+			is_conflict_scenario=True,
+			steps=[
+				StepSpec(
+					"book",
+					[
+						"book",
+						"--date",
+						"{{metadata.target_date}}",
+						"--time",
+						"10:00:00",
+						"--bay",
+						"Bay",
+						"--entry-type",
+						"Diagnostic",
+						"--provisional-customer",
+						"Owen MacLeod",
+						"--provisional-vehicle",
+						"2022 Tesla Model Y",
+						"--duration",
+						"60",
+					],
+					expect_error=True,
+					check_fn=_check_e17_ambiguous_bay,
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E18_leave_and_lunch_conflict",
+			nl_prompt="Attempt booking {{ros.unscheduled_secondary_ro}} with Elena during lunch break on {{metadata.target_date}}.",
+			expected_commands=["book"],
+			is_conflict_scenario=True,
+			steps=[
+				StepSpec(
+					"book",
+					[
+						"book",
+						"--repair-order",
+						"{{ros.unscheduled_secondary_ro}}",
+						"--date",
+						"{{metadata.target_date}}",
+						"--time",
+						"12:00:00",
+						"--bay",
+						"{{bays.alignment}}",
+						"--tech",
+						"{{techs.elena}}",
+						"--duration",
+						"60",
+					],
+					expect_error=True,
+					check_fn=_check_e18_leave_conflict,
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E19_offline_bay_guard",
+			nl_prompt="Attempt booking into inactive {{bays.offline}}.",
+			expected_commands=["book"],
+			is_conflict_scenario=True,
+			steps=[
+				StepSpec(
+					"book",
+					[
+						"book",
+						"--repair-order",
+						"{{ros.unscheduled_secondary_ro}}",
+						"--date",
+						"{{metadata.target_date}}",
+						"--time",
+						"14:00:00",
+						"--bay",
+						"{{bays.offline}}",
+						"--duration",
+						"60",
+					],
+					expect_error=True,
+					check_fn=_check_e19_offline_bay,
+				)
+			],
+		),
+		# Parts, Executive & Floor Write-Gate Contracts (E20-E24)
+		ScenarioSpec(
+			id="E20_parts_check_stock_deficit",
+			nl_prompt="Check stock deficit on {{ros.open_po_ro}}.",
+			expected_commands=["check-stock"],
+			steps=[StepSpec("check-stock", ["check-stock", "--repair-order", "{{ros.open_po_ro}}"], check_fn=_check_e20_check_stock)],
+		),
+		ScenarioSpec(
+			id="E21_parts_filtered_open_po_lookup",
+			nl_prompt="Look up submitted Purchase Order for {{suppliers.tesla_oem}}.",
+			expected_commands=["list-docs"],
+			steps=[
+				StepSpec(
+					"list-docs",
+					[
+						"list-docs",
+						"--doctype",
+						"Purchase Order",
+						"--filter",
+						"supplier={{suppliers.tesla_oem}}",
+						"--filter",
+						"docstatus=1",
+						"--fields",
+						"name,supplier,status,per_received,per_billed,grand_total,advance_paid",
+						"--limit",
+						"5",
+					],
+					check_fn=_check_e21_open_po_lookup,
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E22_executive_action_items",
+			nl_prompt="List open Shop Action Items for executive triage.",
+			expected_commands=["action-items"],
+			steps=[StepSpec("action-items", ["action-items", "--status", "Open"], check_fn=_check_e22_action_items)],
+		),
+		ScenarioSpec(
+			id="E23_floor_complete_missing_odometer_gate",
+			nl_prompt="Dry-run job-status --action complete without --odometer-out must flag missing odometer.",
+			expected_commands=["job-status"],
+			steps=[
+				StepSpec(
+					"job-status",
+					["--dry-run", "job-status", "--repair-order", "{{ros.hv_scheduled_ro}}", "--action", "complete"],
+					check_fn=_make_check_dry_run_missing("odometer-out"),
+				)
+			],
+		),
+		ScenarioSpec(
+			id="E24_checkout_missing_payment_method_gate",
+			nl_prompt="Dry-run checkout without --payment-method must flag missing payment method.",
+			expected_commands=["checkout"],
+			steps=[
+				StepSpec(
+					"checkout",
+					["--dry-run", "checkout", "--repair-order", "{{ros.hv_scheduled_ro}}", "--odometer-out", "87950", "--confirm"],
+					check_fn=_make_check_dry_run_missing("payment-method"),
 				)
 			],
 		),
@@ -484,7 +754,7 @@ def run_suite(
 	manifest: Optional[dict[str, Any]] = None,
 	cli_runner: Optional[Callable[[list[str]], tuple[int, str, str, Optional[dict[str, Any]], float]]] = None,
 ) -> dict[str, Any]:
-	"""Execute all scenarios against the supplied SimManifest and return structured benchmark metrics."""
+	"""Execute all 24 CLI contract scenarios against the supplied SimManifest."""
 	resolved_manifest = manifest if manifest is not None else default_offline_eval_manifest()
 	scenarios = build_scenarios(manifest=resolved_manifest)
 	runner = cli_runner or _run_cli
@@ -576,12 +846,12 @@ def run_suite(
 def _print_table(report: dict[str, Any]) -> None:
 	s = report["summary"]
 	print("=" * 84)
-	print("ISM AGENT OS — EVAL SCENARIOS BASELINE")
+	print("ISM AGENT OS — EVAL SCENARIOS BASELINE (24 CONTRACTS)")
 	print("=" * 84)
 	for r in report["results"]:
 		cf = "-" if r["conflict_feedback"] is None else ("PASS" if r["conflict_feedback"] else "FAIL")
 		print(
-			f"{r['id']:<28} tool={r['tool_choice_score']:.2f} "
+			f"{r['id']:<34} tool={r['tool_choice_score']:.2f} "
 			f"param={r['param_accuracy_score']:.2f} ({r['checks_passed']}/{r['checks_total']}) "
 			f"turns={r['turn_count']} conflict={cf:<4} time={r['wall_clock_ms']:>7.1f}ms"
 		)

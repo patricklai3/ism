@@ -27,6 +27,15 @@ _PREFIX_BRACE_PATTERN = re.compile(r"\{manifest:([a-zA-Z0-9_.-]+)\}")
 DEFAULT_MODEL3_VIN = "5YJ3E1EB8PF210100"
 DEFAULT_MODELY_VIN = "7SAYG1EE1RA211473"
 
+PROFILE_EXECUTE_FNS: dict[str, str] = {
+	"clean_master": "ism.testing.profiles.seed_clean_master",
+	"eval_standard": "ism.testing.profiles.seed_eval_standard",
+	"swarm_crunch_day": "ism.testing.profiles.seed_swarm_crunch_day",
+	"monte_carlo": "ism.testing.monte_carlo.seed_monte_carlo",
+}
+
+_DOTENV_BACKUP_REL = Path(".ism_staged") / "env.slot_backup"
+
 
 def default_offline_eval_manifest(target_date: Optional[str] = None) -> dict[str, Any]:
 	"""Return a valid offline eval_standard SimManifest dict for dry-runs and unit tests."""
@@ -106,12 +115,16 @@ def default_offline_eval_manifest(target_date: Optional[str] = None) -> dict[str
 			"dot4_brake_fluid": "LEV-FLD-DOT4-1L",
 			"cabin_hepa_filter_oem": "LEV-FLT-CABIN-OEM",
 			"cabin_hepa_filter_aft": "LEV-FLT-CABIN-AFT",
+			"wiper_blade_set_oem": "LEV-WPR-FRONT-SET",
 			"front_rotor_oem": "LEV-BRK-FROT-OEM",
 			"front_rotor_aft": "LEV-BRK-FROT-AFT",
 			"hv_pyro_fuse_oem": "LEV-ELC-PYRO-FUSE",
 		},
 		"packages": {
+			"symmetrical_fore_link": "Link - Lower - Front - Fore - LH (Remove & Replace)",
+			"front_brake_overhaul": "Front Brake Pads, Rotors & Fluid Overhaul",
 			"cabin_filter_service": "Cabin HEPA & Carbon Air Filter Replacement",
+			"wiper_blade_service": "Front Wiper Blade Set Replacement",
 			"tire_rotation_balance": "Four-Tire Rotation & Road Force Balance",
 			"brake_fluid_flush": "DOT 4 Brake Fluid Thermal Flush & Bleed",
 			"four_wheel_alignment": "Four-Wheel Thrust & Camber Alignment",
@@ -134,6 +147,14 @@ def default_offline_eval_manifest(target_date: Optional[str] = None) -> dict[str
 		"vehicles": {
 			"veh_model3_liam": DEFAULT_MODEL3_VIN,
 			"veh_modely_sophia": DEFAULT_MODELY_VIN,
+			"veh_models_owen": "5YJSA1E5XPF210200",
+			"veh_modelx_household": "7SAXCBE56PF210300",
+			"veh_model3_household": "5YJ3E1EA2RF210400",
+			"veh_fleet_1": "5YJ3E1EA8NF210501",
+			"veh_fleet_2": "5YJ3E1EA1PF210502",
+			"veh_fleet_3": "5YJ3E1EA5RF210503",
+			"veh_fleet_4": "7SAYG1EE3PF210504",
+			"veh_fleet_5": "7SAYG1EE7RF210505",
 		},
 		"ros": {
 			"conflict_ro": "RO-SIM-0001",
@@ -161,6 +182,54 @@ def default_offline_eval_manifest(target_date: Optional[str] = None) -> dict[str
 	}
 
 
+def default_offline_crunch_manifest(target_date: Optional[str] = None) -> dict[str, Any]:
+	"""Return a deterministic offline swarm_crunch_day SimManifest dict for dry-runs and unit tests."""
+	base = default_offline_eval_manifest(target_date=target_date)
+	resolved_date = base["metadata"]["target_date"]
+	base["profile"] = "swarm_crunch_day"
+	base["ros"].update({
+		"crunch_fifo_winner": "RO-SIM-0201",
+		"crunch_fleet_1": "RO-SIM-0202",
+		"crunch_main_pm": "RO-SIM-0203",
+		"crunch_fleet_2": "RO-SIM-0204",
+		"crunch_align_supp": "RO-SIM-0205",
+		"crunch_fleet_3": "RO-SIM-0206",
+		"crunch_hv_1": "RO-SIM-0207",
+		"crunch_fleet_4": "RO-SIM-0208",
+		"crunch_hv_2": "RO-SIM-0209",
+		"crunch_fleet_5": "RO-SIM-0210",
+		"crunch_tire_2": "RO-SIM-0211",
+		"crunch_tire_3": "RO-SIM-0212",
+		"crunch_fifo_loser": "RO-SIM-0213",
+	})
+	base["schedule_entries"].update({
+		"crunch_main_1": "SE-SIM-0201",
+		"crunch_main_2": "SE-SIM-0202",
+		"crunch_align_1": "SE-SIM-0204",
+		"crunch_align_2": "SE-SIM-0205",
+		"crunch_hv_1": "SE-SIM-0207",
+		"crunch_hv_2": "SE-SIM-0209",
+		"crunch_tire_2": "SE-SIM-0211",
+		"crunch_tire_3": "SE-SIM-0212",
+	})
+	base["action_items"] = {
+		"crunch_over_tol_1": "SAI-SIM-0201",
+		"crunch_over_tol_2": "SAI-SIM-0202",
+	}
+	base["leave_applications"] = {}
+	base["metadata"].update({
+		"target_date": resolved_date,
+		"bay_utilization_pct": 85.29,
+		"scheduled_minutes_total": 1740,
+		"bay_capacity_minutes": 2040,
+		"fifo_winner_ro": "RO-SIM-0201",
+		"fifo_loser_ro": "RO-SIM-0213",
+		"fleet_ros": ["RO-SIM-0202", "RO-SIM-0204", "RO-SIM-0206", "RO-SIM-0208", "RO-SIM-0210"],
+		"over_tolerance_ros": ["RO-SIM-0202", "RO-SIM-0205"],
+	})
+	return base
+
+
 def default_offline_monte_carlo_manifest(seed: int = 1, target_date: Optional[str] = None) -> dict[str, Any]:
 	"""Return a deterministic offline monte_carlo SimManifest dict for dry-runs and unit tests."""
 	base = default_offline_eval_manifest(target_date=target_date)
@@ -171,11 +240,13 @@ def default_offline_monte_carlo_manifest(seed: int = 1, target_date: Optional[st
 	waiting_ro = f"RO-MC-{seed:03d}-2"
 	unsched_ro = f"RO-MC-{seed:03d}-3"
 	over_tol_ro = f"RO-MC-{seed:03d}-4"
+	partial_ro = f"RO-MC-{seed:03d}-5"
 	base["ros"] = {
 		"conflict_1": conflict_ro,
 		"waiting_parts_1": waiting_ro,
 		"unscheduled_1": unsched_ro,
 		"over_tolerance_1": over_tol_ro,
+		"partially_approved_1": partial_ro,
 	}
 	base["schedule_entries"] = {"mc_booking_1": f"SE-MC-{seed:03d}-1"}
 	base["action_items"] = {"mc_over_tol_1": f"SAI-MC-{seed:03d}-1"}
@@ -187,12 +258,15 @@ def default_offline_monte_carlo_manifest(seed: int = 1, target_date: Optional[st
 		"waiting_on_parts_ros": [waiting_ro],
 		"unscheduled_ros": [unsched_ro],
 		"over_tolerance_ros": [over_tol_ro],
+		"partially_approved_ros": [partial_ro],
+		"techs_on_leave": [base["techs"]["elena"]],
 		"leave_techs": [base["techs"]["elena"]],
 		"counts": {
 			"conflict_ros": 1,
 			"waiting_on_parts_ros": 1,
 			"unscheduled_ros": 1,
 			"over_tolerance_ros": 1,
+			"partially_approved_ros": 1,
 			"leave_applications": 1,
 			"action_items": 1,
 		},
@@ -448,6 +522,61 @@ def stop_slot_server(
 		raise RuntimeError(f"Slot {slot} -Serve stop failed (rc={proc.returncode}): {err[:400]}")
 
 
+def configure_slot_dotenv(
+	slot: int,
+	creds: dict[str, Any],
+	*,
+	base_url: Optional[str] = None,
+	agent_os_root: Path = _AGENT_OS_ROOT,
+) -> dict[str, str]:
+	"""Back up existing .env (once) and write isolated slot credentials to ism-agent-os/.env."""
+	env_path = agent_os_root / ".env"
+	backup_path = agent_os_root / _DOTENV_BACKUP_REL
+	backup_path.parent.mkdir(parents=True, exist_ok=True)
+	if not backup_path.exists():
+		if env_path.is_file():
+			backup_path.write_text(env_path.read_text(encoding="utf-8"), encoding="utf-8")
+		else:
+			backup_path.write_text("__NO_ORIGINAL_ENV__\n", encoding="utf-8")
+
+	resolved_url = base_url or f"http://localhost:800{int(slot)}"
+	company = str(creds.get("company") or "Lightspeed EV")
+	lines = [
+		f"FRAPPE_URL={resolved_url}",
+		f"FRAPPE_SITE=wt{int(slot)}.localhost",
+		f"FRAPPE_API_KEY={creds['api_key']}",
+		f"FRAPPE_API_SECRET={creds['api_secret']}",
+		f"ISM_DEFAULT_COMPANY={company}",
+	]
+	tmp_path = env_path.with_suffix(".env.tmp")
+	tmp_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+	os.replace(tmp_path, env_path)
+	return {
+		"env_path": str(env_path),
+		"backup_path": str(backup_path),
+		"url": resolved_url,
+		"site": f"wt{int(slot)}.localhost",
+	}
+
+
+def restore_slot_dotenv(agent_os_root: Path = _AGENT_OS_ROOT) -> bool:
+	"""Restore ism-agent-os/.env from .ism_staged/env.slot_backup if present."""
+	env_path = agent_os_root / ".env"
+	backup_path = agent_os_root / _DOTENV_BACKUP_REL
+	if not backup_path.is_file():
+		return False
+	raw = backup_path.read_text(encoding="utf-8")
+	if raw.strip() == "__NO_ORIGINAL_ENV__":
+		if env_path.is_file():
+			env_path.unlink()
+	else:
+		tmp_path = env_path.with_suffix(".env.tmp")
+		tmp_path.write_text(raw, encoding="utf-8")
+		os.replace(tmp_path, env_path)
+	backup_path.unlink()
+	return True
+
+
 def resolve_manifest_arg(
 	manifest_path: Optional[str] = None,
 	seed_slot: Optional[int] = None,
@@ -475,7 +604,7 @@ def resolve_manifest_arg(
 def parse_seed_specs(
 	seeds: Optional[list[str]] = None,
 	seed_range: Optional[str] = None,
-	default_seeds: tuple[int, ...] = (1, 2, 3),
+	default_seeds: tuple[int, ...] = tuple(range(1, 11)),
 ) -> list[int]:
 	"""Parse --seeds and --seed-range arguments into a deduplicated list of integer seeds."""
 	parsed: list[int] = []
@@ -749,6 +878,168 @@ def _probe_over_tolerance(ro_id: str, idx: int) -> ProbeSpec:
 	)
 
 
+def _probe_lunch_break_boundary(ro_id: str, target_date: str, bay_name: str, tech_id: Optional[str]) -> ProbeSpec:
+	def _check(data: dict[str, Any], raw: str, rc: int) -> list[tuple[str, bool, str]]:
+		msg = f"{data.get('message', '')} {data.get('error', '')} {raw}".lower()
+		rejected = rc != 0 or data.get("success") is False
+		break_or_conflict = any(tok in msg for tok in ("break", "lunch", "12:00", "outside", "conflict", "occupied"))
+		return [
+			("rc_nonzero", rejected, f"rc={rc}, success={data.get('success')}"),
+			("break_or_conflict_surfaced", break_or_conflict, f"msg={msg[:120]}"),
+		]
+
+	args = [
+		"book",
+		"--repair-order",
+		ro_id,
+		"--date",
+		target_date,
+		"--time",
+		"12:00:00",
+		"--bay",
+		bay_name,
+		"--duration",
+		"60",
+	]
+	if tech_id:
+		args.extend(["--tech", tech_id])
+	return ProbeSpec(
+		id="lunch_break_boundary_probe",
+		category="lunch_break_boundary",
+		description=f"Verify booking during 12:00-12:30 shop break is rejected on {target_date}",
+		command="book",
+		args=args,
+		expect_error=True,
+		check_fn=_check,
+	)
+
+
+def _probe_offline_bay_guard(ro_id: str, target_date: str, offline_bay: str) -> ProbeSpec:
+	def _check(data: dict[str, Any], raw: str, rc: int) -> list[tuple[str, bool, str]]:
+		msg = f"{data.get('message', '')} {data.get('error', '')} {raw}".lower()
+		rejected = rc != 0 or data.get("success") is False
+		return [
+			("rc_nonzero", rejected, f"rc={rc}, success={data.get('success')}"),
+			("offline_bay_rejected", bool(msg), f"msg={msg[:120]}"),
+		]
+
+	return ProbeSpec(
+		id="offline_bay_guard_probe",
+		category="offline_bay_guard",
+		description=f"Verify booking into offline bay '{offline_bay}' is rejected",
+		command="book",
+		args=[
+			"book",
+			"--repair-order",
+			ro_id,
+			"--date",
+			target_date,
+			"--time",
+			"14:00:00",
+			"--bay",
+			offline_bay,
+			"--duration",
+			"60",
+		],
+		expect_error=True,
+		check_fn=_check,
+	)
+
+
+def _probe_stockout_alternates(package_name: str) -> ProbeSpec:
+	def _check(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool, str]]:
+		d = data.get("data") or {}
+		alts = d.get("alternates") or d.get("items") or d.get("slots") or []
+		return [
+			("rc_zero", rc == 0, f"rc={rc}"),
+			("success_true", data.get("success") is True, f"success={data.get('success')}"),
+			("alternates_found", isinstance(alts, list) and len(alts) >= 1, f"count={len(alts)}"),
+		]
+
+	return ProbeSpec(
+		id="stockout_alternates_probe",
+		category="stockout_alternates",
+		description=f"Verify compatible alternates lookup for '{package_name}' slot 2",
+		command="alternates",
+		args=["alternates", "--service-package", package_name, "--slot-number", "2"],
+		check_fn=_check,
+	)
+
+
+def _probe_partially_approved_deferred(ro_id: str, idx: int) -> ProbeSpec:
+	def _check(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool, str]]:
+		d = data.get("data") or {}
+		items = d.get("deferred_services") or d.get("items") or d.get("services") or []
+		return [
+			("rc_zero", rc == 0, f"rc={rc}"),
+			("success_true", data.get("success") is True, f"success={data.get('success')}"),
+			("deferred_sync_present", isinstance(items, list) and len(items) >= 1, f"ro={ro_id}, count={len(items)}"),
+		]
+
+	return ProbeSpec(
+		id=f"partially_approved_deferred_{idx}",
+		category="partially_approved_deferred",
+		description=f"Verify declined lines synced to Vehicle Deferred Service for {ro_id}",
+		command="deferred",
+		args=["deferred", "--repair-order", ro_id],
+		check_fn=_check,
+	)
+
+
+def _probe_dry_run_write_gate(customer_name: str, vehicle_vin: str) -> ProbeSpec:
+	def _check(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool, str]]:
+		missing = data.get("missing_required") or []
+		has_odo_missing = any("odometer-in" in str(m) or "odometer_in" in str(m) for m in missing)
+		return [
+			("rc_zero", rc == 0, f"rc={rc}"),
+			("ready_false", data.get("ready") is False, f"ready={data.get('ready')}"),
+			("missing_odometer_flagged", has_odo_missing, f"missing={missing}"),
+		]
+
+	return ProbeSpec(
+		id="dry_run_write_gate_probe",
+		category="dry_run_write_gate",
+		description="Verify --dry-run quote flags missing --odometer-in without guessing",
+		command="quote",
+		args=["--dry-run", "quote", "--customer", customer_name, "--vehicle", vehicle_vin, "--service", "Cabin Air Filter Replacement::0.5"],
+		check_fn=_check,
+	)
+
+
+def _probe_pricing_floor_contract() -> ProbeSpec:
+	def _check(data: dict[str, Any], _raw: str, rc: int) -> list[tuple[str, bool, str]]:
+		d = data.get("data") or {}
+		sell = float(d.get("sell_price") or 0.0)
+		rule = d.get("rule_applied")
+		return [
+			("rc_zero", rc == 0, f"rc={rc}"),
+			("success_true", data.get("success") is True, f"success={data.get('success')}"),
+			("sell_price_118_75", abs(sell - 118.75) < 0.01, f"sell_price={sell}"),
+			("rule_cost_floor", rule == "cost_floor", f"rule={rule}"),
+		]
+
+	return ProbeSpec(
+		id="pricing_floor_contract_probe",
+		category="pricing_floor_contract",
+		description="Verify price-part enforces 25% cost_floor ($118.75) over -30% baseline ($112.00)",
+		command="price-part",
+		args=[
+			"price-part",
+			"--tesla-price",
+			"160",
+			"--cost",
+			"95",
+			"--source",
+			"Aftermarket",
+			"--condition",
+			"New",
+			"--part-number",
+			"1499151-00-B",
+		],
+		check_fn=_check,
+	)
+
+
 def build_monte_carlo_probes(
 	manifest: dict[str, Any],
 	*,
@@ -772,6 +1063,7 @@ def build_monte_carlo_probes(
 	waiting_ros = list(summary.get("waiting_on_parts_ros") or [])
 	unscheduled_ros = list(summary.get("unscheduled_ros") or [])
 	over_tol_ros = list(summary.get("over_tolerance_ros") or [])
+	partially_approved_ros = list(summary.get("partially_approved_ros") or [])
 
 	# Leave collision probes
 	effective_leave_techs = list(leave_tech_ids or summary.get("leave_techs") or summary.get("on_leave_techs") or [])
@@ -807,6 +1099,28 @@ def build_monte_carlo_probes(
 	# Over-tolerance Shop Action Item probes
 	for idx, ro_id in enumerate(over_tol_ros[:max_per_category], start=1):
 		probes.append(_probe_over_tolerance(str(ro_id), idx))
+
+	# Lunch break boundary & offline bay guard probes
+	bays = manifest.get("bays") or {}
+	techs = manifest.get("techs") or {}
+	guard_ro = str((unscheduled_ros or conflict_ros or list((manifest.get("ros") or {}).values()))[0]) if (unscheduled_ros or conflict_ros or manifest.get("ros")) else "RO-MC-001"
+	alignment_bay = str(bays.get("alignment") or bays.get("main_lift") or "Bay 2 - Alignment & Suspension")
+	offline_bay = str(bays.get("offline") or "Bay 5 - Offline")
+	devon_id = techs.get("devon")
+	probes.append(_probe_lunch_break_boundary(guard_ro, target_date, alignment_bay, devon_id))
+	probes.append(_probe_offline_bay_guard(guard_ro, target_date, offline_bay))
+
+	# Stockout alternates, partial-decline deferred sync, write-gate & pricing floor probes
+	brake_pkg = str((manifest.get("packages") or {}).get("front_brake_overhaul") or "Front Brake Pads, Rotors & Fluid Overhaul")
+	probes.append(_probe_stockout_alternates(brake_pkg))
+
+	for idx, ro_id in enumerate(partially_approved_ros[:max_per_category], start=1):
+		probes.append(_probe_partially_approved_deferred(str(ro_id), idx))
+
+	cust_1 = str((manifest.get("customers") or {}).get("retail_1") or "Liam Chen")
+	veh_1 = str((manifest.get("vehicles") or {}).get("veh_model3_liam") or DEFAULT_MODEL3_VIN)
+	probes.append(_probe_dry_run_write_gate(cust_1, veh_1))
+	probes.append(_probe_pricing_floor_contract())
 
 	return probes
 
