@@ -10,10 +10,10 @@ Run a closed-loop simulation and optimization swarm across ISM's 3-layer stratif
 | :--- | :--- | :--- |
 | **`coordinator`** | Owns loop state, Wave 1/Wave 2 gating, round caps, and escalation; never edits app code | **Gemini 4 Carbon (High)** *(or **Gemini 4 Argon (High)**)* |
 | **`monitor`** | Standard `swarm_monitor` stall watcher | `gemini-4-hydrogen-low` |
-| **`eval-runner`** | Slot bootstrap (`slot-1` / `slot-2`), `stage_server` daemon (`IsDaemon=true`), sharded blinded evals, `submit-stage`, `score` | **`gemini-4-hydrogen-high`** throughout orchestration; spawns cold blinded helpers via sharded `swarm{action:"add", model:"gemini-4-hydrogen-low", workspace:"inherit", tasks:[...]}` |
-| **`trace-reviewer`** | Read-only analyst grading traces, DB checks, `--stage` schemas, and ranking skill vs CLI vs controller friction | `gemini-4-hydrogen-high` |
-| **`cli-skills-author`** | `ism-agent-os/skills/ism-*`, `rules/AGENTS.md` (`< 24,000` bytes), `tools/cli*.py`, `tools/stage_*.py`, `ism-agent-os/tests/` | `gemini-4-hydrogen-medium` *(escalate to `-high` in-place after 2 failed fixes)* |
-| **`controller-author`** | `ism-frappe/ism/api/*.py`, `ism-frappe/ism/scheduling/*.py`, `ism-frappe/ism/tests/` | `gemini-4-hydrogen-high` *(or `gemini-4-hydrogen-medium`)* |
+| **`eval-runner`** | Slot bootstrap (`slot-1` / `slot-2`), `stage_server` daemon (`IsDaemon=true`), sharded blinded evals, `submit-stage`, `score` | **`gemini-4-hydrogen-xhigh`** throughout orchestration; spawns cold blinded helpers via sharded `swarm{action:"add", model:"gemini-4-hydrogen-low", workspace:"inherit", tasks:[...]}` |
+| **`trace-reviewer`** | Read-only analyst grading traces, DB checks, `--stage` schemas, and ranking skill vs CLI vs controller friction | `gemini-4-hydrogen-xhigh` |
+| **`cli-skills-author`** | `ism-agent-os/skills/ism-*`, `rules/AGENTS.md` (`< 24,000` bytes), `tools/cli*.py`, `tools/stage_*.py`, `ism-agent-os/tests/` | `gemini-4-hydrogen-high` *(or `gemini-4-hydrogen-xhigh`)* |
+| **`controller-author`** | `ism-frappe/ism/api/*.py`, `ism-frappe/ism/scheduling/*.py`, `ism-frappe/ism/tests/` | `gemini-4-hydrogen-high` *(or `gemini-4-hydrogen-xhigh`)* |
 | **`verifier`** | Cross-family read/test gate on `slot-3` (`ism-frappe` suite, `ism-agent-os` `unittest`, `eval_scenarios.py`, `sim_runner.py`, legacy `--dry-run` canary) | `gemini-4-argon-high` *(or `gemini-4-carbon-high`)* |
 
 > **Hard Guardrails:** Never use `Gemini 3.8 Flash`, `Claude`, `GPT-OSS`, `Model="flash"`, or leaf `Orchestrator`. Always use `swarm{action:"model"}` for escalation—never `kill` + `add` to change a waiting worker's model.
