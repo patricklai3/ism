@@ -24,6 +24,7 @@ description: >-
 2. **Search Tesla Canada**: Open `https://parts.tesla.com/en-CA/find-part?searchTerm=<query>` using the OEM part number first, or the part name if unlisted or superseded.
 3. **Exercise discretion**: Confirm the region is Canada (`en-CA`, CAD), verify vehicle model/generation compatibility across broad name results, and resolve superseded part numbers.
 4. **Compute & audit internally**: Run `python -m tools.cli --json price-part --tesla-price <CAD> [--cost <CAD>] [--source OEM|Aftermarket] [--condition New|Used|Reconditioned] [--part-number <NO>]`. Surface the pricing rule and warnings (`above_tesla`, missing cost, or cost-plus fallback) in `### ISM Pre-Dispatch Summary` only—never in customer-facing quote or invoice text.
+5. **Batch 2+ pricing or read lookups in one call**: Whenever pricing 2+ parts or combining 2+ read lookups in one turn, ALWAYS use ONE `batch` call instead of separate CLI invocations (e.g., `python -m tools.cli --json batch --cmd "price-part --tesla-price 200 --cost 40 --source Aftermarket --part-name 'Aero Duct'" --cmd "price-part --tesla-price 10 --cost 4 --source OEM --part-name 'Trim Clip'"`, or `python -m tools.cli --json batch --cmd "alternates --service-package '<PKG>' --slot-number 2" --cmd "inspection-templates"`).
 
 ## 2. Ingest Tesla Service Manual Procedures
 
@@ -34,7 +35,7 @@ description: >-
 ## 3. Resolve Deficits and Procure Parts (RO-Linked or Standalone Inventory)
 
 1. For Repair Order jobs, run `python -m tools.cli --json check-stock --repair-order <RO>` to list required parts, available warehouse stock, and `deficit_count` in `data`. For general inventory checks, omit `--repair-order` and pass `--items-json`.
-2. To find compatible OEM, aftermarket, or used replacements with stock quantities, run `python -m tools.cli --json alternates` (`--service-package`, `--component-slot`, `--slot-number`, `--oem`, or `--item-code`).
+2. To find compatible OEM, aftermarket, or used replacements with stock quantities, run `python -m tools.cli --json alternates` (`--service-package`, `--component-slot`, `--slot-number`, `--oem`, or `--item-code`). If also checking templates or another read in the same turn, combine them in one `batch` call (`python -m tools.cli --json batch --cmd "alternates --service-package '<PKG>' --slot-number 2" --cmd "inspection-templates"`).
 3. A `Purchase Order` does **NOT** require a `Repair Order`. Standalone stock/inventory purchases omit `--repair-order`:
    - If ordering a part that does not exist in Frappe `Item` yet, ingest it via `ingest-parts <file> --service-package <PKG>` first (so it gets canonical `[Source]-[PartNumber]-[Condition]` coding and is nested under a `Service Package`), then procure it. **NEVER** create vehicle parts via raw `create-doc --doctype "Item"`.
    - Before dispatching `ingest-parts`, look up candidate `Service Package` records via `list-docs --doctype "Service Package"` if the target service is not already known, or flag `--service-package` as `[MISSING — REQUIRED]` in the Pre-Dispatch Summary.
@@ -63,7 +64,7 @@ Suppliers often require payment at order time before goods arrive, and the suppl
 ## Required Fields, `--stage` & Pre-Dispatch Callback
 
 - **`procure` / `pay-purchase` / `purchase-invoice` / `receive-po` / `ingest-parts` / `import-tesla` / `ingest-tesla`**:
-  - **Preferred (`--stage`)**: Stage procurement or parts writes via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch --cmd "procure ..." --cmd "receive-po --purchase-order '$step0.data.purchase_orders.0'"`), present the returned `127.0.0.1` URL so the operator can fill any missing fields (`--payment-method`, `--service-package`, `--bill-no`) and submit locally, and use `python -m tools.cli --json stage-receipt` or `@last` (`@last.purchase_order`) on follow-up turns.
+  - **Preferred (`--stage`)**: Stage procurement or parts writes via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch --cmd "procure ..." --cmd "receive-po --purchase-order @step0.data.purchase_orders.0"` — `stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings), present the returned `127.0.0.1` URL so the operator can fill any missing fields (`--payment-method`, `--service-package`, `--bill-no`) and submit locally, and use `python -m tools.cli --json stage-receipt` or `@last` (`@last.purchase_order`) on follow-up turns.
   - **Legacy (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), output `### ISM Pre-Dispatch Summary` via `--dry-run` before dispatching live writes.
 - Do **NOT** require `--repair-order` on `procure`.
 - `--service-package` is **REQUIRED** on `ingest-parts` so every newly ingested part is nested under at least one `Service Package`.

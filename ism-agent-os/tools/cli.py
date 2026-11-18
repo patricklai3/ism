@@ -94,6 +94,25 @@ __all__ = [
 ]
 
 
+def _emit_cli_error(exc: BaseException | str, *, raw_json: bool) -> None:
+	"""Emit a structured JSON error envelope to stdout when --json is set, in addition to stderr text."""
+	msg = str(exc)
+	if raw_json:
+		if isinstance(exc, IsmApiError):
+			details = exc.details if isinstance(exc.details, dict) else {}
+			payload: dict[str, Any] = {
+				**details,
+				"success": False,
+				"error": msg,
+				"message": msg,
+				"status_code": exc.status_code,
+			}
+		else:
+			payload = {"success": False, "error": msg}
+		_print_result(payload, raw_json=True)
+	print(f"Error: {msg}", file=sys.stderr)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
 	"""Parse CLI arguments and execute the requested ISM Agent OS command."""
 	raw_argv = list(argv) if argv is not None else sys.argv[1:]
@@ -106,13 +125,14 @@ def main(argv: Optional[list[str]] = None) -> int:
 		args = parser.parse_args(argv)
 
 	dry_run = bool(getattr(args, "dry_run", False))
+	raw_json = bool(getattr(args, "json", False))
 	if stage_mode and dry_run:
-		print("Error: Cannot combine --stage and --dry-run.", file=sys.stderr)
+		_emit_cli_error("Cannot combine --stage and --dry-run.", raw_json=raw_json)
 		return 1
 
 	if stage_mode:
 		if args.command in ("test", "verify-connection", "stage-receipt", "cockpit"):
-			print(f"Error: Command '{args.command}' cannot be used with --stage.", file=sys.stderr)
+			_emit_cli_error(f"Command '{args.command}' cannot be used with --stage.", raw_json=raw_json)
 			return 1
 		try:
 			if args.command == "batch":
@@ -152,7 +172,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 			_print_result(res, raw_json=True)
 			return 0
 		except (SystemExit, json.JSONDecodeError, OSError, RuntimeError, ValueError) as exc:
-			print(f"Error: {exc}", file=sys.stderr)
+			_emit_cli_error(exc, raw_json=raw_json)
 			return 1
 
 	if dry_run:
@@ -168,7 +188,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 			_print_result(res, raw_json=args.json)
 			return 0
 		except (SystemExit, json.JSONDecodeError, OSError, ValueError) as exc:
-			print(f"Error: {exc}", file=sys.stderr)
+			_emit_cli_error(exc, raw_json=raw_json)
 			return 1
 
 	config = IsmConfig.from_env(env_path=args.env_file)
@@ -210,7 +230,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 			return 1
 		return 0
 	except (IsmApiError, json.JSONDecodeError, OSError, ValueError) as exc:
-		print(f"Error: {exc}", file=sys.stderr)
+		_emit_cli_error(exc, raw_json=raw_json)
 		return 1
 
 

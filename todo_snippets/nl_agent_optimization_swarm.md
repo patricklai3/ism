@@ -10,11 +10,11 @@ Run a closed-loop simulation and optimization swarm across ISM's 3-layer stratif
 | :--- | :--- | :--- |
 | **`coordinator`** | Owns loop state, Wave 1/Wave 2 gating, round caps, and escalation; never edits app code | **Gemini 4 Carbon (High)** *(or **Gemini 4 Argon (High)**)* |
 | **`monitor`** | Standard `swarm_monitor` stall watcher | `gemini-4-hydrogen-low` |
-| **`eval-runner`** | Slot bootstrap (`slot-1` / `slot-2`), `stage_server` daemon (`IsDaemon=true`), `run_workflow` blinded evals, `submit-stage`, `score` | Starts `gemini-4-hydrogen-medium`; switches in-place to **`gemini-4-hydrogen-low`** before `run_workflow(..., model="inherit")` |
+| **`eval-runner`** | Slot bootstrap (`slot-1` / `slot-2`), `stage_server` daemon (`IsDaemon=true`), sharded blinded evals, `submit-stage`, `score` | **`gemini-4-hydrogen-high`** throughout orchestration; spawns cold blinded helpers via sharded `swarm{action:"add", model:"gemini-4-hydrogen-low", workspace:"inherit", tasks:[...]}` |
 | **`trace-reviewer`** | Read-only analyst grading traces, DB checks, `--stage` schemas, and ranking skill vs CLI vs controller friction | `gemini-4-hydrogen-high` |
 | **`cli-skills-author`** | `ism-agent-os/skills/ism-*`, `rules/AGENTS.md` (`< 24,000` bytes), `tools/cli*.py`, `tools/stage_*.py`, `ism-agent-os/tests/` | `gemini-4-hydrogen-medium` *(escalate to `-high` in-place after 2 failed fixes)* |
-| **`controller-author`** | `ism-frappe/ism/api/*.py`, `ism-frappe/ism/scheduling/*.py`, `ism-frappe/ism/tests/` | `gemini-4-hydrogen-medium` *(or `-high` for schema/state)* |
-| **`verifier`** | Cross-family read/test gate on `slot-2` (`ism-frappe` suite, `ism-agent-os` `unittest`, `eval_scenarios.py`, `sim_runner.py`, legacy `--dry-run` canary) | `gemini-4-carbon-high` *(or `gemini-4-argon-high`)* |
+| **`controller-author`** | `ism-frappe/ism/api/*.py`, `ism-frappe/ism/scheduling/*.py`, `ism-frappe/ism/tests/` | `gemini-4-hydrogen-high` *(or `gemini-4-hydrogen-medium`)* |
+| **`verifier`** | Cross-family read/test gate on `slot-3` (`ism-frappe` suite, `ism-agent-os` `unittest`, `eval_scenarios.py`, `sim_runner.py`, legacy `--dry-run` canary) | `gemini-4-argon-high` *(or `gemini-4-carbon-high`)* |
 
 > **Hard Guardrails:** Never use `Gemini 3.8 Flash`, `Claude`, `GPT-OSS`, `Model="flash"`, or leaf `Orchestrator`. Always use `swarm{action:"model"}` for escalation—never `kill` + `add` to change a waiting worker's model.
 
@@ -31,9 +31,9 @@ Run a closed-loop simulation and optimization swarm across ISM's 3-layer stratif
 3. **Antigravity Windows Stage Daemon (`--stage` Primary):**
    - Start `python -m tools.stage_server` once with `IsDaemon=true` in `ism-agent-os/` after `bootstrap-slot` so Windows Job Objects do not kill the `127.0.0.1` form daemon between `--stage` CLI invocations.
    - Cold blinded agents follow `rules/AGENTS.md` (preferring `--stage` on Turn 1, outputting the `127.0.0.1` URL); `eval-runner` simulates operator form inspection & submission via `python scripts/eval_nl_loop.py submit-stage --url "<URL>" [--expect-missing ...] [--set ...]`.
-4. **Cold Sub-Agent Execution via `run_workflow`:**
-   - Swarm workers lack `invoke_subagent` / `send_message`; `eval-runner` switches itself to `gemini-4-hydrogen-low` and uses `run_workflow` (`agent(..., model="inherit")`) in two waves (`Wave 1` reads -> `Wave 2` writes/traps) so all 40 test agents run cold without board clutter.
-   - For the 2-scenario legacy `--dry-run` verifier canary (`S19`, `S25`), any `swarm` helper must emit `### ISM Pre-Dispatch Summary` in assistant text and end its turn **without** calling `swarm_wait` (or use `a = agent(...)` multi-turn `run_workflow` with `### ISM Pre-Dispatch Summary` in assistant `content` before `finish()`).
+4. **Cold Sub-Agent Execution via Sharded `swarm{action:"add"}`:**
+   - Swarm workers lack `invoke_subagent` / `send_message` (and `run_workflow` inside a worker cannot find `"self"`); `eval-runner` stays on `gemini-4-hydrogen-high` throughout orchestration and spawns cold blinded test helpers via sharded `swarm{action:"add", model:"gemini-4-hydrogen-low", workspace:"inherit", tasks:[...]}` in two waves (`Wave 1` reads -> `Wave 2` writes/traps), saving traces to `scripts/eval_results/r<N>_traces/res_<ID>.json` and killing each wave's helper group once collected.
+   - For the 2-scenario legacy `--dry-run` verifier canary (`S19`, `S25`), spawned `gemini-4-hydrogen-low` helpers emit `### ISM Pre-Dispatch Summary` in assistant text / Turn 1 result and wait for Turn 2 confirmation before executing live writes.
 5. **Repo Hygiene Guards:**
    - Keep `ism-agent-os/rules/AGENTS.md` strictly `< 24,000` bytes and pass `test_skills_validation.py` (zero stale legacy protocol substring hits anywhere in `ism-agent-os/`).
 
@@ -87,17 +87,32 @@ Run a closed-loop simulation and optimization swarm across ISM's 3-layer stratif
 
 ## Phase 2: Swarm v3 Execution Checklist (Next `/swarm` Session)
 
-- [ ] **2.1 Baseline Gate (`verifier` on `slot-2`, parallel with `eval-runner` setup)**
-  - Run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Slot 2 -Module ism.tests.test_simulation_framework,ism.tests.test_agent_facade` (or full app suite).
+- [x] **2.1 Baseline Gate (`verifier` on `slot-3`, parallel with `eval-runner` setup)**
+  - Run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Slot 3 -Module ism.tests.test_simulation_framework,ism.tests.test_agent_facade` (or full app suite).
   - Run `python -m unittest discover -s ism-agent-os/tests -t ism-agent-os -v`.
-  - Run `python ism-agent-os/scripts/sim_runner.py --seed-range 1..10 --slot 2 --json --strict`.
-- [ ] **2.2 Round 0 Baseline (`eval-runner` -> `trace-reviewer`)**
+  - Run `python ism-agent-os/scripts/sim_runner.py --seed-range 1..10 --slot 3 --json --strict`.
+- [x] **2.2 Round 0 Baseline (`eval-runner` -> `trace-reviewer`)**
   - Bootstrap `slot-1` (`eval_standard`, `--activate-dotenv`) + start `python -m tools.stage_server` (`IsDaemon=true`), then run `eval_scenarios.py --strict` (`24/24`).
-  - Switch `eval-runner` to `gemini-4-hydrogen-low`; run `S01`–`S30` in two waves (`--wave 1`, then `--wave 2` + `submit-stage` + `score --round 0 --profile eval_standard`).
+  - Keep `eval-runner` on `gemini-4-hydrogen-high`; spawn cold blinded `gemini-4-hydrogen-low` helpers via sharded `swarm{action:"add", model:"gemini-4-hydrogen-low", workspace:"inherit", tasks:[...]}` for `S01`–`S30` in two waves (`Wave 1`, then `Wave 2` + `submit-stage` + Turn 2s + `score --round 0 --profile eval_standard`), saving traces to `scripts/eval_results/r0_traces/res_<ID>.json` and killing each wave's helpers once collected.
   - Bootstrap `slot-2` (`swarm_crunch_day`, `--activate-dotenv`), run `C01`–`C10` in two waves (`score --round 0 --profile swarm_crunch_day`), and verify 2-scenario legacy `--dry-run` canary (`S19`, `S25`).
-- [ ] **2.3 Closed-Loop Optimization (Rounds 1–3, capped at 3)**
+- [x] **2.3 Closed-Loop Optimization (Rounds 1–3, capped at 3)**
   - `trace-reviewer` (`gemini-4-hydrogen-high`) ranks friction items from `round_<N>.json`.
   - `cli-skills-author` / `controller-author` (`gemini-4-hydrogen-medium`) land minimal surgical fixes.
   - `verifier` (`gemini-4-carbon-high`) runs `ism-frappe` + `ism-agent-os` + `sim_runner.py` gates; `eval-runner` runs targeted `--ids` / `--skill` slice (or full `40`-scenario final gate).
-- [ ] **2.4 Clean Teardown & Report**
+- [x] **2.4 Clean Teardown & Report**
   - Run `teardown-slot --slot 1 --restore-dotenv` and `teardown-slot --slot 2`, confirm `git status` clean of stray temp artifacts, kill non-monitor workers, and post Round 0 $\rightarrow$ Final KPI delta table.
+
+---
+
+## Phase 2 Execution Summary (Swarm v3 — Completed)
+
+| Metric | Round 0 Baseline | Final (Round 3 + `S16` Fix) | Target |
+| :--- | :---: | :---: | :---: |
+| `cli_contract_pass_rate` | `22/24` (`91.7%`) | **`24/24` (`100.0%`)** | `100%` |
+| `monte_carlo_probe_pass_rate` | `0/10` seeds (`138/167` / `82.63%` probes) | **`10/10` seeds (`170/170` / `100.0%` probes)** | `100%` |
+| `db_verification_rate` | `3/3` scored (`incomplete` harness) | **`40/40` (`100.0%`)** | `100%` |
+| `first_try_success` | — | **`40/40` (`100.0%`)** | `>= 95.0%` |
+| `avg_domain_cli_calls` | — | **`1.10`** (`0.45` live, `0.65` staged) | `<= 1.30` |
+| `anti_hallucination_gate_rate` | — | **`6/6` (`100.0%`)** | `100%` |
+| `conflict_and_trap_recovery_rate` | — | **`5/5` (`100.0%`)** | `100%` |
+| Legacy `--dry-run` canary (`S19,S25`) | — | **`2/2` (`100.0%`)** | `100%` |

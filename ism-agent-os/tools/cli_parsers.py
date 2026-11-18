@@ -245,6 +245,7 @@ def _register_floor_and_action_parsers(sub: argparse._SubParsersAction) -> None:
 		help="One or more service row names/indices (repeatable or space/comma-separated)",
 	)
 	p_ts.add_argument("--service-rows-json", help="JSON array of service row IDs (or @file.json)")
+	p_ts.add_argument("--all", action="store_true", help="Toggle all active/approved service rows on the Repair Order")
 	p_ts.add_argument("--reopen", action="store_true")
 
 	p_sup = sub.add_parser("add-supplement", help="Add mid-job supplement for customer approval")
@@ -261,7 +262,8 @@ def _register_floor_and_action_parsers(sub: argparse._SubParsersAction) -> None:
 	p_dup.add_argument("--service-row", required=True)
 
 	p_dep = sub.add_parser("deposit", help="Record a customer deposit payment on a Repair Order")
-	p_dep.add_argument("repair_order", help="Repair Order ID (e.g. RO-2026-00011)")
+	p_dep.add_argument("repair_order", nargs="?", default=argparse.SUPPRESS, help="Repair Order ID (e.g. RO-2026-00011)")
+	p_dep.add_argument("--repair-order", dest="repair_order", default=None, help="Repair Order ID (e.g. RO-2026-00011)")
 	p_dep.add_argument("--amount", type=float, required=True, help="Deposit amount in CAD")
 	p_dep.add_argument("--payment-method", default="Debit / Interac", help="Payment method (default: Debit / Interac)")
 	p_dep.add_argument("--reference-no", help="Optional payment reference number")
@@ -296,7 +298,7 @@ def _register_floor_and_action_parsers(sub: argparse._SubParsersAction) -> None:
 	p_cai.add_argument("--source", choices=("Manual", "Agent", "Rule Snooze"))
 
 	p_rai = sub.add_parser("resolve-action", help="Resolve a Shop Action Item")
-	p_rai.add_argument("--action-item", required=True)
+	p_rai.add_argument("--action-item", "--name", dest="action_item", required=True)
 	p_rai.add_argument("--notes")
 
 	p_sai = sub.add_parser("sync-action", help="Snooze, dismiss, or reopen a synced Shop Action Item key")

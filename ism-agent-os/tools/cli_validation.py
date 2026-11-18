@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from datetime import date
-from typing import Any, Callable
+from typing import Any, Callable, Optional
+
+from .cli_parsing import _parse_json_opt
 
 READ_ONLY_COMMANDS = frozenset({
 	"test",
@@ -33,7 +36,66 @@ READ_ONLY_COMMANDS = frozenset({
 	"stage-receipt",
 })
 
-_STEP_REF_PATTERN = re.compile(r"\$(?:\{(?:step\d+|prev)(?:\.[A-Za-z0-9_.-]+)?\}|(?:step\d+|prev)(?:\.[A-Za-z0-9_.-]+)?)")
+_STEP_PATH_RE = r"[A-Za-z0-9_-]+(?:\[\d+\])*(?:\.[A-Za-z0-9_-]+(?:\[\d+\])*)*"
+_STEP_REF_PATTERN = re.compile(
+	rf"(?:"
+	rf"\$\{{(?:step\d+|prev)(?:\.{_STEP_PATH_RE})?\}}"
+	rf"|\$(?:step\d+|prev)(?:\.{_STEP_PATH_RE})?(?![A-Za-z0-9_])"
+	rf"|(?<![A-Za-z0-9._%+-])@(?:step\d+|prev)(?:\.{_STEP_PATH_RE})?(?![A-Za-z0-9_@-])"
+	rf"|(?<![A-Za-z0-9_.$@-])(?:step\d+|prev)\.{_STEP_PATH_RE}(?![A-Za-z0-9_@-])"
+	rf")"
+)
+_CORRUPTED_STEP_REF_PATTERN = re.compile(
+	r"(?<![A-Za-z0-9_./\\])\.(?:data|urls|result|ids)(?:\.[A-Za-z0-9_-]+(?:\[\d+\])*)+(?![A-Za-z0-9_./\\-])"
+)
+_AT_SPECIAL_REF_RE = re.compile(r"^@(?:last|step\d+|prev)(?:\.|$)")
+_AT_FILE_JSON_ATTRS = (
+	"parts_json",
+	"items_json",
+	"data_json",
+	"services_json",
+	"add_services_json",
+	"remove_indices_json",
+	"update_services",
+	"service_rows_json",
+	"payments",
+	"operations_json",
+	"args_json",
+)
+
+
+def find_corrupted_step_ref(val: Any) -> Optional[str]:
+	"""Return the first PowerShell-corrupted leading-dot step reference token, if any."""
+	if isinstance(val, str):
+		m = _CORRUPTED_STEP_REF_PATTERN.search(val)
+		return m.group(0) if m else None
+	if isinstance(val, (list, tuple)):
+		for item in val:
+			found = find_corrupted_step_ref(item)
+			if found:
+				return found
+	elif isinstance(val, dict):
+		for v in val.values():
+			found = find_corrupted_step_ref(v)
+			if found:
+				return found
+	elif isinstance(val, argparse.Namespace):
+		for k, v in vars(val).items():
+			if k not in ("command", "env_file", "json", "summary", "dry_run", "stage"):
+				found = find_corrupted_step_ref(v)
+				if found:
+					return found
+	return None
+
+
+def raise_if_corrupted_step_ref(val: Any) -> None:
+	"""Raise ValueError if val contains a PowerShell-stripped leading-dot step reference."""
+	bad = find_corrupted_step_ref(val)
+	if bad:
+		raise ValueError(
+			f"Detected corrupted step reference '{bad}' (PowerShell likely stripped unescaped '$stepN'/'$prev'). "
+			"Use '@step0.data.name' or '@prev.data.name' (or 'step0.data.name') instead of '$step0'/'$prev'."
+		)
 
 
 def _contains_step_ref(val: Any) -> bool:
@@ -295,9 +357,9 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	},
 	"toggle-service": {
 		"target": "ism.api.agent.toggle_service_completion -> Repair Order Service",
-		"fields": ("repair_order", "service_row", "service_rows_json", "reopen"),
+		"fields": ("repair_order", "service_row", "service_rows_json", "all", "reopen"),
 		"required": (("repair_order", "--repair-order"),),
-		"any_of": ((("service_row", "service_rows_json"), "--service-row or --service-rows-json"),),
+		"any_of": ((("service_row", "service_rows_json", "all"), "--service-row, --service-rows-json, or --all"),),
 	},
 	"add-supplement": {
 		"target": "ism.api.agent.add_supplement -> Repair Order Supplement",
@@ -467,9 +529,22 @@ def validate_temporal_args(args: argparse.Namespace, *, allow_step_refs: bool = 
 
 def validate_write_command_args(args: argparse.Namespace, *, allow_step_refs: bool = False) -> list[str]:
 	"""Return a list of missing or invalid required flags for write CLI commands."""
+	raise_if_corrupted_step_ref(args)
+
 	cmd = getattr(args, "command", None)
 	if not cmd or cmd in READ_ONLY_COMMANDS or cmd == "batch":
 		return []
+
+	for attr in _AT_FILE_JSON_ATTRS:
+		raw_val = getattr(args, attr, None)
+		if isinstance(raw_val, str):
+			stripped = raw_val.strip()
+			if stripped.startswith("@") and not _AT_SPECIAL_REF_RE.match(stripped):
+				try:
+					_parse_json_opt(stripped)
+				except (OSError, json.JSONDecodeError, ValueError) as exc:
+					flag_label = f"--{attr.replace('_', '-')}"
+					raise ValueError(f"Invalid JSON file '{stripped}' for {flag_label}: {exc}") from exc
 
 	missing: list[str] = []
 	meta = WRITE_COMMAND_META.get(cmd)

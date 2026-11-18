@@ -17,8 +17,8 @@ description: >-
 
 ## 2. Query Work-in-Progress, Action Queue, and Bottlenecks
 
-1. Run `python -m tools.cli --json list-docs --doctype "Repair Order" --fields-json "[name,customer,vehicle,status,approval_status,grand_total,outstanding_amount]" --limit 50` (or `--fields-json @fields.json`).
-2. Run `python -m tools.cli --json action-items --status Open` to surface synced irregularities, shortages, or escalations (resolve completed manual items with `python -m tools.cli --json resolve-action`, or snooze/dismiss via `python -m tools.cli --json sync-action`). Use `python -m tools.cli --json vehicle-info --vehicle <VEH>` or `python -m tools.cli --json get-inspection --repair-order <RO>` when drilling into specific vehicle history or walkaround completion.
+1. Run `python -m tools.cli --json list-docs --doctype "Repair Order" --filter "status=not in:Closed / Released,Cancelled" --fields "name,customer,vehicle,status,approval_status,grand_total,outstanding_amount" --limit 50` (add `--filter "customer=<NAME>"` when querying a specific fleet or customer; use `--fields` / `--filter` directly instead of piping truncated output into Python).
+2. Run `python -m tools.cli --json action-items --status Open` to surface synced irregularities, shortages, or escalations (mark handled ones done with `python -m tools.cli --json resolve-action --action-item <ID> [--notes <TEXT>]`, or snooze/dismiss via `python -m tools.cli --json sync-action`). Use `python -m tools.cli --json vehicle-info --vehicle <VEH>` or `python -m tools.cli --json get-inspection --repair-order <RO>` when drilling into specific vehicle history or walkaround completion.
 3. Group active Repair Orders into clear operational buckets:
    - **Pending Authorization**: Quotes awaiting customer signature.
    - **Waiting on Parts**: Vehicles stalled in bays or lot due to parts deficits.
