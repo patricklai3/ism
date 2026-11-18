@@ -111,7 +111,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 		return 1
 
 	if stage_mode:
-		if args.command in ("test", "verify-connection", "stage-receipt"):
+		if args.command in ("test", "verify-connection", "stage-receipt", "cockpit"):
 			print(f"Error: Command '{args.command}' cannot be used with --stage.", file=sys.stderr)
 			return 1
 		try:
@@ -138,7 +138,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 				cwd=str(Path.cwd()),
 				staged_dir=staged_dir,
 			)
-			srv = ensure_server_running(staged_dir)
+			srv = ensure_server_running(staged_dir, env_file=resolved_env_file)
 			url = f"http://127.0.0.1:{srv['port']}/?id={record['stage_id']}&token={record['nonce']}"
 			res = {
 				"success": True,
@@ -197,7 +197,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 		handler = _COMMAND_HANDLERS.get(args.command)
 		if not handler:
 			return 1
-		if args.command in ("price-part", "stage-receipt"):
+		if (
+			args.command in ("price-part", "stage-receipt")
+			or (args.command == "cockpit" and not getattr(args, "data_only", False))
+		):
 			res = handler(args, None, show_summary)
 		else:
 			with IsmAgentClient(config) as client:

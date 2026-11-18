@@ -24,8 +24,9 @@ from .cli_parsing import (
 )
 from .cli_validation import READ_ONLY_COMMANDS, validate_temporal_args, validate_write_command_args
 from .client import IsmAgentClient, IsmApiError
+from .monitoring import build_cockpit_view
 from .pricing import calculate_part_price, load_pricing_config
-from .stage_store import extract_receipt_metadata, read_latest_receipt
+from .stage_store import extract_receipt_metadata, read_latest_receipt, resolve_staged_dir
 
 try:
 	from .ingestion.supplier_catalog import SupplierCatalogSanitizer
@@ -652,6 +653,50 @@ def _cmd_stage_receipt(a: argparse.Namespace, _c: Optional[IsmAgentClient], _s: 
 	return read_latest_receipt(stage_id=getattr(a, "stage_id", None))
 
 
+def _cmd_cockpit(a: argparse.Namespace, c: Optional[IsmAgentClient], s: bool) -> dict[str, Any]:
+	if getattr(a, "data_only", False):
+		if c is None:
+			raise ValueError("Frappe client is required for cockpit --data-only.")
+		snap = c.get_cockpit_snapshot(date=getattr(a, "date", None), include_summary=s)
+		if isinstance(snap, dict) and snap.get("success") is False:
+			return snap
+		view = build_cockpit_view(snap)
+		out: dict[str, Any] = {"success": True, **view}
+		if s and isinstance(snap, dict) and snap.get("summary_card"):
+			out["summary_card"] = snap["summary_card"]
+		return out
+
+	from .stage_server import ensure_server_running
+
+	raw_env = getattr(a, "env_file", None)
+	resolved_env = str(Path(raw_env).expanduser().resolve()) if raw_env else None
+	staged_dir = resolve_staged_dir()
+	srv = ensure_server_running(staged_dir, require_cockpit=True, env_file=resolved_env)
+	url = f"http://127.0.0.1:{srv['port']}/cockpit?token={srv['cockpit_token']}"
+	if getattr(a, "date", None):
+		url += f"&date={a.date}"
+	return {
+		"success": True,
+		"url": url,
+		"port": srv["port"],
+		"date": getattr(a, "date", None),
+	}
+
+
+def _cmd_publish_score(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> dict[str, Any]:
+	details = _parse_json_opt(getattr(a, "details_json", None))
+	return c.publish_health_snapshot(
+		metric_key=a.metric,
+		score=int(a.score),
+		verdict=a.verdict,
+		grade=a.grade,
+		period_date=a.period_date,
+		report_url=a.report_url,
+		details=details,
+		include_summary=s,
+	)
+
+
 _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool], Any]] = {
 	"status": lambda a, c, s: c.get_shop_floor_status(date=a.date, include_summary=s),
 	"tech-overview": lambda a, c, s: c.get_daily_tech_overview(date=a.date, include_summary=s),
@@ -830,6 +875,8 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 		reference_name=a.ref_name,
 		item_code=a.item_code,
 		details=a.details,
+		dedup_key=a.dedup_key,
+		source=a.source,
 		include_summary=s,
 	),
 	"resolve-action": lambda a, c, s: c.resolve_shop_action_item(
@@ -837,6 +884,24 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 		resolution_notes=a.notes,
 		include_summary=s,
 	),
+	"sync-action": lambda a, c, s: c.sync_action_item_state(
+		dedup_key=a.dedup_key,
+		action=a.action,
+		snooze_minutes=a.snooze_minutes,
+		title=a.title,
+		notes=a.notes,
+		reference_doctype=a.ref_doctype,
+		reference_name=a.ref_name,
+		include_summary=s,
+	),
+	"cockpit": _cmd_cockpit,
+	"pnl-digest": lambda a, c, s: c.get_pnl_digest_inputs(
+		from_date=a.from_date,
+		to_date=a.to_date,
+		company=a.company,
+		include_summary=s,
+	),
+	"publish-score": _cmd_publish_score,
 	"ingest-parts": _cmd_ingest_parts,
 	"price-part": _cmd_price_part,
 	"alternates": lambda a, c, s: c.get_component_alternates(

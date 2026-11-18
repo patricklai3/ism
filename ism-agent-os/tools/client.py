@@ -900,9 +900,11 @@ class IsmAgentClient:
 		reference_name: Optional[str] = None,
 		item_code: Optional[str] = None,
 		details: Optional[str] = None,
+		dedup_key: Optional[str] = None,
+		source: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
-		"""Create a Shop Action Item escalation."""
+		"""Create (or upsert by dedup_key) a Shop Action Item escalation."""
 		return self._call_agent(
 			"create_shop_action_item",
 			include_summary=include_summary,
@@ -912,6 +914,84 @@ class IsmAgentClient:
 			reference_doctype=reference_doctype,
 			reference_name=reference_name,
 			item_code=item_code,
+			details=details,
+			dedup_key=dedup_key,
+			source=source,
+		)
+
+	def sync_action_item_state(
+		self,
+		dedup_key: str,
+		action: str,
+		snooze_minutes: Optional[int] = None,
+		title: Optional[str] = None,
+		notes: Optional[str] = None,
+		reference_doctype: Optional[str] = None,
+		reference_name: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Snooze, dismiss, or reopen a deduplicated Shop Action Item across managers."""
+		return self._call_agent(
+			"sync_action_item_state",
+			include_summary=include_summary,
+			dedup_key=dedup_key,
+			action=action,
+			snooze_minutes=snooze_minutes,
+			title=title,
+			notes=notes,
+			reference_doctype=reference_doctype,
+			reference_name=reference_name,
+		)
+
+	def get_cockpit_snapshot(
+		self,
+		date: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Fetch batched shop monitoring snapshot, capacities, overlays, and cached scores."""
+		return self._call_agent(
+			"get_cockpit_snapshot",
+			include_summary=include_summary,
+			date=date,
+		)
+
+	def get_pnl_digest_inputs(
+		self,
+		from_date: Optional[str] = None,
+		to_date: Optional[str] = None,
+		company: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Fetch server-computed P&L, labor rate, parts margin, and unbilled WIP metrics."""
+		return self._call_agent(
+			"get_pnl_digest_inputs",
+			include_summary=include_summary,
+			from_date=from_date,
+			to_date=to_date,
+			company=company,
+		)
+
+	def publish_health_snapshot(
+		self,
+		metric_key: str,
+		score: int,
+		verdict: str,
+		grade: Optional[str] = None,
+		period_date: Optional[str] = None,
+		report_url: Optional[str] = None,
+		details: Optional[dict[str, Any] | list[Any] | str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Publish a synced 0-100 Shop Health Snapshot for manager cockpits."""
+		return self._call_agent(
+			"publish_health_snapshot",
+			include_summary=include_summary,
+			metric_key=metric_key,
+			score=score,
+			verdict=verdict,
+			grade=grade,
+			period_date=period_date,
+			report_url=report_url,
 			details=details,
 		)
 

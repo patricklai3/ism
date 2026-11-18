@@ -8,11 +8,11 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `skills/ism-shop-dispatcher/SKILL.md` — `status`, `tech-overview`, `slots`, `intake-slots`, `book`, `reschedule`, `unscheduled`
 - `skills/ism-floor-technician/SKILL.md` — `job-status`, `toggle-service`, inspections, `add-supplement`, `checkout`
 - `skills/ism-parts-specialist/SKILL.md` — `check-stock`, `alternates`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, Tesla & catalog ingestion
-- `skills/ism-shop-executive/SKILL.md` — floor telemetry, `list-docs`, `action-items`
+- `skills/ism-shop-executive/SKILL.md` — `cockpit`, `pnl-digest`, `publish-score`, `sync-action`, `list-docs`, `action-items`
 
 ## Operational Invariants
 
-1. **Local Staged Confirmation (`--stage`) or Pre-Dispatch Summary (ALL writes)**: Before ANY write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `resolve-action`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing writes):
+1. **Local Staged Confirmation (`--stage`) or Pre-Dispatch Summary (ALL writes)**: Before ANY write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `resolve-action`, `sync-action`, `publish-score`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing writes):
    - NEVER fabricate, guess, or substitute missing required fields (e.g. never invent `odometer_in=10000` or default `payment_method`).
    - **Preferred (`--stage`)**: Run `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch --cmd "..." --cmd "..."` with `$stepN.<field>` / `$prev.<field>` chaining) on Turn 1—even when required fields are omitted. *(In Antigravity on Windows, if `.ism_staged/server.json` is not alive, start `python -m tools.stage_server` with `IsDaemon=true` before `--stage` so the runner's Job Object does not kill the daemon on command exit.)* Present the returned clickable `127.0.0.1` URL (and any `missing_required` fields) to the user and end your turn (never auto-open a browser). The user completes any missing fields and clicks **Submit** locally. On follow-up turns, read created IDs via `python -m tools.cli --json stage-receipt` (`[--id <STAGE_ID>]`) or pass `@last` / `@last.<field>`.
    - **Legacy (`--dry-run`)**: Unless `ISM_STAGE_ONLY=1` is set, you may run `python -m tools.cli --dry-run <subcmd ...>`, output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing the live write command.
@@ -31,6 +31,10 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 ## Quick Command Index (`python -m tools.cli --json <cmd>`)
 
 - `status [--date <YYYY-MM-DD>]`
+- `cockpit [--date <YYYY-MM-DD>] [--data-only]`
+- `pnl-digest [--from-date <YYYY-MM-DD>] [--to-date <YYYY-MM-DD>] [--company <CO>]`
+- `publish-score --metric <KEY> --score <0-100> --verdict <TEXT> [--grade <Healthy|Watch|Critical>] [--period-date <YYYY-MM-DD>] [--report-url <URL>]`
+- `sync-action --dedup-key <KEY> --action <snooze|dismiss|reopen> [--snooze-minutes N] [--notes <TEXT>]`
 - `tech-overview [--date <YYYY-MM-DD>]`
 - `slots [--repair-order <RO>] [--duration <MIN>] [--date <YYYY-MM-DD>] [--days N] [--tags <Lift|Alignment Rack|HV Diagnostic>] [--bay <BAY>] [--technician <TECH>] [--min-time HH:MM[:SS]]`
 - `book --date <YYYY-MM-DD> --time <HH:MM[:SS]> [--repair-order <RO>] [--bay <BAY>] [--tech <TECH>] [--duration <MIN>] [--entry-type <Diagnostic|Repair>] [--provisional-customer <NAME>] [--provisional-vehicle <INFO>] [--notes <TEXT>]`

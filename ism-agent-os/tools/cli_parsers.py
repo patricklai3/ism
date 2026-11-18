@@ -292,10 +292,39 @@ def _register_floor_and_action_parsers(sub: argparse._SubParsersAction) -> None:
 	p_cai.add_argument("--ref-name")
 	p_cai.add_argument("--item-code")
 	p_cai.add_argument("--details")
+	p_cai.add_argument("--dedup-key")
+	p_cai.add_argument("--source", choices=("Manual", "Agent", "Rule Snooze"))
 
 	p_rai = sub.add_parser("resolve-action", help="Resolve a Shop Action Item")
 	p_rai.add_argument("--action-item", required=True)
 	p_rai.add_argument("--notes")
+
+	p_sai = sub.add_parser("sync-action", help="Snooze, dismiss, or reopen a synced Shop Action Item key")
+	p_sai.add_argument("--dedup-key", required=True)
+	p_sai.add_argument("--action", required=True, choices=("snooze", "dismiss", "reopen"))
+	p_sai.add_argument("--snooze-minutes", type=int)
+	p_sai.add_argument("--title")
+	p_sai.add_argument("--notes")
+	p_sai.add_argument("--ref-doctype")
+	p_sai.add_argument("--ref-name")
+
+	p_cockpit = sub.add_parser("cockpit", help="Launch local Monitoring Cockpit URL or return computed JSON")
+	p_cockpit.add_argument("--date", help="Snapshot date (ISO YYYY-MM-DD, defaults to today)")
+	p_cockpit.add_argument("--data-only", action="store_true", help="Print computed gauges, queue, and swimlane JSON")
+
+	p_pnl = sub.add_parser("pnl-digest", help="Fetch server-computed P&L and margin digest inputs")
+	p_pnl.add_argument("--from-date", help="Start posting date (ISO YYYY-MM-DD)")
+	p_pnl.add_argument("--to-date", help="End posting date (ISO YYYY-MM-DD)")
+	p_pnl.add_argument("--company")
+
+	p_pub = sub.add_parser("publish-score", help="Publish a synced 0-100 Shop Health Snapshot score")
+	p_pub.add_argument("--metric", required=True, help="Metric key (e.g. pnl_health, tomorrow_readiness)")
+	p_pub.add_argument("--score", type=int, required=True, help="Health score from 0 to 100")
+	p_pub.add_argument("--verdict", required=True, help="Concise 1-line score driver")
+	p_pub.add_argument("--grade", choices=("Healthy", "Watch", "Critical"))
+	p_pub.add_argument("--period-date", help="Period date (ISO YYYY-MM-DD)")
+	p_pub.add_argument("--report-url", help="Frappe Desk report deep link")
+	p_pub.add_argument("--details-json", help="Optional JSON details object/array (or @file.json)")
 
 
 def _register_vehicle_and_inspection_parsers(sub: argparse._SubParsersAction) -> None:

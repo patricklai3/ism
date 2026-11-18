@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -43,6 +44,7 @@ from .cli_validation import (
 	validate_write_command_args,
 )
 from .client import IsmAgentClient, IsmApiError
+from .cockpit_routes import handle_cockpit_get, handle_cockpit_post, load_cockpit_html
 from .config import IsmConfig
 from .stage_store import (
 	load_stage_record,
@@ -271,6 +273,8 @@ class StageHTTPServer(ThreadingHTTPServer):
 		*,
 		staged_dir: Optional[str | Path] = None,
 		idle_timeout: float = DEFAULT_IDLE_TIMEOUT_SECONDS,
+		cockpit_token: Optional[str] = None,
+		env_file: Optional[str] = None,
 	) -> None:
 		self.staged_dir = resolve_staged_dir(staged_dir)
 		self.idle_timeout = float(idle_timeout)
@@ -279,6 +283,9 @@ class StageHTTPServer(ThreadingHTTPServer):
 		self._stage_locks: dict[str, threading.Lock] = {}
 		self._active_executions = 0
 		self.ui_html = _load_ui_html()
+		self.cockpit_html = load_cockpit_html()
+		self.cockpit_token = str(cockpit_token or secrets.token_urlsafe(24))
+		self.env_file = env_file
 		super().__init__(server_address, RequestHandlerClass)
 
 	def touch(self) -> None:
@@ -405,10 +412,14 @@ class StageRequestHandler(BaseHTTPRequestHandler):
 		if parsed.path == "/health":
 			self._send_json(200, {
 				"ok": True,
+				"cockpit": True,
 				"pid": os.getpid(),
 				"port": self.server.server_port,
 				"staged_dir": str(self.server.staged_dir),
 			})
+			return
+
+		if handle_cockpit_get(self, parsed, query):
 			return
 
 		if parsed.path == "/":
@@ -464,6 +475,10 @@ class StageRequestHandler(BaseHTTPRequestHandler):
 			return
 
 		parsed = urlsplit(self.path)
+		query = parse_qs(parsed.query)
+		if handle_cockpit_post(self, parsed, query):
+			return
+
 		if not (parsed.path.startswith("/api/stage/") and parsed.path.endswith("/submit")):
 			self._send_json(404, {"success": False, "error": "Not found."})
 			return
@@ -841,6 +856,8 @@ def start_stage_server(
 	*,
 	port: int = 0,
 	idle_timeout: float = DEFAULT_IDLE_TIMEOUT_SECONDS,
+	cockpit_token: Optional[str] = None,
+	env_file: Optional[str] = None,
 ) -> StageHTTPServer:
 	"""Create a bound StageHTTPServer on 127.0.0.1."""
 	resolved_dir = resolve_staged_dir(staged_dir)
@@ -850,6 +867,8 @@ def start_stage_server(
 		StageRequestHandler,
 		staged_dir=resolved_dir,
 		idle_timeout=float(idle_timeout),
+		cockpit_token=cockpit_token,
+		env_file=env_file,
 	)
 
 
@@ -896,13 +915,24 @@ def ensure_server_running(
 	*,
 	idle_timeout: int = DEFAULT_IDLE_TIMEOUT_SECONDS,
 	startup_timeout: float = 4.0,
+	require_cockpit: bool = False,
+	env_file: Optional[str] = None,
 ) -> dict[str, Any]:
 	"""Return a running localhost stage daemon info dict, spawning one detached if needed."""
 	resolved_dir = resolve_staged_dir(staged_dir)
 	resolved_dir.mkdir(parents=True, exist_ok=True)
 	existing = ping_stage_server(resolved_dir)
 	if existing is not None:
-		return existing
+		has_cockpit = bool(existing.get("cockpit") and existing.get("cockpit_token"))
+		if not require_cockpit or has_cockpit:
+			return existing
+		old_pid = existing.get("pid")
+		if old_pid and int(old_pid) != os.getpid():
+			try:
+				os.kill(int(old_pid), signal.SIGTERM)
+			except OSError:
+				pass
+			time.sleep(0.2)
 
 	stage_module = f"{__package__}.stage_server" if __package__ else "tools.stage_server"
 	cmd = [
@@ -914,6 +944,8 @@ def ensure_server_running(
 		"--idle-timeout",
 		str(int(idle_timeout)),
 	]
+	if env_file:
+		cmd.extend(["--env-file", str(env_file)])
 	popen_kwargs: dict[str, Any] = {
 		"cwd": str(_AGENT_OS_ROOT),
 		"stdin": subprocess.DEVNULL,
@@ -956,14 +988,22 @@ def main(argv: Optional[list[str]] = None) -> int:
 		default=float(DEFAULT_IDLE_TIMEOUT_SECONDS),
 		help="Idle shutdown timeout in seconds (default 1800)",
 	)
+	ap.add_argument("--env-file", help="Optional .env path for cockpit Frappe REST calls")
 	opts = ap.parse_args(argv)
 
-	server = start_stage_server(opts.staged_dir, port=opts.port, idle_timeout=opts.idle_timeout)
+	server = start_stage_server(
+		opts.staged_dir,
+		port=opts.port,
+		idle_timeout=opts.idle_timeout,
+		env_file=opts.env_file,
+	)
 	info = {
 		"pid": os.getpid(),
 		"host": "127.0.0.1",
 		"port": server.server_port,
 		"staged_dir": str(server.staged_dir),
+		"cockpit_token": server.cockpit_token,
+		"env_file": opts.env_file,
 		"started_at": time.time(),
 	}
 	write_server_info(server.staged_dir, info)

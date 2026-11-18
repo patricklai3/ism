@@ -26,6 +26,8 @@ READ_ONLY_COMMANDS = frozenset({
 	"get-inspection",
 	"deferred",
 	"action-items",
+	"cockpit",
+	"pnl-digest",
 	"list-docs",
 	"get-doc",
 	"stage-receipt",
@@ -154,6 +156,53 @@ def _validate_import_tesla(
 		missing.append(label)
 
 
+def _validate_publish_score(
+	args: argparse.Namespace,
+	missing: list[str],
+	*,
+	allow_step_refs: bool = False,
+) -> None:
+	score_val = getattr(args, "score", None)
+	if not _has_value(score_val):
+		return
+	if allow_step_refs and _contains_step_ref(score_val):
+		return
+	if isinstance(score_val, bool):
+		missing.append("--score (must be 0..100)")
+		return
+	try:
+		parsed = int(score_val)
+	except (TypeError, ValueError):
+		missing.append("--score (must be 0..100)")
+		return
+	if parsed < 0 or parsed > 100:
+		missing.append("--score (must be 0..100)")
+
+
+def _validate_sync_action(
+	args: argparse.Namespace,
+	missing: list[str],
+	*,
+	allow_step_refs: bool = False,
+) -> None:
+	action_val = getattr(args, "action", None)
+	if _has_value(action_val) and not (allow_step_refs and _contains_step_ref(action_val)):
+		if str(action_val).strip().lower() not in ("snooze", "dismiss", "reopen"):
+			missing.append("--action (must be snooze, dismiss, or reopen)")
+	snooze_val = getattr(args, "snooze_minutes", None)
+	if _has_value(snooze_val) and not (allow_step_refs and _contains_step_ref(snooze_val)):
+		if isinstance(snooze_val, bool):
+			missing.append("--snooze-minutes (must be 1..43200)")
+			return
+		try:
+			parsed = int(snooze_val)
+		except (TypeError, ValueError):
+			missing.append("--snooze-minutes (must be 1..43200)")
+			return
+		if parsed < 1 or parsed > 43200:
+			missing.append("--snooze-minutes (must be 1..43200)")
+
+
 WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	"quote": {
 		"target": "ism.api.agent.create_quote -> Repair Order (Draft Estimate)",
@@ -268,13 +317,25 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	},
 	"create-action": {
 		"target": "ism.api.agent.create_shop_action_item -> Shop Action Item",
-		"fields": ("title", "category", "priority", "ref_doctype", "ref_name", "item_code", "details"),
+		"fields": ("title", "category", "priority", "ref_doctype", "ref_name", "item_code", "details", "dedup_key", "source"),
 		"required": (("title", "--title"),),
 	},
 	"resolve-action": {
 		"target": "ism.api.agent.resolve_shop_action_item -> Shop Action Item",
 		"fields": ("action_item", "notes"),
 		"required": (("action_item", "--action-item"),),
+	},
+	"sync-action": {
+		"target": "ism.api.agent.sync_action_item_state -> Shop Action Item",
+		"fields": ("dedup_key", "action", "snooze_minutes", "title", "notes", "ref_doctype", "ref_name"),
+		"required": (("dedup_key", "--dedup-key"), ("action", "--action")),
+		"custom": _validate_sync_action,
+	},
+	"publish-score": {
+		"target": "ism.api.agent.publish_health_snapshot -> Shop Health Snapshot",
+		"fields": ("metric", "score", "grade", "verdict", "period_date", "report_url", "details_json"),
+		"required": (("metric", "--metric"), ("score", "--score"), ("verdict", "--verdict")),
+		"custom": _validate_publish_score,
 	},
 	"apply-inspection": {
 		"target": "ism.api.agent.apply_inspection_template -> Repair Order Inspection",
@@ -391,7 +452,13 @@ def validate_temporal_args(args: argparse.Namespace, *, allow_step_refs: bool = 
 	if _has_value(min_time_val) and not (allow_step_refs and _contains_step_ref(min_time_val)) and not _is_valid_iso_time(min_time_val):
 		errors.append("--min-time (must be 24-hour HH:MM or HH:MM:SS)")
 
-	for flag_name, attr_name in (("--reference-date", "reference_date"), ("--bill-date", "bill_date")):
+	for flag_name, attr_name in (
+		("--reference-date", "reference_date"),
+		("--bill-date", "bill_date"),
+		("--from-date", "from_date"),
+		("--to-date", "to_date"),
+		("--period-date", "period_date"),
+	):
 		val = getattr(args, attr_name, None)
 		if _has_value(val) and not (allow_step_refs and _contains_step_ref(val)) and not _is_valid_iso_date(val):
 			errors.append(f"{flag_name} (must be ISO YYYY-MM-DD)")
@@ -579,6 +646,15 @@ STAGE_FIELD_HINTS: dict[str, dict[str, Any]] = {
 	"ref_name": {"type": "text", "label": "Reference Name"},
 	"item_code": {"type": "text", "label": "Item Code"},
 	"details": {"type": "textarea", "label": "Details"},
+	"dedup_key": {"type": "text", "label": "Deduplication Key", "placeholder": "e.g. pnl_margin:2026-11-17"},
+	"snooze_minutes": {"type": "int", "label": "Snooze Minutes", "min": 1, "placeholder": "60"},
+	"metric": {"type": "text", "label": "Metric Key", "placeholder": "pnl_health or tomorrow_readiness"},
+	"score": {"type": "int", "label": "Health Score (0-100)", "min": 0, "placeholder": "0..100"},
+	"grade": {"type": "select", "label": "Grade", "choices": ["Healthy", "Watch", "Critical"]},
+	"verdict": {"type": "textarea", "label": "Verdict (1-Line Driver)"},
+	"period_date": {"type": "date", "label": "Period Date (YYYY-MM-DD)", "placeholder": "YYYY-MM-DD"},
+	"report_url": {"type": "text", "label": "Frappe Report URL"},
+	"details_json": {"type": "json", "label": "Details JSON", "placeholder": "{}"},
 	"action_item": {"type": "text", "label": "Action Item ID"},
 	"template": {"type": "text", "label": "Inspection Template"},
 	"replace": {"type": "bool", "label": "Replace Existing"},
@@ -624,6 +700,16 @@ _STAGE_CMD_FIELD_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
 		"label": "Service Row",
 		"multi": False,
 		"placeholder": "Service row ID or 1-based index",
+	},
+	("sync-action", "action"): {
+		"type": "select",
+		"label": "Sync Action",
+		"choices": ["snooze", "dismiss", "reopen"],
+	},
+	("create-action", "source"): {
+		"type": "select",
+		"label": "Source",
+		"choices": ["Manual", "Agent", "Rule Snooze"],
 	},
 }
 
