@@ -45,7 +45,7 @@ description: >-
 
 - **`create-ro-from-entry` required fields**: `--schedule-entry` and `--odometer-in` (`>= 0`; NEVER guess or omit).
 - **`book` / `reschedule` / `appointment-status` required fields**: `--date` & `--time` (`book` also needs `--repair-order` or `--provisional-customer`); `--schedule-entry` + >= 1 change (`reschedule`); `--schedule-entry` + `--status` (`appointment-status`).
-- **Preferred Turn-1 Staged Form (`--stage`)**: Stage `book`, `reschedule`, `appointment-status`, `create-ro-from-entry`, or `intake-slots` via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch` with `$stepN.<field>` / `$prev.<field>`), present the returned `127.0.0.1` URL (conflict alternatives render as one-click **Select Slot & Retry** pills in the UI), and use `python -m tools.cli --json stage-receipt` or `@last` on follow-up turns.
+- **Preferred Turn-1 Staged Form (`--stage`)**: Stage `book`, `reschedule`, `appointment-status`, `create-ro-from-entry`, or `intake-slots` via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch` with PowerShell-safe `@stepN.<field>` / `@prev.<field>`; `stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings), present the returned `127.0.0.1` URL (conflict alternatives render as one-click **Select Slot & Retry** pills in the UI), and use `python -m tools.cli --json stage-receipt` or `@last` on follow-up turns.
 - **Legacy Callback (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), run `slots` / `status` / `--dry-run` first, output `### ISM Pre-Dispatch Summary`, and wait for user confirmation before live writes.
 
 ## Verification

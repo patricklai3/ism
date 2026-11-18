@@ -22,7 +22,12 @@ from .cli_parsing import (
 	_parse_service_specs,
 	_read_utf8_file,
 )
-from .cli_validation import READ_ONLY_COMMANDS, validate_temporal_args, validate_write_command_args
+from .cli_validation import (
+	READ_ONLY_COMMANDS,
+	raise_if_corrupted_step_ref,
+	validate_temporal_args,
+	validate_write_command_args,
+)
 from .client import IsmAgentClient, IsmApiError
 from .pricing import calculate_part_price, load_pricing_config
 from .stage_store import extract_receipt_metadata, read_latest_receipt
@@ -223,8 +228,27 @@ def _cmd_toggle_service(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> di
 			rows.extend(str(r).strip() for r in json_rows if str(r).strip())
 		elif str(json_rows).strip():
 			rows.append(str(json_rows).strip())
+	if not rows and bool(getattr(a, "all", False)):
+		ro_resp = c.get_document("Repair Order", a.repair_order)
+		ro_doc = ro_resp.get("data") if isinstance(ro_resp, dict) and isinstance(ro_resp.get("data"), dict) else ro_resp
+		services = (ro_doc.get("services") or []) if isinstance(ro_doc, dict) else []
+		rows = [
+			str(row["name"]).strip()
+			for row in services
+			if isinstance(row, dict)
+			and row.get("name")
+			and str(row.get("status") or "").strip() not in ("Declined", "Deferred", "Estimating", "Pending Approval")
+		]
+		if not rows:
+			rows = [
+				str(row["name"]).strip()
+				for row in services
+				if isinstance(row, dict)
+				and row.get("name")
+				and str(row.get("status") or "").strip() not in ("Declined", "Deferred")
+			]
 	if not rows:
-		raise ValueError("Provide --service-row or --service-rows-json.")
+		raise ValueError("Provide --service-row, --service-rows-json, or --all.")
 	return c.toggle_service_completion(
 		repair_order=a.repair_order,
 		service_row_id=rows[0] if len(rows) == 1 else rows,
@@ -269,17 +293,32 @@ _POSITIONAL_ARG_BY_CMD: dict[str, str] = {
 	"fetch-tesla": "url",
 	"ingest-tesla": "url",
 }
+_STEP_PATH_RE = r"[A-Za-z0-9_-]+(?:\[\d+\])*(?:\.[A-Za-z0-9_-]+(?:\[\d+\])*)*"
 _STEP_TOKEN_RE = re.compile(
-	r"\$(?:\{(step\d+|prev)(?:\.([A-Za-z0-9_.-]+))?\}|(step\d+|prev)(?:\.([A-Za-z0-9_.-]+))?)"
+	rf"(?:"
+	rf"\$\{{(?P<b_target>step\d+|prev)(?:\.(?P<b_path>{_STEP_PATH_RE}))?\}}"
+	rf"|\$(?P<d_target>step\d+|prev)(?:\.(?P<d_path>{_STEP_PATH_RE}))?(?![A-Za-z0-9_])"
+	rf"|(?<![A-Za-z0-9._%+-])@(?P<a_target>step\d+|prev)(?:\.(?P<a_path>{_STEP_PATH_RE}))?(?![A-Za-z0-9_@-])"
+	rf"|(?<![A-Za-z0-9_.$@-])(?P<r_target>step\d+|prev)\.(?P<r_path>{_STEP_PATH_RE})(?![A-Za-z0-9_@-])"
+	rf")"
 )
 _AT_LAST_RE = re.compile(
-	r"(?<![A-Za-z0-9._%+-])@last(?:\.([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*))?(?![A-Za-z0-9_@-])"
+	rf"(?<![A-Za-z0-9._%+-])@last(?:\.({_STEP_PATH_RE}))?(?![A-Za-z0-9_@-])"
 )
+
+
+def _extract_step_match(m: re.Match[str]) -> tuple[str, Optional[str]]:
+	for prefix in ("b", "d", "a", "r"):
+		target = m.group(f"{prefix}_target")
+		if target is not None:
+			return target, m.group(f"{prefix}_path")
+	return "", None
 
 
 def _traverse_path(obj: Any, path: str) -> tuple[bool, Any]:
 	cur = obj
-	for seg in path.split("."):
+	norm_path = re.sub(r"\[(\d+)\]", r".\1", path).lstrip(".")
+	for seg in norm_path.split("."):
 		if isinstance(cur, dict) and seg in cur:
 			cur = cur[seg]
 		elif isinstance(cur, (list, tuple)):
@@ -392,24 +431,25 @@ def _iter_strings(value: Any):
 
 
 def validate_batch_step_references(items: list[Any], *, is_batch: bool = True) -> None:
-	"""Validate $stepN and $prev reference bounds before staging or executing."""
+	"""Validate @stepN/stepN/$stepN and @prev/prev/$prev reference bounds before staging or executing."""
 	for idx, item in enumerate(items):
 		for text in _iter_strings(item):
+			raise_if_corrupted_step_ref(text)
 			for match in _STEP_TOKEN_RE.finditer(text):
-				target = match.group(1) or match.group(3) or ""
+				target, _ = _extract_step_match(match)
 				if not is_batch:
 					raise ValueError(
-						f"Step reference '${target}' is only supported inside 'batch' commands."
+						f"Step reference '@{target}' is only supported inside 'batch' commands."
 					)
 				if target == "prev":
 					if idx == 0:
-						raise ValueError("Step 0 cannot reference '$prev'.")
+						raise ValueError("Step 0 cannot reference '@prev'.")
 				elif target.startswith("step"):
 					ref_idx = int(target[4:])
 					if ref_idx >= idx:
 						valid = f"0..{idx - 1}" if idx > 0 else "none"
 						raise ValueError(
-							f"Step {idx} cannot reference future/current '$step{ref_idx}' (valid: {valid})."
+							f"Step {idx} cannot reference future/current '@step{ref_idx}' (valid: {valid})."
 						)
 
 
@@ -454,20 +494,18 @@ def _lookup_step_token(
 
 
 def resolve_step_tokens(value: Any, step_idx: int, prior_results: list[dict[str, Any]]) -> Any:
-	"""Recursively resolve $stepN.<field> and $prev.<field> tokens against prior batch outputs."""
+	"""Recursively resolve @stepN/stepN/$stepN and @prev/prev/$prev tokens against prior batch outputs."""
 	if isinstance(value, str):
 		if not _STEP_TOKEN_RE.search(value):
 			return value
 		stripped = value.strip()
 		exact = _STEP_TOKEN_RE.fullmatch(stripped)
 		if exact:
-			target = exact.group(1) or exact.group(3) or ""
-			path = exact.group(2) if exact.group(1) else exact.group(4)
+			target, path = _extract_step_match(exact)
 			return _lookup_step_token(target, path, step_idx, prior_results)
 
 		def _replace(m: re.Match[str]) -> str:
-			target = m.group(1) or m.group(3) or ""
-			path = m.group(2) if m.group(1) else m.group(4)
+			target, path = _extract_step_match(m)
 			return _stringify_resolved_value(_lookup_step_token(target, path, step_idx, prior_results))
 
 		return _STEP_TOKEN_RE.sub(_replace, value)
