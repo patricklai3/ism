@@ -34,6 +34,8 @@ READ_ONLY_COMMANDS = frozenset({
 	"list-docs",
 	"get-doc",
 	"stage-receipt",
+	"board-threads",
+	"board-thread",
 })
 
 _STEP_PATH_RE = r"[A-Za-z0-9_-]+(?:\[\d+\])*(?:\.[A-Za-z0-9_-]+(?:\[\d+\])*)*"
@@ -265,6 +267,17 @@ def _validate_sync_action(
 			missing.append("--snooze-minutes (must be 1..43200)")
 
 
+def _validate_board_target(
+	args: argparse.Namespace,
+	missing: list[str],
+	*,
+	allow_step_refs: bool = False,
+) -> None:
+	del allow_step_refs
+	if _has_value(getattr(args, "thread_key", None)) and _has_value(getattr(args, "repair_order", None)):
+		missing.append("--thread-key/--repair-order (mutually exclusive)")
+
+
 WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	"quote": {
 		"target": "ism.api.agent.create_quote -> Repair Order (Draft Estimate)",
@@ -466,6 +479,23 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 		"target": "REST POST /api/method/<method>",
 		"fields": ("method", "args_json"),
 		"required": (("method", "--method"),),
+	},
+	"board-post": {
+		"target": "ism.api.board.post_board_capture -> Shop Board Event",
+		"fields": ("thread_key", "repair_order", "text", "intent", "idempotency_key"),
+		"required": (("text", "--text"),),
+		"any_of": ((("thread_key", "repair_order"), "--thread-key/--repair-order (one required)"),),
+		"custom": _validate_board_target,
+	},
+	"board-resolve": {
+		"target": "ism.api.board.resolve_board_card -> Shop Board Event",
+		"fields": ("event", "decision", "option", "edited_message", "notes", "idempotency_key"),
+		"required": (("event", "--event"), ("decision", "--decision")),
+	},
+	"board-undo": {
+		"target": "ism.api.board.undo_board_receipt -> Shop Board Event",
+		"fields": ("event", "reason", "idempotency_key"),
+		"required": (("event", "--event"),),
 	},
 }
 
@@ -762,6 +792,15 @@ STAGE_FIELD_HINTS: dict[str, dict[str, Any]] = {
 	"name": {"type": "text", "label": "Document Name"},
 	"method": {"type": "text", "label": "Frappe Method"},
 	"args_json": {"type": "json", "label": "Arguments JSON", "placeholder": "{}"},
+	"thread_key": {"type": "text", "label": "Thread Key", "placeholder": "RO:RO-2026-00011 or SHOP:INTAKE"},
+	"text": {"type": "textarea", "label": "Capture Text", "placeholder": "Message or observation to post"},
+	"intent": {"type": "text", "label": "Intent Tag", "placeholder": "Optional quick-intent tag"},
+	"idempotency_key": {"type": "text", "label": "Idempotency Key"},
+	"event": {"type": "text", "label": "Board Event ID", "placeholder": "BE-..."},
+	"decision": {"type": "select", "label": "Decision", "choices": ["approve", "reject", "clarify"]},
+	"option": {"type": "text", "label": "Selected Option"},
+	"edited_message": {"type": "textarea", "label": "Edited Message"},
+	"reason": {"type": "textarea", "label": "Undo Reason"},
 }
 
 _STAGE_CMD_FIELD_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
