@@ -98,7 +98,7 @@ Every existing file, caller, setting, and test assertion audited prior to planni
 
 1. **Zero `development.localhost:8000` Contact & Isolated Slot Execution:**
    - Never run `sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl`/`docker exec` targeting `frappe-bench` or `development.localhost`.
-   - Execute all Frappe migrations, tests, and live `-Serve` HTTP checks strictly via `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1`.
+   - Execute all Frappe migrations, tests, and live `-Serve` HTTP checks strictly via `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1`.
    - Never fire parallel `test-in-slot.ps1` invocations inside the same worktree; batch comma-separated `-Module` arguments into one call.
 2. **Frappe Cloud Compatibility & Zero Extra Dependencies:**
    - Zero additions to `ism-frappe/pyproject.toml` or `deploy.dependencies.apt`.
@@ -264,7 +264,7 @@ flowchart TD
 > - `ism-frappe/ism/setup_tasks/seed.py`, `ism-frappe/ism/hooks.py`, `ism-frappe/ism/tests/base.py`
 > - `ism-frappe/ism/tests/test_comms_schema_and_contracts.py`
 > **Forbidden files:** Do NOT edit `ism/api/sms.py`, `ism/api/approval.py`, `repair_order/fulfillment.py`, `pyproject.toml`, or any `ISM Settings` section outside `sb_sms_settings` and `sb_otp_and_sessions`.
-> **Hard rules:** Follow `plan_p1_comms_telnyx_otp.md` Section 5 (Wave 1A) verbatim. Zero contact with `development.localhost:8000`; run one batched `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.ism.doctype.ism_settings.test_ism_settings,ism.tests.test_comms_schema_and_contracts"` and `ruff check` on all owned files. Commit cleanly on your share branch.
+> **Hard rules:** Follow `plan_p1_comms_telnyx_otp.md` Section 5 (Wave 1A) verbatim. Zero contact with `development.localhost:8000`; run one batched `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.ism.doctype.ism_settings.test_ism_settings,ism.tests.test_comms_schema_and_contracts"` and `ruff check` on all owned files. Commit cleanly on your share branch.
 > **Done:** Post `@coordinator [done]` with commit SHA, exact frozen contract symbols in `contracts.py`, and test/ruff pass results.
 
 #### Wave 2 — `comms-telnyx`
@@ -702,7 +702,7 @@ Exports the complete frozen public surface (`__all__`) across `contracts`, `prov
 
 1. **Single Batched Frappe Migration + All New & Affected Regression Suites:**
    ```powershell
-   powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.ism.doctype.ism_settings.test_ism_settings,ism.tests.test_comms_schema_and_contracts,ism.tests.test_comms_telnyx_and_webhooks,ism.tests.test_comms_sessions,ism.tests.test_comms_email_dispatch,ism.tests.test_comms_otp,ism.tests.test_comms_caller_wiring,ism.tests.test_approval_and_inspection,ism.tests.test_agent_facade,ism.tests.test_auth_and_roles"
+   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.ism.doctype.ism_settings.test_ism_settings,ism.tests.test_comms_schema_and_contracts,ism.tests.test_comms_telnyx_and_webhooks,ism.tests.test_comms_sessions,ism.tests.test_comms_email_dispatch,ism.tests.test_comms_otp,ism.tests.test_comms_caller_wiring,ism.tests.test_approval_and_inspection,ism.tests.test_agent_facade,ism.tests.test_auth_and_roles"
    ```
 2. **Static Lint Check (Zero Errors Allowed):**
    ```powershell
@@ -710,14 +710,14 @@ Exports the complete frozen public surface (`__all__`) across `contracts`, `prov
    ```
 3. **Live Isolated Bench HTTP Smoke Check (`-Serve`):**
    ```powershell
-   powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Serve start
+   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Serve start
    ```
    Using the leased slot URL reported by `-Serve start` (e.g., `http://wt1.localhost:8001` — NEVER `development.localhost:8000`):
    - **Fail-Closed Webhook Proof:** `POST /api/method/ism.api.comms_webhooks.telnyx_webhook` with missing or forged `telnyx-signature-ed25519` returns HTTP `401` and creates zero `SMS Opt Out` or `SMS Audit Log` mutations.
    - **Valid Signed Webhook Proof:** Configure `Mock (Deterministic Test)` + generated Ed25519 test keypair in the isolated slot, `POST` a signed `message.received` (`"STOP"`) payload -> HTTP `200`, verify `SMS Opt Out` created, `POST` a duplicate `event_id` -> HTTP `200` `duplicate_ignored`.
    - **Stop Preview Server Cleanly:**
      ```powershell
-     powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Serve stop
+     powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Serve stop
      ```
 
 ### Exit KPIs (All Must Be Green Before Cutover)

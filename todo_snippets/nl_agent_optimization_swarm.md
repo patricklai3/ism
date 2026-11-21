@@ -24,7 +24,7 @@ Run a closed-loop simulation and optimization swarm across ISM's 3-layer stratif
 
 1. **Zero `development.localhost:8000` Contact:**
    - Never run `sync-to-wsl.ps1`, `promote-to-main.ps1`, or direct tests against `development.localhost` from worktrees or swarm workers.
-   - Run all simulation seeding, HTTP serving, and Frappe test suites in isolated bench slots via `ism-frappe/scripts/test-in-slot.ps1` (`slot-1`: `eval_standard` on `:8001`; `slot-2`: `swarm_crunch_day` + `verifier` suites on `:8002`; `slot-3`/`slot-4` for parallel `workspace: "share"` authors if needed).
+   - Run all simulation seeding, HTTP serving, and Frappe test suites in isolated bench slots via `scripts/test-in-slot.ps1` (`slot-1`: `eval_standard` on `:8001`; `slot-2`: `swarm_crunch_day` + `verifier` suites on `:8002`; `slot-3`/`slot-4` for parallel `workspace: "share"` authors if needed).
 2. **Safe `.env` Isolation & Cleanup:**
    - Always bootstrap via `python scripts/eval_nl_loop.py bootstrap-slot --slot <N> --profile <PROFILE> --activate-dotenv --manifest-out scripts/eval_results/<profile>_manifest.json`, which backs up `ism-agent-os/.env` to `.ism_staged/env.slot_backup`.
    - Always finish rounds with `teardown-slot --slot <N> --restore-dotenv`.
@@ -88,7 +88,7 @@ Run a closed-loop simulation and optimization swarm across ISM's 3-layer stratif
 ## Phase 2: Swarm v3 Execution Checklist (Next `/swarm` Session)
 
 - [x] **2.1 Baseline Gate (`verifier` on `slot-3`, parallel with `eval-runner` setup)**
-  - Run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Slot 3 -Module ism.tests.test_simulation_framework,ism.tests.test_agent_facade` (or full app suite).
+  - Run `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Slot 3 -Module ism.tests.test_simulation_framework,ism.tests.test_agent_facade` (or full app suite).
   - Run `python -m unittest discover -s ism-agent-os/tests -t ism-agent-os -v`.
   - Run `python ism-agent-os/scripts/sim_runner.py --seed-range 1..10 --slot 3 --json --strict`.
 - [x] **2.2 Round 0 Baseline (`eval-runner` -> `trace-reviewer`)**

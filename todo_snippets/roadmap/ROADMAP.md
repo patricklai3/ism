@@ -125,7 +125,7 @@ All product, security, and architectural decisions below are **locked** across T
 - **Zero Node Build Step:** All frontend surfaces (`/portal`, `/quote-approval`, `/book`, `/board`, `/cockpit`) ship as Frappe `www/` / `templates/pages/` controllers with vanilla ES modules and CSS under `ism-frappe/ism/public/` — no Webpack, Vite, or npm build pipeline.
 - **Zero Extra `pyproject.toml` Dependencies:** All external integrations (Telnyx v2, Square v2, Google Drive API, Gemini REST API, Ed25519/HMAC webhook validation, Fernet PIN encryption) use pure HTTPS `requests` and Frappe-bundled `cryptography` — zero new packages added to `ism-frappe/pyproject.toml`.
 - **Hermetic Offline Testability:** Telnyx (P1), Square (P2), and Multimodal AI / Drive fallback (P6) each ship with first-class `"Mock (Deterministic Test)"` adapters so all automated and live `-Serve` browser checks execute offline with zero carrier charges or network flakiness.
-- **Zero Canonical Bench Contact:** No worktree or swarm worker ever touches canonical `development.localhost:8000` (`sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl`/`docker exec` targeting `frappe-bench`). All migrations, tests, and previews run exclusively via `ism-frappe\scripts\test-in-slot.ps1`.
+- **Zero Canonical Bench Contact:** No worktree or swarm worker ever touches canonical `development.localhost:8000` (`sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl`/`docker exec` targeting `frappe-bench`). All migrations, tests, and previews run exclusively via `scripts\test-in-slot.ps1`.
 - **Explicit Non-Goals:**
   - No customer username/password accounts or email OTP fallback.
   - No Twilio SMS integration.
@@ -280,10 +280,10 @@ Follow this standardized runbook whenever executing any `plan_p*.md` file via An
 7. **Isolated Bench Testing (`test-in-slot.ps1`) & Guardrails:**
    - Run all migrations, tests, and live `-Serve` browser walkthroughs exclusively via:
      ```powershell
-     powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "<comma,separated,suites>"
+     powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "<comma,separated,suites>"
      ```
    - Never fire parallel `test-in-slot.ps1` calls inside the same worktree; batch all required new and regression suites into a single comma-separated invocation.
-   - Use `-Serve start` and `-Serve stop` exclusively against the leased isolated slot URL (`http://wt1..wt5.localhost:8001..8005`). Inspect slot health via `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\provision-bench-slots.ps1 -Status -History 10`.
+   - Use `-Serve start` and `-Serve stop` exclusively against the leased isolated slot URL (`http://wt1..wt5.localhost:8001..8005`). Inspect slot health via `powershell -ExecutionPolicy Bypass -File scripts\provision-bench-slots.ps1 -Status -History 10`.
    - **Zero `development.localhost:8000` contact:** Never invoke `sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl` / `docker exec` targeting canonical `frappe-bench` from any worktree or swarm worker (enforced by `.agents/scripts/enforce_bench_isolation.py`).
 
 ---
@@ -314,6 +314,6 @@ Follow this standardized runbook whenever executing any `plan_p*.md` file via An
 - [ ] Run a combined cross-track batched regression pass via `test-in-slot.ps1` covering all new suites and core ISM regression suites.
 - [ ] Execute canonical bench cutover strictly from `D:\ism` on `main` via:
   ```powershell
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\promote-to-main.ps1
+  powershell -ExecutionPolicy Bypass -File scripts\promote-to-main.ps1
   ```
 - [ ] Verify live site health, configure production `ISM Settings` credentials (Telnyx API key & Ed25519 public key, Square Production credentials & `CAD` Square Bank Account, Google Drive OAuth2/SA credentials, `enable_self_serve_booking` when ready), and archive completed milestone items.

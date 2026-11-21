@@ -40,18 +40,24 @@ $DefaultDestination = if ($env:ISM_WSL_DEST) { $env:ISM_WSL_DEST } else { $Prima
 $WslDestination = if ($Destination) { $Destination } else { $DefaultDestination }
 if (-not $WslDestination.EndsWith("/")) { $WslDestination += "/" }
 
-$RepoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
-$LocalSource = if ($Source) { (Get-Item $Source).FullName } else { (Get-Item "$PSScriptRoot\..").FullName }
+$RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
+$CandidateSource = if ($Source) { $Source } else { Join-Path $RepoRoot "ism-frappe" }
 
 if (($WslDestination -eq $PrimaryBenchDest) -and (-not $AllowWorktreeOnMain) -and ($env:ISM_ALLOW_WORKTREE_MAIN -ne "1")) {
-    foreach ($CheckTarget in @($RepoRoot, $LocalSource)) {
+    $CheckTargets = @($RepoRoot)
+    if ($Source -or (Test-Path $CandidateSource)) {
+        $CheckTargets += $CandidateSource
+    }
+    foreach ($CheckTarget in $CheckTargets) {
         $Ok, $Why = Test-PrimaryTrunkCheckout -CheckPath $CheckTarget
         if (-not $Ok) {
-            Write-Error "Refusing to sync to primary bench '$PrimaryBenchDest' ($Why). Run ism-frappe\scripts\test-in-slot.ps1 for isolated slot testing, or pass -AllowWorktreeOnMain outside agent sessions."
+            Write-Error "Refusing to sync to primary bench '$PrimaryBenchDest' ($Why). Run scripts\test-in-slot.ps1 for isolated slot testing, or pass -AllowWorktreeOnMain outside agent sessions."
             exit 1
         }
     }
 }
+
+$LocalSource = (Get-Item $CandidateSource).FullName
 
 $NormalizedSource = $LocalSource.Replace('\', '/')
 $WindowsSource = (wsl -d $TargetDistro wslpath -u "$NormalizedSource").Trim() + "/"

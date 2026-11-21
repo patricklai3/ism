@@ -118,7 +118,7 @@ Direct audit of `ism-frappe` anchor files reveals exact integration invariants a
 
 1. **Zero `development.localhost:8000` Contact & Bench Slot Isolation:**
    - Never run `sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl` / `docker exec` commands targeting `frappe-bench` or `development.localhost` from any worktree or swarm worker.
-   - Execute all Frappe migrations, tests, and live `-Serve` verification strictly via `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1`.
+   - Execute all Frappe migrations, tests, and live `-Serve` verification strictly via `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1`.
    - Never run parallel `test-in-slot.ps1` calls inside the same worktree; batch comma-separated `-Module` flags into a single call per worktree.
 
 2. **Strict PCI-DSS Tokenization Scope & Secret Isolation:**
@@ -283,31 +283,31 @@ flowchart TD
 > **Assignment:** Implement Wave 1 of `todo_snippets/roadmap/plan_p2_payments_square_erpnext.md` (Section 5, Wave 1).
 > **Owned Files:** `[NEW] ism-frappe/ism/payments/__init__.py`, `[NEW] ism-frappe/ism/payments/contracts.py`, `[NEW] ism-frappe/ism/ism/doctype/ism_payment_transaction/{__init__.py,ism_payment_transaction.json,ism_payment_transaction.py}`, `[MODIFY] ism-frappe/ism/ism/doctype/ism_settings/{ism_settings.json,ism_settings.py}`, `[MODIFY] ism-frappe/ism/ism/doctype/repair_order/repair_order.json`, `[MODIFY] ism-frappe/ism/setup_tasks/seed.py`, `[MODIFY] ism-frappe/ism/tests/{base.py,cleanup.py}`, `[NEW] ism-frappe/ism/tests/test_payments_schema_and_requests.py`.
 > **Forbidden Files:** Do NOT touch `billing.py`, `hooks.py`, `taxes.py`, `shop_action_item.*`, `repair_order.js`, `pyproject.toml`, or any non-`sb_square_payments` section of `ism_settings.json`. Never run commands targeting `development.localhost:8000`.
-> **Done Looks Like:** All Section 5 Wave 1 schemas, CAD Decimal helpers, Square Bank Account + `Square` Mode of Payment seeding, and teardown hooks are implemented; `ruff check` passes with 0 errors; `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_schema_and_requests"` passes 100%. Post `@coordinator [done]` with commit hash, changed files, and test output.
+> **Done Looks Like:** All Section 5 Wave 1 schemas, CAD Decimal helpers, Square Bank Account + `Square` Mode of Payment seeding, and teardown hooks are implemented; `ruff check` passes with 0 errors; `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_schema_and_requests"` passes 100%. Post `@coordinator [done]` with commit hash, changed files, and test output.
 
 #### Brief Template — Wave 2A: `pay-square-client`
 > **Assignment:** Implement Wave 2A of `todo_snippets/roadmap/plan_p2_payments_square_erpnext.md` (Section 5, Wave 2A) against frozen `ism/payments/contracts.py`.
 > **Owned Files:** `[NEW] ism-frappe/ism/payments/square_client.py`, `[NEW] ism-frappe/ism/payments/webhooks.py`, `[NEW] ism-frappe/ism/tests/test_payments_square_client.py`.
 > **Forbidden Files:** Do NOT modify `contracts.py`, `erpnext_bridge.py`, `deposit_requests.py`, `repair_order.js`, `api/payments.py`, `pyproject.toml`, or any DocType JSON. Never touch `development.localhost:8000`.
-> **Done Looks Like:** Pure `requests` Square Payments API v2 client (`create_payment`, `get_payment`), secret-free `get_sdk_boot_config()`, deterministic `MockSquareClient` covering all 5 mock tokens, constant-time HMAC-SHA256 webhook verifier over `notification_url_bytes + raw_body_bytes`, and event normalizer pass `ruff check` and `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_square_client"`. Post `@coordinator [done]` with commit hash and test summary.
+> **Done Looks Like:** Pure `requests` Square Payments API v2 client (`create_payment`, `get_payment`), secret-free `get_sdk_boot_config()`, deterministic `MockSquareClient` covering all 5 mock tokens, constant-time HMAC-SHA256 webhook verifier over `notification_url_bytes + raw_body_bytes`, and event normalizer pass `ruff check` and `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_square_client"`. Post `@coordinator [done]` with commit hash and test summary.
 
 #### Brief Template — Wave 2B: `pay-erpnext-bridge`
 > **Assignment:** Implement Wave 2B of `todo_snippets/roadmap/plan_p2_payments_square_erpnext.md` (Section 5, Wave 2B) against frozen `ism/payments/contracts.py`. Import `square_client` and `webhooks` by their frozen Section 5 function signatures (or accept injectable client for unit isolation).
 > **Owned Files:** `[NEW] ism-frappe/ism/payments/erpnext_bridge.py`, `[NEW] ism-frappe/ism/tests/test_payments_erpnext_bridge.py`.
 > **Forbidden Files:** Do NOT modify `billing.py`, `hooks.py`, `contracts.py`, `square_client.py`, `webhooks.py`, `deposit_requests.py`, `shop_action_item.*`, or `api/payments.py`. Never touch `development.localhost:8000`.
-> **Done Looks Like:** Strict CAD + Square Bank Account resolution (zero Cash fallback), pre-HTTP `Initiated` commit with `reference_id=tx.name`, canonical `FOR UPDATE` lock order (`ISM Payment Transaction` -> `Repair Order` -> `Sales Invoice`), Guest-safe `Payment Entry` posting (`[RO:<name>] [SQ:<id>]` advance & SI allocation), sync-vs-webhook race idempotency, webhook `event_id` dedup, and refund/void/exception Seam 5 `Shop Action Item` emission without cancelling submitted accounting docs. Verify with `ruff check` and `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_erpnext_bridge,ism.tests.test_billing_and_deposits"`. Post `@coordinator [done]` with commit hash and test summary.
+> **Done Looks Like:** Strict CAD + Square Bank Account resolution (zero Cash fallback), pre-HTTP `Initiated` commit with `reference_id=tx.name`, canonical `FOR UPDATE` lock order (`ISM Payment Transaction` -> `Repair Order` -> `Sales Invoice`), Guest-safe `Payment Entry` posting (`[RO:<name>] [SQ:<id>]` advance & SI allocation), sync-vs-webhook race idempotency, webhook `event_id` dedup, and refund/void/exception Seam 5 `Shop Action Item` emission without cancelling submitted accounting docs. Verify with `ruff check` and `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_erpnext_bridge,ism.tests.test_billing_and_deposits"`. Post `@coordinator [done]` with commit hash and test summary.
 
 #### Brief Template — Wave 2C: `pay-deposit-desk`
 > **Assignment:** Implement Wave 2C of `todo_snippets/roadmap/plan_p2_payments_square_erpnext.md` (Section 5, Wave 2C) against frozen `ism/payments/contracts.py`.
 > **Owned Files:** `[NEW] ism-frappe/ism/payments/deposit_requests.py`, `[MODIFY] ism-frappe/ism/ism/doctype/repair_order/repair_order.js`, `[NEW] ism-frappe/ism/tests/test_payments_deposit_requests.py`.
 > **Forbidden Files:** Do NOT modify `contracts.py`, `repair_order.json`, `square_client.py`, `erpnext_bridge.py`, `api/payments.py`, or the `Navigation` button group in `repair_order.js`. Never touch `development.localhost:8000`.
-> **Done Looks Like:** Manual deposit request creation/cancellation with RBAC (`ISM Manager`/`ISM Service Advisor`/`System Manager` only), in-flight charge lock check, `get_ro_payment_state(ro_name)` canonical summary builder, `list_ro_payment_transactions(ro_name)`, and Desk `Billing` group actions pass `ruff check` and `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_deposit_requests"`. Post `@coordinator [done]` with commit hash and test summary.
+> **Done Looks Like:** Manual deposit request creation/cancellation with RBAC (`ISM Manager`/`ISM Service Advisor`/`System Manager` only), in-flight charge lock check, `get_ro_payment_state(ro_name)` canonical summary builder, `list_ro_payment_transactions(ro_name)`, and Desk `Billing` group actions pass `ruff check` and `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_deposit_requests"`. Post `@coordinator [done]` with commit hash and test summary.
 
 #### Brief Template — Wave 3A: `pay-api-wire`
 > **Assignment:** Implement Wave 3A of `todo_snippets/roadmap/plan_p2_payments_square_erpnext.md` (Section 5, Wave 3) on top of merged `M2`.
 > **Owned Files:** `[NEW] ism-frappe/ism/api/payments.py`, `[MODIFY] ism-frappe/ism/payments/__init__.py`, `[NEW] ism-frappe/ism/tests/test_payments_api_e2e.py`.
 > **Forbidden Files:** Do NOT modify `billing.py`, `hooks.py`, `ism_settings.json`, or `repair_order.json`. Never touch `development.localhost:8000`.
-> **Done Looks Like:** All whitelisted endpoints (`request_ro_deposit`, `cancel_ro_deposit_request`, `get_ro_payment_ledger`, `get_square_sdk_boot_config`, `get_ro_payment_summary`, `submit_square_payment`, `square_webhook`), PCI raw-card field rejection, Redis guest rate limits, approval-token + staff auth verification, raw-body HMAC HTTP status codes (`401`/`400`/`200`), and package re-exports pass `ruff check` and `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_api_e2e"`. Post `@coordinator [done]` with commit hash and test summary.
+> **Done Looks Like:** All whitelisted endpoints (`request_ro_deposit`, `cancel_ro_deposit_request`, `get_ro_payment_ledger`, `get_square_sdk_boot_config`, `get_ro_payment_summary`, `submit_square_payment`, `square_webhook`), PCI raw-card field rejection, Redis guest rate limits, approval-token + staff auth verification, raw-body HMAC HTTP status codes (`401`/`400`/`200`), and package re-exports pass `ruff check` and `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_api_e2e"`. Post `@coordinator [done]` with commit hash and test summary.
 
 #### Brief Template — Wave 3B: `verifier-deposit`
 > **Assignment:** Read-only cross-family verification (`gemini-4-neon-high`) of Wave 2C (`pay-deposit-desk`) after `M2`.
@@ -824,7 +824,7 @@ Re-exports the frozen public Python contract facade for Project 4 and other ISM 
 #### 1. Batched Frappe Migration + All New & Regression Suites (Single Slot Invocation)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_schema_and_requests,ism.tests.test_payments_square_client,ism.tests.test_payments_erpnext_bridge,ism.tests.test_payments_deposit_requests,ism.tests.test_payments_api_e2e,ism.tests.test_billing_and_deposits,ism.tests.test_auth_and_roles,ism.tests.test_approval_and_inspection,ism.tests.test_agent_facade,ism.tests.test_pricing_and_discounts"
+powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_payments_schema_and_requests,ism.tests.test_payments_square_client,ism.tests.test_payments_erpnext_bridge,ism.tests.test_payments_deposit_requests,ism.tests.test_payments_api_e2e,ism.tests.test_billing_and_deposits,ism.tests.test_auth_and_roles,ism.tests.test_approval_and_inspection,ism.tests.test_agent_facade,ism.tests.test_pricing_and_discounts"
 ```
 
 **Mandatory Automated Test Coverage Inside the 5 New Suites:**
@@ -853,7 +853,7 @@ ruff check ism-frappe/ism/payments ism-frappe/ism/api/payments.py ism-frappe/ism
 #### 3. Live Isolated Bench Smoke Verification (`-Serve`)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Serve start
+powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Serve start
 ```
 
 Verify against the leased isolated slot URL (e.g., `http://wt<N>.localhost:800<N>`) with `ISM Settings.square_environment = "Mock (Deterministic Test)"`:
@@ -865,7 +865,7 @@ Verify against the leased isolated slot URL (e.g., `http://wt<N>.localhost:800<N
 6. Stop the isolated server cleanly:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Serve stop
+powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Serve stop
 ```
 
 ### Exit KPIs (All Must Be Green Before Cutover)

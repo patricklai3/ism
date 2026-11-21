@@ -35,7 +35,7 @@ function Test-PrimaryTrunkCheckout {
 
 $IsMutating = ($RefreshGolden -or $Recreate -or (-not $Status -and $History -le 0))
 if ($IsMutating) {
-    $RepoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
+    $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
     $Ok, $Why = Test-PrimaryTrunkCheckout -CheckPath $RepoRoot
     if (-not $Ok) {
         Write-Error "Refusing mutating bench slot provisioning outside primary trunk ($Why). Only -Status and -History are allowed from worktrees."

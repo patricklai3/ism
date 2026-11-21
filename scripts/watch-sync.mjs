@@ -1,12 +1,12 @@
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { exec, execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DISTRO = process.env.ISM_WSL_DISTRO || "Ubuntu";
-const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/[/\\]+$/, "");
-const GIT_ROOT_CANDIDATE = path.resolve(REPO_ROOT, "..");
-const WATCH_DIR = process.env.ISM_WATCH_DIR || REPO_ROOT;
+const GIT_ROOT_CANDIDATE = fileURLToPath(new URL("..", import.meta.url)).replace(/[/\\]+$/, "");
+const ISM_FRAPPE_DIR = path.join(GIT_ROOT_CANDIDATE, "ism-frappe");
+const WATCH_DIR = process.env.ISM_WATCH_DIR || ISM_FRAPPE_DIR;
 const DEBOUNCE_MS = 250;
 const IGNORE_REGEX = /([\\/](\.git|node_modules|__pycache__|\.pytest_cache|\.venv|\.idea|\.vscode)([\\/]|$))|(\.(tmp|swp|lock)$)/;
 
@@ -44,11 +44,15 @@ function assertPrimaryTrunkCheckout(checkPath) {
 }
 
 if (wslDest === defaultDest && process.env.ISM_ALLOW_WORKTREE_MAIN !== "1") {
-  for (const checkTarget of [GIT_ROOT_CANDIDATE, WATCH_DIR]) {
+  const checkTargets = [GIT_ROOT_CANDIDATE];
+  if (process.env.ISM_WATCH_DIR || existsSync(WATCH_DIR)) {
+    checkTargets.push(WATCH_DIR);
+  }
+  for (const checkTarget of checkTargets) {
     try {
       assertPrimaryTrunkCheckout(checkTarget);
     } catch (err) {
-      console.error(`\x1b[31mRefusing to start watch-sync targeting primary bench '${defaultDest}' (${err.message}). Run ism-frappe/scripts/test-in-slot.ps1 for isolated slot testing.\x1b[0m`);
+      console.error(`\x1b[31mRefusing to start watch-sync targeting primary bench '${defaultDest}' (${err.message}). Run scripts/test-in-slot.ps1 for isolated slot testing.\x1b[0m`);
       process.exit(1);
     }
   }

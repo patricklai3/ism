@@ -133,7 +133,7 @@ To guarantee that Track B (Project 6) and Track A (Projects 1–5) can ship in *
 
 1. **Zero `development.localhost:8000` Contact:**
    - Never run `sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl`/`docker exec` commands targeting `frappe-bench` or `development.localhost` from worktrees or swarm workers.
-   - Run all migrations, tests, and live previews strictly via `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1` (leases isolated `slot-1`..`slot-5`, ports `8001`–`8005`, Redis `/1`–`/5`).
+   - Run all migrations, tests, and live previews strictly via `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1` (leases isolated `slot-1`..`slot-5`, ports `8001`–`8005`, Redis `/1`–`/5`).
    - Never fire parallel `test-in-slot.ps1` calls inside the same worktree; batch comma-separated `-Module` lists into a single call per worktree.
 2. **Frappe Cloud Compatibility & Zero Extra Heavy Dependencies:**
    - Use pure HTTPS `requests` and Frappe-bundled `cryptography` for Google Drive and Gemini REST calls — zero new packages added to `ism-frappe/pyproject.toml`.
@@ -307,7 +307,7 @@ flowchart TD
 Each brief below is self-contained (matching `native_swarm/SKILL.md`: every worker starts fresh, sees only its brief and referenced `#seq` posts, commits in its own `share` workspace, and never touches `development.localhost:8000`):
 
 - **Wave 1 — `board-schema` (`workspace:"share"`):**
-  > Read `todo_snippets/roadmap/plan_p6_shop_os_frontend.md` (Sections 2.2, 3, and 5 Wave 1A). You own ONLY: `ism-frappe/ism/board/{__init__.py,contracts.py,projections.py}`, `ism-frappe/ism/ism/doctype/shop_board_thread/*`, `ism-frappe/ism/ism/doctype/shop_board_event/*`, `ism-frappe/ism/ism/doctype/ism_settings/ism_settings.json` (disjoint sections `sb_media_storage`, `sb_board_ai`, `sb_parts_pricing` ONLY — leave `sb_pricing` and Track A sections untouched), `ism-frappe/ism/setup_tasks/seed.py`, `ism-frappe/ism/hooks.py` (routes + `Repair Order`, `Schedule Entry`, and Seam 5 `Shop Action Item` soft listener), `ism-frappe/ism/tests/base.py`, and `ism-frappe/ism/tests/test_board_schema_and_projections.py`. Do NOT touch `media_storage.py`, `pricing.py`, `cockpit_view.py`, or `development.localhost`. Run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_board_schema_and_projections"` + `ruff check`, commit in your workspace, and post `@coordinator [done]` listing all frozen symbols in `contracts.py` and `projections.py` so Wave 2 can cite `#seq`.
+  > Read `todo_snippets/roadmap/plan_p6_shop_os_frontend.md` (Sections 2.2, 3, and 5 Wave 1A). You own ONLY: `ism-frappe/ism/board/{__init__.py,contracts.py,projections.py}`, `ism-frappe/ism/ism/doctype/shop_board_thread/*`, `ism-frappe/ism/ism/doctype/shop_board_event/*`, `ism-frappe/ism/ism/doctype/ism_settings/ism_settings.json` (disjoint sections `sb_media_storage`, `sb_board_ai`, `sb_parts_pricing` ONLY — leave `sb_pricing` and Track A sections untouched), `ism-frappe/ism/setup_tasks/seed.py`, `ism-frappe/ism/hooks.py` (routes + `Repair Order`, `Schedule Entry`, and Seam 5 `Shop Action Item` soft listener), `ism-frappe/ism/tests/base.py`, and `ism-frappe/ism/tests/test_board_schema_and_projections.py`. Do NOT touch `media_storage.py`, `pricing.py`, `cockpit_view.py`, or `development.localhost`. Run `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_board_schema_and_projections"` + `ruff check`, commit in your workspace, and post `@coordinator [done]` listing all frozen symbols in `contracts.py` and `projections.py` so Wave 2 can cite `#seq`.
 
 - **Wave 1 — `media-gdrive` (`workspace:"share"`):**
   > Read `todo_snippets/roadmap/plan_p6_shop_os_frontend.md` (Sections 3 and 5 Wave 1B). You own ONLY: `ism-frappe/ism/board/media_storage.py` and `ism-frappe/ism/tests/test_board_media_storage.py`. Implement MIME + magic-byte validation, SHA-256 + opaque `file_ref`, pure-HTTPS `GoogleDriveStorageBackend` (OAuth2 Refresh Token default + Service Account RS256 JWT optional, Redis token/folder cache, zero local disk writes, HTTP `Range` passthrough), `FrappePrivateFileBackend` fallback, and `test_google_drive_connection()`. Do NOT add packages to `pyproject.toml`, touch `ism_settings.json` (read fields defensively via `getattr`), or touch `development.localhost`. Run `test-in-slot.ps1 -Module "ism.tests.test_board_media_storage"` + `ruff check`, commit in your workspace, and post `@coordinator [done]` with exported function signatures for Wave 2.
@@ -674,7 +674,7 @@ Unittest coverage for all 5 client methods, CLI argument parsing (`--thread-key`
 ### 6.2 Wave 4 Full-Stack Gate (`verifier-frappe`, `gemini-4-carbon-high`)
 1. **Batched Frappe Migration + New & Regression Suites (single slot invocation — never parallel inside the same worktree):**
    ```powershell
-   powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_board_schema_and_projections,ism.tests.test_board_media_storage,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_auth_and_roles,ism.tests.test_approval_and_inspection,ism.tests.test_billing_and_deposits,ism.tests.test_ro_scheduling_e2e,ism.tests.test_monitoring_cockpit,ism.tests.test_parts_management,ism.tests.test_pricing_and_discounts"
+   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_board_schema_and_projections,ism.tests.test_board_media_storage,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_auth_and_roles,ism.tests.test_approval_and_inspection,ism.tests.test_billing_and_deposits,ism.tests.test_ro_scheduling_e2e,ism.tests.test_monitoring_cockpit,ism.tests.test_parts_management,ism.tests.test_pricing_and_discounts"
    ```
 2. **Static Lint Checks:**
    ```powershell
@@ -683,7 +683,7 @@ Unittest coverage for all 5 client methods, CLI argument parsing (`--thread-key`
    *(Plus ESLint check on `ism-frappe/ism/public/board/*.js`, `ism-frappe/ism/public/cockpit/*.js`, and `repair_order.js` if installed.)*
 3. **Live Isolated Bench Browser Smoke Verification (`-Serve`):**
    ```powershell
-   powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Serve start
+   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Serve start
    ```
    Verify with `ISM Settings` -> `board_ai_provider = Mock (Deterministic Test)` (capturing full-window screenshots under `<appData>/brain/<conversation-id>/` and flagging them via `Screenshot: <absolute path> | <summary>` for the Swarm UI timeline):
    - **Mobile Technician (`390x844`, `/board`):** Glove-friendly PTT + camera buttons, zero horizontal overflow, silent VIN/Bay/Tech badge, ambiguous finding -> 1-tap `CLARIFICATION_CARD` `[Front Left]` -> `AI_RECEIPT` with working `[Undo]`, `APPROVAL_GATE` rendered read-only, attempting `/cockpit` redirects to `/board`, Seam 6 PIN pill stays cleanly hidden when P4 is absent (or displays masked tap-to-reveal with 15s auto-mask if P4 is present).
@@ -694,7 +694,7 @@ Unittest coverage for all 5 client methods, CLI argument parsing (`--thread-key`
      - `#Receiving-AP` (`SHOP:AP_RECEIVING`): vendor invoice/packing slip capture -> 1-tap `[Receive PO & Post Bill]` verification card -> creates `Purchase Receipt` / `Purchase Invoice`.
    - Stop preview server cleanly:
      ```powershell
-     powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Serve stop
+     powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Serve stop
      ```
 
 ### 6.3 Exit KPIs (All Must Be Green Before Cutover)

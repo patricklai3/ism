@@ -7,7 +7,7 @@ param (
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
+$RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 
 $DirtyIsmFrappe = git -C $RepoRoot status --porcelain -- ism-frappe
 if ($LASTEXITCODE -ne 0) {

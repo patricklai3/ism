@@ -124,7 +124,7 @@ Every design choice in this plan is grounded in an audit of the live `ism-frappe
 
 1. **Zero `development.localhost:8000` Contact (Strict Bench Isolation):**
    - Never run `sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl` / `docker exec` commands targeting `frappe-bench` or `development.localhost` from any worktree or swarm worker.
-   - Execute all Frappe migrations and test suites strictly via `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1`.
+   - Execute all Frappe migrations and test suites strictly via `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1`.
    - Never run parallel `test-in-slot.ps1` calls inside the same worktree; batch comma-separated `-Module` arguments into a single invocation.
 2. **Frappe Cloud & Zero-Dependency Discipline:**
    - Pure Python standard library (`datetime`, `json`, `math`, `re`) + Frappe ORM / `frappe.qb`. Zero additions to `ism-frappe/pyproject.toml`.
@@ -259,7 +259,7 @@ flowchart TD
 >
 > **Requirements:** Implement Section 5 (Wave 1A) of `todo_snippets/roadmap/plan_p3_scheduling_offset_catalog.md`: add `sb_customer_scheduling_policy` to `ISM Settings`, seed zero-capable numeric defaults via `_ISM_SETTINGS_NONE_DEFAULTS` in `seed.py`, extend `DEFAULT_SHOP_SETTINGS` & `get_shop_settings()` in `time_utils.py`, and implement `arrival_policy.py` with the exact exported signatures and opening-slot `08:00 -> 07:45` uniform offset invariant (zero buffer/leeway wording, public slot sanitizer stripping bay/tech/internal fields).
 >
-> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_arrival_offset_policy,ism.ism.doctype.ism_settings.test_ism_settings"`. Commit on your share branch and post `@coordinator [done]` with test results and exact exported signatures.
+> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_arrival_offset_policy,ism.ism.doctype.ism_settings.test_ism_settings"`. Commit on your share branch and post `@coordinator [done]` with test results and exact exported signatures.
 
 #### Brief Template — `catalog-curation` (Wave 1, `workspace:"share"`)
 > You own ONLY these files:
@@ -273,7 +273,7 @@ flowchart TD
 >
 > **Requirements:** Implement Section 5 (Wave 1B) of `todo_snippets/roadmap/plan_p3_scheduling_offset_catalog.md`: add section `sb_self_serve_catalog` to `Service Package`, enforce field validation in `ServicePackage.validate()` and form UX toggles in `service_package.js`, and implement `bookable_catalog.py` (`list_bookable_packages`, `compute_packages_booking_requirements`, model + year filtering with `applicable_generation` fallback, customer-safe price display formatting, and Fenton-Wilkinson duration estimation via `ism.scheduling.estimation_light`). Ensure zero leakage of `correction_code`, `hourly_rate`, `tesla_manual_url`, `doc_guid`, or internal part codes/costs.
 >
-> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_bookable_catalog"`. Commit on your share branch and post `@coordinator [done]` with test results and exact exported signatures.
+> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_bookable_catalog"`. Commit on your share branch and post `@coordinator [done]` with test results and exact exported signatures.
 
 #### Brief Template — `self-serve-engine` (Wave 2, `workspace:"share"`, after `M1`)
 > Wave 1 (`offset-policy` `#<seq1>`, `catalog-curation` `#<seq2>`) is merged on your base branch. You own ONLY these files:
@@ -290,7 +290,7 @@ flowchart TD
 >
 > **Requirements:** Implement Section 5 (Wave 2) of `todo_snippets/roadmap/plan_p3_scheduling_offset_catalog.md`: extend `Schedule Entry`, wire optional `exclude_entry` through `ShopCapacityWindow` and `_SlotSearchContext`, implement `self_serve.py` (reschedule eligibility, hard RO + SE lifecycle locks, cutoff window vs. customer arrival time, `FOR UPDATE` + `SAVEPOINT` atomic slot swap matching `ScheduleEntry` lock order, provisional intake normalization, provisional booking commit, and Seam 5 `Shop Action Item` + `ism_scheduling_domain_event` / hook emission), and implement `ism/api/self_serve_scheduling.py` with strict guest-vs-authenticated permission boundaries.
 >
-> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_self_serve_scheduling,ism.tests.test_scheduling_capacity,ism.tests.test_ro_scheduling_e2e"`. Commit on your share branch and post `@coordinator [done]` with test results and exported contracts.
+> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_self_serve_scheduling,ism.tests.test_scheduling_capacity,ism.tests.test_ro_scheduling_e2e"`. Commit on your share branch and post `@coordinator [done]` with test results and exported contracts.
 
 #### Brief Template — `verifier-sched` (Wave 3, `workspace:"inherit"`, after `M2`)
 > Wave 2 (`self-serve-engine` `#<seq3>`) is merged onto the integration branch. You are the read-only cross-family verification gate. Do NOT modify application code; if you find defects, post exact file:line findings to the owning author (`@offset-policy`, `@catalog-curation`, or `@self-serve-engine`) or `@coordinator`.
@@ -796,7 +796,7 @@ Comprehensive `ISMTestCase` boundary, lifecycle, concurrency, and security suite
 
 1. **Batched Frappe Migration + All New & Scheduling Regression Suites (single isolated slot invocation):**
    ```powershell
-   powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_arrival_offset_policy,ism.tests.test_bookable_catalog,ism.tests.test_self_serve_scheduling,ism.tests.test_scheduling_capacity,ism.tests.test_ro_scheduling_e2e,ism.tests.test_estimation_math,ism.ism.doctype.schedule_entry.test_schedule_entry,ism.ism.doctype.ism_settings.test_ism_settings"
+   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_arrival_offset_policy,ism.tests.test_bookable_catalog,ism.tests.test_self_serve_scheduling,ism.tests.test_scheduling_capacity,ism.tests.test_ro_scheduling_e2e,ism.tests.test_estimation_math,ism.ism.doctype.schedule_entry.test_schedule_entry,ism.ism.doctype.ism_settings.test_ism_settings"
    ```
 2. **Static Lint Check (`ruff`):**
    ```powershell
@@ -805,7 +805,7 @@ Comprehensive `ISMTestCase` boundary, lifecycle, concurrency, and security suite
 3. **Contract & Isolation Audit (Read-Only Checks):**
    - Confirm `git diff --name-only` contains **zero** edits to `ism/api/scheduling.py`, `ism/api/scheduling_views.py`, `ism/hooks.py`, `ism/ism/doctype/shop_action_item/*`, or non-P3 `ISM Settings` sections.
    - Verify no customer-facing string in `arrival_policy.py`, `bookable_catalog.py`, `self_serve.py`, or `api/self_serve_scheduling.py` contains `"buffer"`, `"leeway"`, `"grace period"`, or `"arrive early"`.
-   - Confirm slot telemetry via `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\provision-bench-slots.ps1 -Status -History 5` shows zero canonical bench contact.
+   - Confirm slot telemetry via `powershell -ExecutionPolicy Bypass -File scripts\provision-bench-slots.ps1 -Status -History 5` shows zero canonical bench contact.
 
 ### Exit KPIs (All Must Be Green Before Cutover to Projects 4 & 5)
 

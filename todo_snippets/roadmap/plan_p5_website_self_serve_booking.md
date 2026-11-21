@@ -117,7 +117,7 @@ Every architectural decision below is grounded in direct inspection of live `ism
 
 1. **Zero `development.localhost:8000` Contact (Strict Bench Isolation):**
    - Never run `sync-to-wsl.ps1`, `watch-sync.*`, `promote-to-main.ps1`, or raw `wsl`/`docker exec` targeting `frappe-bench` or `development.localhost`.
-   - Execute all migrations, unit/integration suites, and live `-Serve` browser walkthroughs exclusively via `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1`.
+   - Execute all migrations, unit/integration suites, and live `-Serve` browser walkthroughs exclusively via `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1`.
    - Never fire parallel `test-in-slot.ps1` calls inside the same worktree; batch comma-separated `-Module` flags into a single invocation.
 2. **Direct Hosted Frappe Route (`/book`) — Zero Iframe Mode & Anti-Clickjacking:**
    - `/book` is served directly by Frappe (`ism/www/book.py` + `ism/www/book.html`) and linked directly from the external shop website's "Book Now" button.
@@ -260,7 +260,7 @@ flowchart TD
 > - `[NEW]` `ism-frappe/ism/booking/anti_abuse.py`
 > **Forbidden files:** Do NOT edit any `ISM Settings` section outside `sb_self_serve_booking`, do NOT duplicate P3 fields (`self_serve_horizon_days`, `self_serve_min_lead_time_minutes`, `enable_waiter_preference`), and do NOT touch `ism/comms/*`, `ism/scheduling/*`, `ism/api/scheduling.py`, `ism/www/*`, `ism/public/*`, or `pyproject.toml`. Never contact `development.localhost:8000`.
 > **Requirements:** Implement Section 5 Wave 1 verbatim: disjoint `sb_self_serve_booking` schema & validation bounds, zero-preserving `seed.py` defaults, `{"from_route": "/book", "to_route": "book"}` in `hooks.py`, frozen `contracts.py` (including guarded soft P4 `resolve_booking_portal_link`), and `anti_abuse.py` (honeypot, HMAC-signed timing nonce, atomic Redis IP limits, Redis + MariaDB daily phone cap, active duplicate-booking guard, idempotency cache, `clear_booking_rate_limits`).
-> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.ism.doctype.ism_settings.test_ism_settings"`. Commit cleanly on your share branch and post `@coordinator [done]` with commit SHA, exact exported symbols, and test/ruff output.
+> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.ism.doctype.ism_settings.test_ism_settings"`. Commit cleanly on your share branch and post `@coordinator [done]` with commit SHA, exact exported symbols, and test/ruff output.
 
 #### Wave 2 — `booking-api` (`workspace:"share"`, after `M1`)
 > Wave 1 (`booking-contracts`, `#<M1-seq>`) is merged on your base branch. You own **Wave 2** of Project 5 (`todo_snippets/roadmap/plan_p5_website_self_serve_booking.md` Section 5, Wave 2).
@@ -271,7 +271,7 @@ flowchart TD
 > - `[NEW]` `ism-frappe/ism/tests/test_booking_funnel_and_abuse.py`
 > **Forbidden files:** Do NOT edit `ism_settings.*`, `seed.py`, `hooks.py`, `ism/comms/*`, `ism/scheduling/*`, `ism/www/*`, `ism/public/*`, or `pyproject.toml`. Never contact `development.localhost:8000`.
 > **Requirements:** Implement Section 5 Wave 2 verbatim: `service.py` orchestrating P3 `bookable_catalog`/`self_serve`/`arrival_policy`, P1 `otp`/`sessions`/`providers`/`email_dispatch`, Wave 1 `anti_abuse`, savepoint-wrapped single-use OTP consume + provisional commit (preserving verified OTP on `SLOT_UNAVAILABLE` while blocking concurrent double-consume), `ism_portal_session` cookie promotion (`auth_method="booking_otp"`, `scope_type="booking"`, resolving `Portal OTP Challenge.name` for `source_otp_challenge`), non-fatal confirmation SMS/email strictly showing P3 customer arrival time (zero buffer/bay/tech wording) with soft P4 `create_booking_portal_link` fallback, all 5 guest endpoints in `ism/api/booking.py`, and full backend/abuse/race/handoff coverage in `test_booking_funnel_and_abuse.py`.
-> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_booking_funnel_and_abuse"`. Commit cleanly on your share branch and post `@coordinator [done]` with commit SHA, exact API endpoint contracts, and test/ruff output.
+> **Verification & Done:** Run `ruff check` on all owned Python files and run `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_booking_funnel_and_abuse"`. Commit cleanly on your share branch and post `@coordinator [done]` with commit SHA, exact API endpoint contracts, and test/ruff output.
 
 #### Wave 3 — `booking-frontend` (`workspace:"share"`, after `M2`)
 > Wave 2 (`booking-api`, `#<M2-seq>`) is merged on your base branch. You own **Wave 3** of Project 5 (`todo_snippets/roadmap/plan_p5_website_self_serve_booking.md` Section 5, Wave 3).
@@ -285,7 +285,7 @@ flowchart TD
 > - `[MODIFY]` `ism-frappe/ism/tests/test_booking_funnel_and_abuse.py` (append `TestBookingHostedRoute` class ONLY; do NOT modify Wave 2 test classes)
 > **Forbidden files:** Do NOT edit `ism/booking/*`, `ism/api/booking.py`, `ism_settings.*`, `hooks.py`, `ism/www/portal.*`, `ism/templates/pages/quote_approval.*`, or `pyproject.toml`. Do NOT create `ism/www/__init__.py` or introduce any Node build tool. Never contact `development.localhost:8000`.
 > **Requirements:** Implement Section 5 Wave 3 verbatim: hosted Frappe route `/book` (`no_cache=1`, `show_sidebar=False`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, zero-PII boot JSON, CSRF token), mobile-first responsive CSS, vanilla ES modules (`api.js` with `credentials: "same-origin"` & `X-Frappe-CSRF-Token`, `state.js` 5-step FSM with zero `localStorage` PII, XSS-safe `app.js` using `textContent`/`createElement`), 5-step flow (Vehicle -> Predictable Packages -> Arrival Slot Picker -> Customer Info & SMS OTP with slot-conflict recovery -> Confirmation + `/portal` CTA), and `TestBookingHostedRoute` tests.
-> **Verification & Done:** Run `ruff check ism-frappe/ism/www/book.py ism-frappe/ism/tests/test_booking_funnel_and_abuse.py` and `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_booking_funnel_and_abuse"`. Commit cleanly on your share branch and post `@coordinator [done]` with commit SHA and test/lint output.
+> **Verification & Done:** Run `ruff check ism-frappe/ism/www/book.py ism-frappe/ism/tests/test_booking_funnel_and_abuse.py` and `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_booking_funnel_and_abuse"`. Commit cleanly on your share branch and post `@coordinator [done]` with commit SHA and test/lint output.
 
 #### Wave 4 — `verifier-booking` (`workspace:"inherit"`, after `M3`)
 > Wave 3 (`booking-frontend`, `#<M3-seq>`) is merged onto the integration branch. You are the read-only cross-family verification gate (`todo_snippets/roadmap/plan_p5_website_self_serve_booking.md` Section 6). Do NOT edit application files; if you uncover defects, report exact `file:line` findings directly to `@booking-contracts`, `@booking-api`, or `@booking-frontend` (or `@coordinator`).
@@ -650,7 +650,7 @@ Coordinator merges `booking-frontend` onto the integration branch, confirms clea
 
 1. **Single Batched Frappe Migration + P5 Suite & P1/P3/Settings Regression Gate:**
    ```powershell
-   powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module "ism.tests.test_booking_funnel_and_abuse,ism.ism.doctype.ism_settings.test_ism_settings,ism.tests.test_comms_otp,ism.tests.test_comms_sessions,ism.tests.test_comms_email_dispatch,ism.tests.test_arrival_offset_policy,ism.tests.test_bookable_catalog,ism.tests.test_self_serve_scheduling"
+   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module "ism.tests.test_booking_funnel_and_abuse,ism.ism.doctype.ism_settings.test_ism_settings,ism.tests.test_comms_otp,ism.tests.test_comms_sessions,ism.tests.test_comms_email_dispatch,ism.tests.test_arrival_offset_policy,ism.tests.test_bookable_catalog,ism.tests.test_self_serve_scheduling"
    ```
 2. **Static Lint & Frontend Syntax Check (`0` Errors Allowed):**
    ```powershell
@@ -659,7 +659,7 @@ Coordinator merges `booking-frontend` onto the integration branch, confirms clea
    *(If `node` is available on PATH, also verify ES module syntax via `node --check` on `ism-frappe/ism/public/book/{api.js,state.js,app.js}`.)*
 3. **Live Isolated Bench Browser & HTTP Walkthrough (`-Serve`):**
    ```powershell
-   powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Serve start
+   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Serve start
    ```
    Using the leased slot URL reported by `-Serve start` (e.g., `http://wt1.localhost:8001` — **NEVER** `development.localhost:8000`):
    - **Anti-Iframe & Disabled-State Proof:** Request `GET http://wtN.localhost:800N/book` with `enable_self_serve_booking = 0`: confirm HTTP `200`, `X-Frame-Options: DENY`, `Content-Security-Policy` containing `frame-ancestors 'none'`, branded unavailable card, zero PII, and `POST /api/method/ism.api.booking.request_booking_otp` returning HTTP `503` (`BOOKING_DISABLED`).
@@ -678,11 +678,11 @@ Coordinator merges `booking-frontend` onto the integration branch, confirms clea
      - Click **"Manage Your Appointment"** (`<a href="/portal">`) in the same browser session: confirm `/portal` opens directly authenticated (when P4 is installed) OR verify server-side `verify_portal_session()` resolves `auth_method="booking_otp"`, `scope_type="booking"`, `schedule_entry=<SE>` from the browser's cookie with zero re-authentication prompt.
    - **Stop Preview Server Cleanly:**
      ```powershell
-     powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Serve stop
+     powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Serve stop
      ```
 4. **Contract & Isolation Audit:**
    - Confirm `git diff --name-only` shows zero edits to `ism/comms/*`, `ism/scheduling/*`, `ism/api/scheduling.py`, `ism/templates/pages/quote_approval.*`, `pyproject.toml`, or non-P5 `ISM Settings` sections.
-   - Confirm `powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\provision-bench-slots.ps1 -Status -History 5` reports strictly isolated slot execution and zero canonical `development.localhost:8000` contact.
+   - Confirm `powershell -ExecutionPolicy Bypass -File scripts\provision-bench-slots.ps1 -Status -History 5` reports strictly isolated slot execution and zero canonical `development.localhost:8000` contact.
 
 ### Exit KPIs (All Must Be Green Before Cutover)
 

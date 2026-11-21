@@ -31,7 +31,7 @@ function Test-PrimaryTrunkCheckout {
     return $true, "ok"
 }
 
-$RepoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
+$RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $Ok, $Why = Test-PrimaryTrunkCheckout -CheckPath $RepoRoot
 if (-not $Ok) {
     Write-Error "Refusing promote-to-main outside canonical primary trunk ($Why)."

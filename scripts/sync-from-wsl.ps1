@@ -14,7 +14,8 @@ $DefaultSource = if ($env:ISM_WSL_DEST) { $env:ISM_WSL_DEST } else { "/home/real
 $WslSource = if ($Source) { $Source } else { $DefaultSource }
 if (-not $WslSource.EndsWith("/")) { $WslSource += "/" }
 
-$LocalDestination = if ($Destination) { (Get-Item $Destination).FullName } else { (Get-Item "$PSScriptRoot\..").FullName }
+$RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
+$LocalDestination = if ($Destination) { (Get-Item $Destination).FullName } else { (Get-Item (Join-Path $RepoRoot "ism-frappe")).FullName }
 $NormalizedDestination = $LocalDestination.Replace('\', '/')
 $WindowsDestination = (wsl -d $TargetDistro wslpath -u "$NormalizedDestination").Trim() + "/"
 

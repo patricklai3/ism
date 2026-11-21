@@ -16,7 +16,7 @@ All scripts detect the repository root dynamically relative to their location. T
 - [promote-to-main.ps1](promote-to-main.ps1): Trunk promotion workflow on `D:\ism` (`main`) — syncs `ism-frappe`, migrates `development.localhost`, runs Stage A read-only check, rebuilds `main_golden.sql.gz` from a clean site + `ism.testing.catalog.seed_all`, and runs Stage B isolated smoke suite.
 - [start-remote-tunnel.ps1](start-remote-tunnel.ps1): Exposes dev site on port 8000 via Cloudflare Tunnel with custom domain or quick URL and mobile QR code.
 - [stop-remote-tunnel.ps1](stop-remote-tunnel.ps1): Stops active Cloudflare Tunnel processes.
-- [verify_mcp_agent.py](../ism/scripts/verify_mcp_agent.py): Verification suite for `ism.api.agent` via Frappe v16 native MCP protocol (`bench --site <site> execute ism.scripts.verify_mcp_agent.run`).
+- [verify_mcp_agent.py](../ism-frappe/ism/scripts/verify_mcp_agent.py): Verification suite for `ism.api.agent` via Frappe v16 native MCP protocol (`bench --site <site> execute ism.scripts.verify_mcp_agent.run`).
 - [frappe_mcp_bridge.py](frappe_mcp_bridge.py): Zero-dependency Stdio JSON-RPC 2.0 MCP server bridge forwarding to Frappe v16's `/api/v2/mcp` endpoint.
 - [ism-agent-os](../ism-agent-os/tools/cli.py): Python package (`ism_agent_os`) and REST/CLI adapters for Frappe v16 + ISM.
 - [.tunnel-config.example.json](.tunnel-config.example.json): Configuration template for your Cloudflare custom domain and tunnel token.
@@ -31,7 +31,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sync-to-wsl.ps1
 ```
 
 Optional parameters:
-- `-Source "<path>"`: Custom local directory to push (defaults to repo root).
+- `-Source "<path>"`: Custom local directory to push (defaults to `ism-frappe/`).
 - `-Destination "<wsl-path>"`: Custom target directory in WSL2.
 - `-Distro "<distro>"`: Target WSL distribution (defaults to `Ubuntu`).
 - `-Delete`: Delete remote files not present in the local source.
@@ -44,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sync-from-wsl.ps1
 
 Optional parameters:
 - `-Source "<wsl-path>"`: Custom WSL source directory.
-- `-Destination "<path>"`: Custom local destination directory (defaults to repo root).
+- `-Destination "<path>"`: Custom local destination directory (defaults to `ism-frappe/`).
 - `-Distro "<distro>"`: Target WSL distribution (defaults to `Ubuntu`).
 - `-Delete`: Delete local files not present in WSL2.
 
@@ -77,21 +77,21 @@ Up to 5 Git worktrees or feature branches (expandable to 8 CLI slots via `-Slots
 
 - **Provision slots & inspect telemetry (from `D:\ism` on `main`; `-Status` / `-History` allowed from any worktree):**
   ```powershell
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\provision-bench-slots.ps1
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\provision-bench-slots.ps1 -Status -History 20
+  powershell -ExecutionPolicy Bypass -File scripts\provision-bench-slots.ps1
+  powershell -ExecutionPolicy Bypass -File scripts\provision-bench-slots.ps1 -Status -History 20
   ```
 - **Run isolated tests / commands / preview from any worktree:**
   ```powershell
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Module ism.tests.test_estimation_math,ism.tests.test_agent_facade
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -DocType "Repair Order" -FreshDb
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Execute ism.scripts.verify_mcp_agent.run
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Slot 1 -Serve start   # http://localhost:8001 .. 8005
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\test-in-slot.ps1 -Slot 1 -Serve stop
+  powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module ism.tests.test_estimation_math,ism.tests.test_agent_facade
+  powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -DocType "Repair Order" -FreshDb
+  powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Execute ism.scripts.verify_mcp_agent.run
+  powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Slot 1 -Serve start   # http://localhost:8001 .. 8005
+  powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Slot 1 -Serve stop
   ```
   Options: `-Module` (array or comma-separated), `-DocType`, `-Test` (array or comma-separated), `-Execute`, `-Serve start|stop|foreground`, `-Slot <1..8>`, `-Slots <1..8>` (default `5`; `--serve` capped at `1..5`), `-FreshDb`, `-CleanReinstall`, `-KeepDb`, `-SkipMigrate`, `-ForceMigrate`, `-ForceSkipMigrate`, `-AllowParallelSlots`, `-ExtraArgs`.
 - **Promote merged `main` from `D:\ism`:**
   ```powershell
-  powershell -ExecutionPolicy Bypass -File ism-frappe\scripts\promote-to-main.ps1
+  powershell -ExecutionPolicy Bypass -File scripts\promote-to-main.ps1
   ```
   Options: `-AllowDirty`, `-SmokeModule <module>` (defaults to `ism.tests.test_simulation_foundation,ism.tests.test_estimation_math`), `-SkipSmokeTest`.
 - **Primary-trunk guard:** `sync-to-wsl.ps1`, `watch-sync.ps1`, and `watch-sync.mjs` block targeting primary `frappe-bench/apps/ism` unless invoked from canonical `D:\ism` (`--git-dir == --git-common-dir`, branch `main`), and `.agents/scripts/enforce_bench_isolation.py` enforces this deterministically for agent tool calls.

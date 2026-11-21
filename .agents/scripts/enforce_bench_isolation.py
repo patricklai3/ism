@@ -489,7 +489,7 @@ def _denial_message(context_reason: str, violation: str) -> str:
 	return (
 		f"Blocked by bench isolation policy ({context_reason}; {violation}). "
 		"Primary bench and development.localhost may only be modified from primary checkout 'D:\\ism' on branch 'main'. "
-		"Run `powershell -ExecutionPolicy Bypass -File ism-frappe\\scripts\\test-in-slot.ps1 ...` "
+		"Run `powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 ...` "
 		"to sync, migrate, and test in an isolated bench slot."
 	)
 

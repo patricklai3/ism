@@ -200,7 +200,7 @@ if [[ -z "$SOURCE_DIR" || ! -d "$SOURCE_DIR" ]]; then
 fi
 
 if [[ ! -d "$WSL_SLOTS_ROOT/slot-1/env" || ! -s "$GOLDEN_FILE" ]]; then
-  echo "[run-in-slot] Bench slots not provisioned at $WSL_SLOTS_ROOT. Run ism-frappe\\scripts\\provision-bench-slots.ps1 from D:\\ism on 'main' first." >&2
+  echo "[run-in-slot] Bench slots not provisioned at $WSL_SLOTS_ROOT. Run scripts\\provision-bench-slots.ps1 from D:\\ism on 'main' first." >&2
   exit 2
 fi
 

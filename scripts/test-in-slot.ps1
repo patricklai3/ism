@@ -27,7 +27,7 @@ $TargetDistro = if ($Distro) { $Distro } else { $DefaultDistro }
 if ($Worktree) {
     $ResolvedRepo = (Resolve-Path $Worktree).Path
 } else {
-    $ResolvedRepo = (Resolve-Path "$PSScriptRoot\..\..").Path
+    $ResolvedRepo = (Resolve-Path "$PSScriptRoot\..").Path
 }
 
 $GitTop = (git -C $ResolvedRepo rev-parse --show-toplevel 2>$null)
