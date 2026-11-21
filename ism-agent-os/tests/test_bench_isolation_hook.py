@@ -106,7 +106,9 @@ class TestBenchIsolationHook(unittest.TestCase):
 			"powershell -ExecutionPolicy Bypass -File scripts\\watch-sync.ps1",
 			"node scripts/watch-sync.mjs",
 			"powershell -ExecutionPolicy Bypass -File scripts\\promote-to-main.ps1",
+			"powershell -ExecutionPolicy Bypass -File scripts\\promote-to-main.ps1 -Fast",
 			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -RefreshGolden",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -WarmStale",
 			"wsl -d Ubuntu docker exec devcontainer-frappe-1 bench --site development.localhost migrate",
 		]
 		for cmd in allowed_primary:
@@ -122,10 +124,19 @@ class TestBenchIsolationHook(unittest.TestCase):
 			"powershell -ExecutionPolicy Bypass -File scripts\\watch-sync.ps1",
 			"node scripts/watch-sync.mjs",
 			"powershell -ExecutionPolicy Bypass -File scripts\\promote-to-main.ps1",
+			"powershell -ExecutionPolicy Bypass -File scripts\\promote-to-main.ps1 -Fast",
 			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1",
 			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -Recreate",
 			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -RefreshGolden",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -ForceGolden",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -RebuildBase",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -WarmStale",
 			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -Status -Recreate",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -Status -ForceGolden",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -Status -RebuildBase",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -Status -WarmStale",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -Status -SlotSync eager",
+			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -Status -SlotSync:eager",
 			"powershell -ExecutionPolicy Bypass -File scripts\\provision-bench-slots.ps1 -History 20 -Recreate",
 		]
 		for ctx in (self.linked_wt, self.branch_clone):

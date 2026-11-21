@@ -140,6 +140,6 @@ Prefer `ast-outline grep`, `rg`, and `git` CLI commands over PowerShell `Get-Chi
 - Run isolated migrations, tests, scripts, and previews from any worktree with:
   `powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Module <mod1,mod2>`
   (`slot-1`..`slot-5` by default; `wt1..wt5.localhost`, ports `8001`–`8005`, Redis `/1`–`/5`, leased via sticky/golden/LRU kernel `flock`, with automatic schema-fingerprint migration detection).
-- Do NOT fire parallel `test-in-slot.ps1` calls from the same worktree; batch comma-separated `-Module` / `-Test` flags in one call (same-worktree auto-slot runs serialize by default to preserve warm DBs).
-- Check slot lease status and recent telemetry from any checkout with `powershell -ExecutionPolicy Bypass -File scripts\provision-bench-slots.ps1 -Status -History 10`.
-- Only the coordinator on canonical `D:\ism` (`main`) runs `scripts\promote-to-main.ps1` after merging branches.
+- Do NOT fire parallel `test-in-slot.ps1` calls from the same worktree; batch comma-separated `-Module` / `-Test` flags in one call (same-worktree auto-slot runs serialize by default to preserve warm DBs, and multi-module calls execute in a single Frappe process).
+- Check slot lease status, golden generation freshness, and recent telemetry from any checkout with `powershell -ExecutionPolicy Bypass -File scripts\provision-bench-slots.ps1 -Status -History 10`.
+- Only the coordinator on canonical `D:\ism` (`main`) runs `scripts\promote-to-main.ps1` after merging branches (uses `golden_input_fp` + Tier-0 `base_upstream.sql.gz` caching and `bg-warm` non-blocking slot pre-warming by default; pass `-Fast` when smoke tests already ran in a slot, or `-SlotSync eager` for a full 5-slot reset).

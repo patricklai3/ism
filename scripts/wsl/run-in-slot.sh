@@ -13,11 +13,14 @@ REQ_SLOT=0
 SLOT_COUNT=5
 FRESH_DB=0
 CLEAN_REINSTALL=0
+FULL_UPSTREAM_REINSTALL=0
 KEEP_DB=0
 SKIP_MIGRATE=0
 FORCE_MIGRATE=0
 FORCE_SKIP_MIGRATE=0
 ALLOW_PARALLEL_SLOTS=0
+ISOLATED_MODULES=0
+CHECKSUM_SYNC=0
 MODE="test"
 MODULES=()
 DOCTYPE=""
@@ -60,6 +63,10 @@ while [[ $# -gt 0 ]]; do
       CLEAN_REINSTALL=1
       shift
       ;;
+    --full-upstream-reinstall)
+      FULL_UPSTREAM_REINSTALL=1
+      shift
+      ;;
     --keep-db)
       KEEP_DB=1
       shift
@@ -78,6 +85,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --allow-parallel-slots)
       ALLOW_PARALLEL_SLOTS=1
+      shift
+      ;;
+    --isolated-modules)
+      ISOLATED_MODULES=1
+      shift
+      ;;
+    --checksum-sync)
+      CHECKSUM_SYNC=1
       shift
       ;;
     --mode)
@@ -265,7 +280,7 @@ on_exit() {
 }
 trap on_exit EXIT
 
-# Lock order: FD 199 (per-worktree) -> FD 201 (queue) -> FD 200 (slot) -> FD 202 (mariadb-restore)
+# Strict lock hierarchy: FD 199 (per-worktree) -> FD 201 (queue) -> FD 200 (slot) -> FD 203 (golden -s) -> FD 202 (mariadb-restore)
 hex8="$(printf '%s' "$WORKTREE_ID" | sha256sum | cut -c1-8)"
 
 if [[ "$REQ_SLOT" -eq 0 && "$ALLOW_PARALLEL_SLOTS" -eq 0 && "$MODE" != "serve" ]]; then
@@ -277,30 +292,36 @@ if [[ "$REQ_SLOT" -eq 0 && "$ALLOW_PARALLEL_SLOTS" -eq 0 && "$MODE" != "serve" ]
   fi
 fi
 
-# Build ranked candidates: Tier 1 sticky -> Tier 2 golden -> Tier 3 LRU (oldest updated_at_epoch)
+# Build ranked candidates: Tier 1 sticky -> Tier 2 fresh golden -> Tier 3 stale golden/trunk -> Tier 4 LRU
 rank_candidates() {
   local max_slot="$SLOT_COUNT"
   if [[ "$MODE" == "serve" && "$max_slot" -gt 5 ]]; then
     max_slot=5
   fi
+  local cur_gen
+  cur_gen="$(read_golden_gen)"
   local offset=$(( 16#$hex8 % max_slot ))
   local sticky=()
   local golden=()
+  local stale=()
   local lru_entries=()
 
   for k in $(seq 1 "$max_slot"); do
     local mf="$LOCK_DIR/slot-${k}.meta"
-    local wt st ep rot
+    local wt st sgen ep rot
     wt="$(read_meta_value "$mf" "last_worktree")"
     st="$(read_meta_value "$mf" "db_state")"
+    sgen="$(read_meta_value "$mf" "golden_gen")"
     ep="$(read_meta_value "$mf" "updated_at_epoch")"
     [[ -z "$ep" || ! "$ep" =~ ^[0-9]+$ ]] && ep=0
     rot=$(( (k - 1 - offset + max_slot) % max_slot ))
 
-    if [[ ( "$st" == "ready" || "$st" == "dirty" ) && "$wt" == "$WORKTREE_ID" ]]; then
+    if [[ ( "$st" == "ready" || "$st" == "dirty" ) && "$wt" == "$WORKTREE_ID" && ( "$wt" != "$TRUNK_WORKTREE_ID" || -z "$cur_gen" || "$sgen" == "$cur_gen" ) ]]; then
       sticky+=("${k}:sticky")
-    elif [[ "$st" == "golden" ]]; then
+    elif [[ "$st" == "golden" && ( -z "$cur_gen" || "$sgen" == "$cur_gen" ) ]]; then
       golden+=("${k}:golden")
+    elif [[ -n "$cur_gen" && "$sgen" != "$cur_gen" && ( "$st" == "golden" || "$st" == "restoring" || -z "$st" || "$wt" == "$TRUNK_WORKTREE_ID" || "$wt" == "__GOLDEN__" ) ]]; then
+      stale+=("${k}:stale")
     else
       lru_entries+=("$(printf '%012d:%02d:%d' "$ep" "$rot" "$k")")
     fi
@@ -311,6 +332,9 @@ rank_candidates() {
   fi
   if [[ ${#golden[@]} -gt 0 ]]; then
     printf '%s\n' "${golden[@]}"
+  fi
+  if [[ ${#stale[@]} -gt 0 ]]; then
+    printf '%s\n' "${stale[@]}"
   fi
   if [[ ${#lru_entries[@]} -gt 0 ]]; then
     printf '%s\n' "${lru_entries[@]}" | sort | while IFS=: read -r _ _ k; do
@@ -371,6 +395,8 @@ echo "[slot-lease] Leased slot-$SLOT ($SITE_NAME, port 800${SLOT}, redis /$SLOT,
 LAST_WT="$(read_meta_value "$META_FILE" "last_worktree")"
 DB_STATE="$(read_meta_value "$META_FILE" "db_state")"
 SLOT_SCHEMA_FP="$(read_meta_value "$META_FILE" "schema_fp")"
+SLOT_GOLDEN_GEN="$(read_meta_value "$META_FILE" "golden_gen")"
+CURRENT_GOLDEN_GEN="$(read_golden_gen)"
 
 RESET_REASON=""
 if [[ "$CLEAN_REINSTALL" -eq 1 ]]; then
@@ -382,6 +408,12 @@ elif [[ "$FRESH_DB" -eq 1 ]]; then
 elif [[ "$DB_STATE" == "restoring" || -z "$DB_STATE" ]]; then
   NEED_RESET=1
   RESET_REASON="recovering interrupted/uninitialized slot DB (db_state='${DB_STATE:-empty}')"
+elif [[ "$DB_STATE" == "golden" && -n "$CURRENT_GOLDEN_GEN" && "$SLOT_GOLDEN_GEN" != "$CURRENT_GOLDEN_GEN" ]]; then
+  NEED_RESET=1
+  RESET_REASON="golden snapshot updated (${SLOT_GOLDEN_GEN:-legacy} -> $CURRENT_GOLDEN_GEN)"
+elif [[ "$KEEP_DB" -eq 0 && "$WORKTREE_ID" == "$TRUNK_WORKTREE_ID" && -n "$CURRENT_GOLDEN_GEN" && "$SLOT_GOLDEN_GEN" != "$CURRENT_GOLDEN_GEN" ]]; then
+  NEED_RESET=1
+  RESET_REASON="trunk golden snapshot updated (${SLOT_GOLDEN_GEN:-legacy} -> $CURRENT_GOLDEN_GEN)"
 elif [[ "$KEEP_DB" -eq 0 && "$DB_STATE" != "golden" && "$LAST_WT" != "$WORKTREE_ID" ]]; then
   NEED_RESET=1
   RESET_REASON="worktree changed ('$LAST_WT' -> '$WORKTREE_ID')"
@@ -390,33 +422,47 @@ fi
 if [[ "$NEED_RESET" -eq 1 && "$CLEAN_REINSTALL" -eq 0 ]]; then
   T_RESTORE_START="$(now_ms)"
   echo "[slot-db] Restoring golden snapshot into $SLOT_DB and flushing Redis /$SLOT ($RESET_REASON)..."
-  write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "restoring" ""
+  write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "restoring" "" ""
 
+  exec 203>"$LOCK_DIR/golden-build.lock"
+  flock -s 203
+  SLOT_GOLDEN_GEN="$(read_golden_gen)"
+  SLOT_SCHEMA_FP="$(read_meta_value "$GOLDEN_META_FILE" "schema_fp")"
+  if [[ -z "$SLOT_SCHEMA_FP" ]]; then
+    if [[ -s "$GOLDEN_FP_FILE" ]]; then
+      SLOT_SCHEMA_FP="$(tr -d '[:space:]' < "$GOLDEN_FP_FILE")"
+    else
+      SLOT_SCHEMA_FP="$(compute_schema_fp "$WSL_PRIMARY_BENCH/apps/ism")"
+    fi
+  fi
   (
     exec 202>"$LOCK_DIR/mariadb-restore.lock"
     flock 202
-    docker exec "$CONTAINER_DB" mariadb -uroot -p"$MARIADB_ROOT_PW" -e \
-      "DROP DATABASE IF EXISTS \`$SLOT_DB\`; CREATE DATABASE \`$SLOT_DB\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON \`$SLOT_DB\`.* TO '$SLOT_DB'@'%'; FLUSH PRIVILEGES;"
-    { echo "SET SESSION sql_log_bin=0;"; gunzip -c "$GOLDEN_FILE"; } | docker exec -i "$CONTAINER_DB" mariadb -uroot -p"$MARIADB_ROOT_PW" "$SLOT_DB"
+    restore_sql_gz_to_db "$GOLDEN_FILE" "$SLOT_DB" "ism_slot_${SLOT}_pw"
   )
+  exec 203>&-
 
   docker exec "$CONTAINER_REDIS_CACHE" redis-cli -n "$SLOT" FLUSHDB >/dev/null
   docker exec "$CONTAINER_REDIS_QUEUE" redis-cli -n "$SLOT" FLUSHDB >/dev/null
 
-  if [[ -s "$GOLDEN_FP_FILE" ]]; then
-    SLOT_SCHEMA_FP="$(tr -d '[:space:]' < "$GOLDEN_FP_FILE")"
-  else
-    SLOT_SCHEMA_FP="$(compute_schema_fp "$WSL_PRIMARY_BENCH/apps/ism")"
-  fi
   DB_STATE="ready"
-  write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "$SLOT_SCHEMA_FP"
+  write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "$SLOT_SCHEMA_FP" "$SLOT_GOLDEN_GEN"
   T_RESTORE_END="$(now_ms)"
   RESTORE_MS=$(( T_RESTORE_END - T_RESTORE_START ))
 fi
 
 T_SYNC_START="$(now_ms)"
-echo "[slot-sync] Syncing ${SOURCE_DIR%/}/ -> $WSL_SLOT_DIR/apps/ism/..."
-rsync -rtvc --delete \
+RSYNC_FLAGS=(-rt --modify-window=1 --delete)
+if [[ "$CHECKSUM_SYNC" -eq 1 || "$LAST_WT" != "$WORKTREE_ID" ]]; then
+  RSYNC_FLAGS=(-rtc --delete)
+fi
+echo "[slot-sync] Syncing ${SOURCE_DIR%/}/ -> $WSL_SLOT_DIR/apps/ism/ (${RSYNC_FLAGS[*]})..."
+for stale_name in .git .codegraph ism-agent-os scripts; do
+  if [[ ! -e "${SOURCE_DIR%/}/$stale_name" && -e "$WSL_SLOT_DIR/apps/ism/$stale_name" ]]; then
+    rm -rf "$WSL_SLOT_DIR/apps/ism/$stale_name"
+  fi
+done
+rsync "${RSYNC_FLAGS[@]}" \
   --exclude='.git' \
   --exclude='.codegraph' \
   --exclude='node_modules' \
@@ -435,7 +481,7 @@ CURRENT_SCHEMA_FP="$(compute_schema_fp "$WSL_SLOT_DIR/apps/ism")"
 if [[ "$CLEAN_REINSTALL" -eq 1 ]]; then
   T_RESTORE_START="$(now_ms)"
   echo "[slot-db] Performing clean site reinstall & Layer 1 catalog seed on $SITE_NAME ($SLOT_DB)..."
-  write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "restoring" ""
+  write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "restoring" "" ""
 
   SLOT_APPS_CSV="$(python3 - "$WSL_SLOT_DIR/sites/$SITE_NAME/site_config.json" <<'PY'
 import json, os, sys
@@ -445,22 +491,35 @@ apps = [a for a in apps if a and a != "frappe"]
 print(",".join(apps) if apps else "erpnext,hrms,ism")
 PY
 )"
+  if [[ "$FULL_UPSTREAM_REINSTALL" -eq 0 ]]; then
+    exec 203>"$LOCK_DIR/golden-build.lock"
+    flock -s 203
+  fi
   (
     exec 202>"$LOCK_DIR/mariadb-restore.lock"
     flock 202
-    install_clean_ism_site "$WSL_SLOT_DIR" "$CONTAINER_SLOT_DIR" "$SITE_NAME" "$SLOT_DB" "ism_slot_${SLOT}_pw" "$SLOT" "$SLOT_APPS_CSV"
+    install_clean_ism_site \
+      "$WSL_SLOT_DIR" "$CONTAINER_SLOT_DIR" "$SITE_NAME" "$SLOT_DB" "ism_slot_${SLOT}_pw" \
+      "$SLOT" "$SLOT_APPS_CSV" "$FULL_UPSTREAM_REINSTALL" "0" "0"
   )
+  if [[ "$FULL_UPSTREAM_REINSTALL" -eq 0 ]]; then
+    exec 203>&-
+  fi
 
   SLOT_SCHEMA_FP="$CURRENT_SCHEMA_FP"
+  SLOT_GOLDEN_GEN="$(read_golden_gen)"
   DB_STATE="ready"
   T_RESTORE_END="$(now_ms)"
   RESTORE_MS=$(( T_RESTORE_END - T_RESTORE_START ))
 fi
 
-if [[ "$DB_STATE" == "golden" || "$DB_STATE" == "dirty" || "$LAST_WT" != "$WORKTREE_ID" ]]; then
+if [[ "$DB_STATE" == "golden" ]]; then
+  [[ -z "$SLOT_GOLDEN_GEN" ]] && SLOT_GOLDEN_GEN="$CURRENT_GOLDEN_GEN"
+  DB_STATE="ready"
+elif [[ "$DB_STATE" == "dirty" || "$LAST_WT" != "$WORKTREE_ID" ]]; then
   DB_STATE="ready"
 fi
-write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "$DB_STATE" "$SLOT_SCHEMA_FP"
+write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "$DB_STATE" "$SLOT_SCHEMA_FP" "$SLOT_GOLDEN_GEN"
 
 MIGRATE_REASON=""
 if [[ "$FORCE_MIGRATE" -eq 1 ]]; then
@@ -488,6 +547,8 @@ fi
 
 echo "[slot-migrate] migrate=$RUN_MIGRATE ($MIGRATE_REASON)"
 
+ensure_dev_mariadb_tuning
+
 CONTAINER_PATH="$CONTAINER_SLOT_DIR/env/bin:/home/frappe/.local/bin:/home/frappe/.nvm/versions/node/v24.13.0/bin:/home/frappe/.pyenv/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 run_in_slot_container_exec() {
@@ -498,9 +559,10 @@ run_mig="$2"
 mode="$3"
 doctype="$4"
 exec_fn="$5"
-mod_count="$6"
-test_count="$7"
-shift 7
+isolated_mods="$6"
+mod_count="$7"
+test_count="$8"
+shift 8
 
 modules=()
 for ((i=0; i<mod_count; i++)); do
@@ -518,29 +580,85 @@ rm -f logs/.migrate_ok
 if [[ "$run_mig" -eq 1 ]]; then
   bench --site "$site" migrate
   touch logs/.migrate_ok
-else
+elif [[ "$mode" != "test" ]]; then
   bench --site "$site" clear-cache
 fi
 
 case "$mode" in
   test)
-    common=(--app ism)
-    [[ -n "$doctype" ]] && common+=(--doctype "$doctype")
-    if [[ ${#tests[@]} -gt 0 ]]; then
-      for t in "${tests[@]}"; do
-        common+=(--test "$t")
+    use_single_proc=0
+    sp_failfast=0
+    sp_verbose=0
+    sp_skip_before=0
+    if [[ ${#modules[@]} -gt 1 && -z "$doctype" && "$isolated_mods" -eq 0 ]]; then
+      use_single_proc=1
+      for ex in "${extra[@]}"; do
+        case "$ex" in
+          --failfast) sp_failfast=1 ;;
+          --verbose|-v) sp_verbose=1 ;;
+          --skip-before-tests) sp_skip_before=1 ;;
+          *) use_single_proc=0; break ;;
+        esac
       done
     fi
-    if [[ ${#extra[@]} -gt 0 ]]; then
-      common+=("${extra[@]}")
-    fi
-    if [[ ${#modules[@]} -eq 0 ]]; then
-      bench --site "$site" run-tests "${common[@]}"
+
+    if [[ "$use_single_proc" -eq 1 ]]; then
+      echo "[slot-test] Running ${#modules[@]} modules in single Frappe process: ${modules[*]}"
+      slot_py="$(pwd)/env/bin/python"
+      (
+        cd sites
+        "$slot_py" - "$site" "$sp_failfast" "$sp_verbose" "$sp_skip_before" "${#modules[@]}" "${#tests[@]}" "${modules[@]}" "${tests[@]}" <<\PY
+import os
+import sys
+import frappe
+from frappe.commands.testing import main as frappe_test_main
+
+site = sys.argv[1]
+failfast = bool(int(sys.argv[2]))
+verbose = bool(int(sys.argv[3]))
+skip_before = bool(int(sys.argv[4]))
+mod_n = int(sys.argv[5])
+test_n = int(sys.argv[6])
+idx = 7
+mods = sys.argv[idx : idx + mod_n]
+idx += mod_n
+tests = tuple(sys.argv[idx : idx + test_n])
+
+frappe.init(site)
+if not (frappe.conf.allow_tests or os.environ.get("CI")):
+    sys.stderr.write(f"Testing is disabled for site {site}!\n")
+    sys.exit(1)
+
+frappe_test_main(
+    site=site,
+    app="ism",
+    module=mods,
+    verbose=verbose,
+    tests=tests,
+    failfast=failfast,
+    skip_before_tests=skip_before,
+)
+PY
+      )
     else
-      for m in "${modules[@]}"; do
-        echo "[slot-test] Running module: $m"
-        bench --site "$site" run-tests "${common[@]}" --module "$m"
-      done
+      common=(--app ism)
+      [[ -n "$doctype" ]] && common+=(--doctype "$doctype")
+      if [[ ${#tests[@]} -gt 0 ]]; then
+        for t in "${tests[@]}"; do
+          common+=(--test "$t")
+        done
+      fi
+      if [[ ${#extra[@]} -gt 0 ]]; then
+        common+=("${extra[@]}")
+      fi
+      if [[ ${#modules[@]} -eq 0 ]]; then
+        bench --site "$site" run-tests "${common[@]}"
+      else
+        for m in "${modules[@]}"; do
+          echo "[slot-test] Running module: $m"
+          bench --site "$site" run-tests "${common[@]}" --module "$m"
+        done
+      fi
     fi
     ;;
   execute)
@@ -559,7 +677,7 @@ case "$mode" in
 esac
 '
   local pass_args=(
-    "$SITE_NAME" "$RUN_MIGRATE" "$MODE" "$DOCTYPE" "$EXECUTE_FN"
+    "$SITE_NAME" "$RUN_MIGRATE" "$MODE" "$DOCTYPE" "$EXECUTE_FN" "$ISOLATED_MODULES"
     "${#MODULES[@]}" "${#TESTS[@]}"
   )
   [[ ${#MODULES[@]} -gt 0 ]] && pass_args+=("${MODULES[@]}")
@@ -574,7 +692,7 @@ T_EXEC_START="$(now_ms)"
 case "$MODE" in
   test)
     if [[ "$RUN_MIGRATE" -eq 1 ]]; then
-      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "migrating"
+      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "migrating" "$SLOT_GOLDEN_GEN"
     fi
     set +e
     run_in_slot_container_exec
@@ -582,7 +700,7 @@ case "$MODE" in
     set -e
     if [[ "$RUN_MIGRATE" -eq 1 && -f "$WSL_SLOT_DIR/logs/.migrate_ok" ]]; then
       SLOT_SCHEMA_FP="$CURRENT_SCHEMA_FP"
-      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "$SLOT_SCHEMA_FP"
+      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "$SLOT_SCHEMA_FP" "$SLOT_GOLDEN_GEN"
     fi
     T_EXEC_END="$(now_ms)"
     EXEC_MS=$(( T_EXEC_END - T_EXEC_START ))
@@ -595,7 +713,7 @@ case "$MODE" in
       exit 2
     fi
     if [[ "$RUN_MIGRATE" -eq 1 ]]; then
-      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "migrating"
+      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "migrating" "$SLOT_GOLDEN_GEN"
     fi
     set +e
     run_in_slot_container_exec
@@ -603,7 +721,7 @@ case "$MODE" in
     set -e
     if [[ "$RUN_MIGRATE" -eq 1 && -f "$WSL_SLOT_DIR/logs/.migrate_ok" ]]; then
       SLOT_SCHEMA_FP="$CURRENT_SCHEMA_FP"
-      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "$SLOT_SCHEMA_FP"
+      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "$SLOT_SCHEMA_FP" "$SLOT_GOLDEN_GEN"
     fi
     T_EXEC_END="$(now_ms)"
     EXEC_MS=$(( T_EXEC_END - T_EXEC_START ))
@@ -612,14 +730,14 @@ case "$MODE" in
     ;;
   serve)
     if [[ "$RUN_MIGRATE" -eq 1 ]]; then
-      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "migrating"
+      write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "migrating" "$SLOT_GOLDEN_GEN"
       ORIG_MODE="$MODE"
       MODE="prep-only"
       run_in_slot_container_exec
       MODE="$ORIG_MODE"
       if [[ -f "$WSL_SLOT_DIR/logs/.migrate_ok" ]]; then
         SLOT_SCHEMA_FP="$CURRENT_SCHEMA_FP"
-        write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "$SLOT_SCHEMA_FP"
+        write_meta_file "$META_FILE" "$WORKTREE_ID" "$BRANCH" "$HEAD_SHA" "ready" "$SLOT_SCHEMA_FP" "$SLOT_GOLDEN_GEN"
       fi
     else
       docker exec -w "$CONTAINER_SLOT_DIR" "$CONTAINER_FRAPPE" env PATH="$CONTAINER_PATH" bench --site "$SITE_NAME" clear-cache

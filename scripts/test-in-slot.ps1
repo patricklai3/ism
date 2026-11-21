@@ -9,11 +9,14 @@ param (
     [int]$Slots = 5,
     [switch]$FreshDb = $false,
     [switch]$CleanReinstall = $false,
+    [switch]$FullUpstreamReinstall = $false,
     [switch]$KeepDb = $false,
     [switch]$SkipMigrate = $false,
     [switch]$ForceMigrate = $false,
     [switch]$ForceSkipMigrate = $false,
     [switch]$AllowParallelSlots = $false,
+    [switch]$IsolatedModules = $false,
+    [switch]$ChecksumSync = $false,
     [string]$Worktree = "",
     [string[]]$ExtraArgs = @(),
     [string]$Distro = ""
@@ -123,11 +126,14 @@ $ArgList = @(
 
 if ($FreshDb) { $ArgList += "--fresh-db" }
 if ($CleanReinstall) { $ArgList += "--clean-reinstall" }
+if ($FullUpstreamReinstall) { $ArgList += "--full-upstream-reinstall" }
 if ($KeepDb) { $ArgList += "--keep-db" }
 if ($SkipMigrate) { $ArgList += "--skip-migrate" }
 if ($ForceMigrate) { $ArgList += "--force-migrate" }
 if ($ForceSkipMigrate) { $ArgList += "--force-skip-migrate" }
 if ($AllowParallelSlots) { $ArgList += "--allow-parallel-slots" }
+if ($IsolatedModules) { $ArgList += "--isolated-modules" }
+if ($ChecksumSync) { $ArgList += "--checksum-sync" }
 
 foreach ($m in (Expand-CsvArgs -Values $Module)) {
     $ArgList += @("--module", $m)

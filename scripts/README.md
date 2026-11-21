@@ -6,14 +6,14 @@ All scripts detect the repository root dynamically relative to their location. T
 
 ## Files
 
-- [sync-to-wsl.ps1](sync-to-wsl.ps1): Pushes files from Windows to WSL2 once using checksum verification (guarded for primary `D:\ism` on `main`).
+- [sync-to-wsl.ps1](sync-to-wsl.ps1): Pushes files from Windows to WSL2 once using fast `mtime+size` incremental sync (`-Checksum` for full checksum mode; `-PruneStale` to clean legacy directories; guarded for primary `D:\ism` on `main`).
 - [sync-from-wsl.ps1](sync-from-wsl.ps1): Pulls files from WSL2 to Windows once.
-- [push-deploy-subtree.ps1](push-deploy-subtree.ps1): Splits `ism-frappe/` from `HEAD` and pushes to the Frappe Cloud deploy remote (`staging` / `production`).
+- [push-deploy-subtree.ps1](push-deploy-subtree.ps1): Splits `ism-frappe/` from `HEAD` (with `.git/ism-subtree-cache.json` reuse when `ism-frappe/` has no new commits) and pushes to the Frappe Cloud deploy remote (`staging` / `production`).
 - [watch-sync.ps1](watch-sync.ps1): Watches the repository for changes and pushes them to WSL2 automatically (PowerShell; guarded for primary `D:\ism` on `main`).
 - [watch-sync.mjs](watch-sync.mjs): Watches the repository for changes and pushes them to WSL2 automatically (Node.js; guarded for primary `D:\ism` on `main`).
-- [provision-bench-slots.ps1](provision-bench-slots.ps1): Provisions/refreshes the isolated thin Frappe bench slots (`slot-1`..`slot-5` default, up to `8` CLI slots) using a clean-installed Golden snapshot (`golden.localhost` + `ism.testing.catalog.seed_all`), and reports live slot lease status (`-Status`) and telemetry (`-History <N>`).
-- [test-in-slot.ps1](test-in-slot.ps1): Leases a free bench slot via sticky/golden/LRU kernel `flock` (serializing same-worktree auto-slot runs by default), resets DB from `main_golden.sql.gz` on worktree changes (or performs a fresh site reinstall + `ism.testing.catalog.seed_all` with `-CleanReinstall`), syncs that worktree, auto-skips `bench migrate` when the schema fingerprint matches, and runs batched tests/execute/serve in isolation.
-- [promote-to-main.ps1](promote-to-main.ps1): Trunk promotion workflow on `D:\ism` (`main`) — syncs `ism-frappe`, migrates `development.localhost`, runs Stage A read-only check, rebuilds `main_golden.sql.gz` from a clean site + `ism.testing.catalog.seed_all`, and runs Stage B isolated smoke suite.
+- [provision-bench-slots.ps1](provision-bench-slots.ps1): Provisions/refreshes the isolated thin Frappe bench slots (`slot-1`..`slot-5` default, up to `8` CLI slots) using a two-tier Golden snapshot cache (`base_upstream.sql.gz` + `main_golden.sql.gz` / `golden.meta` generation IDs), lazy/background slot pre-warming (`-SlotSync bg-warm|lazy|eager|none`, `-WarmStale`), and reports live slot lease status (`-Status`) and telemetry (`-History <N>`).
+- [test-in-slot.ps1](test-in-slot.ps1): Leases a free bench slot via 4-tier sticky/golden/stale/LRU kernel `flock` (serializing same-worktree auto-slot runs by default), resets DB from `main_golden.sql.gz` on worktree or golden-generation changes (or performs a fast Tier-0 cached clean site reinstall + `ism.testing.catalog.seed_all` with `-CleanReinstall`), syncs that worktree, auto-skips `bench migrate` when the schema fingerprint matches, and runs batched multi-module tests in a single Frappe process (`-IsolatedModules` to opt out).
+- [promote-to-main.ps1](promote-to-main.ps1): Fast trunk promotion workflow on `D:\ism` (`main`) — syncs `ism-frappe`, auto-skips `bench migrate` on `development.localhost` when `primary_schema.fp` matches, runs Stage A read-only check (+ `ism-agent-os` tests when touched), skips `main_golden.sql.gz` rebuild when `golden_input_fp` matches (or rebuilds from Tier-0 `base_upstream.sql.gz`), runs single-process Stage B smoke suite, and warms remaining idle stale slots asynchronously in the background (`-Fast` for ~3–5s pre-tested trunk syncs).
 - [start-remote-tunnel.ps1](start-remote-tunnel.ps1): Exposes dev site on port 8000 via Cloudflare Tunnel with custom domain or quick URL and mobile QR code.
 - [stop-remote-tunnel.ps1](stop-remote-tunnel.ps1): Stops active Cloudflare Tunnel processes.
 - [verify_mcp_agent.py](../ism-frappe/ism/scripts/verify_mcp_agent.py): Verification suite for `ism.api.agent` via Frappe v16 native MCP protocol (`bench --site <site> execute ism.scripts.verify_mcp_agent.run`).
@@ -88,12 +88,13 @@ Up to 5 Git worktrees or feature branches (expandable to 8 CLI slots via `-Slots
   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Slot 1 -Serve start   # http://localhost:8001 .. 8005
   powershell -ExecutionPolicy Bypass -File scripts\test-in-slot.ps1 -Slot 1 -Serve stop
   ```
-  Options: `-Module` (array or comma-separated), `-DocType`, `-Test` (array or comma-separated), `-Execute`, `-Serve start|stop|foreground`, `-Slot <1..8>`, `-Slots <1..8>` (default `5`; `--serve` capped at `1..5`), `-FreshDb`, `-CleanReinstall`, `-KeepDb`, `-SkipMigrate`, `-ForceMigrate`, `-ForceSkipMigrate`, `-AllowParallelSlots`, `-ExtraArgs`.
+  Options: `-Module` (array or comma-separated; runs multiple modules in a single Frappe process unless `-IsolatedModules` is passed), `-DocType`, `-Test` (array or comma-separated), `-Execute`, `-Serve start|stop|foreground`, `-Slot <1..8>`, `-Slots <1..8>` (default `5`; `--serve` capped at `1..5`), `-FreshDb`, `-CleanReinstall`, `-FullUpstreamReinstall`, `-KeepDb`, `-SkipMigrate`, `-ForceMigrate`, `-ForceSkipMigrate`, `-AllowParallelSlots`, `-IsolatedModules`, `-ChecksumSync`, `-ExtraArgs`.
 - **Promote merged `main` from `D:\ism`:**
   ```powershell
   powershell -ExecutionPolicy Bypass -File scripts\promote-to-main.ps1
+  powershell -ExecutionPolicy Bypass -File scripts\promote-to-main.ps1 -Fast
   ```
-  Options: `-AllowDirty`, `-SmokeModule <module>` (defaults to `ism.tests.test_simulation_foundation,ism.tests.test_estimation_math`), `-SkipSmokeTest`.
+  Options: `-AllowDirty`, `-Fast` (shorthand for `-SkipSmokeTest -SlotSync lazy`), `-SlotSync bg-warm|lazy|eager|none` (default `bg-warm`; preserves active feature worktree sticky slots unless `eager`), `-ForceMigrate`, `-ForceGolden`, `-RebuildBase`, `-RunAgentOsTests`, `-SmokeModule <module>` (defaults to `ism.tests.test_simulation_foundation,ism.tests.test_estimation_math`), `-SkipSmokeTest`.
 - **Primary-trunk guard:** `sync-to-wsl.ps1`, `watch-sync.ps1`, and `watch-sync.mjs` block targeting primary `frappe-bench/apps/ism` unless invoked from canonical `D:\ism` (`--git-dir == --git-common-dir`, branch `main`), and `.agents/scripts/enforce_bench_isolation.py` enforces this deterministically for agent tool calls.
 
 ---

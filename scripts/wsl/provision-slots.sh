@@ -7,7 +7,11 @@ source "$SCRIPT_DIR/slot-common.sh"
 
 SLOT_COUNT=5
 REFRESH_GOLDEN=0
+FORCE_GOLDEN=0
+REBUILD_BASE=0
 RECREATE=0
+SLOT_SYNC="auto"
+WARM_STALE=0
 STATUS_ONLY=0
 HISTORY_LIMIT=0
 
@@ -21,8 +25,27 @@ while [[ $# -gt 0 ]]; do
       REFRESH_GOLDEN=1
       shift
       ;;
+    --force-golden)
+      REFRESH_GOLDEN=1
+      FORCE_GOLDEN=1
+      shift
+      ;;
+    --rebuild-base)
+      REFRESH_GOLDEN=1
+      FORCE_GOLDEN=1
+      REBUILD_BASE=1
+      shift
+      ;;
     --recreate)
       RECREATE=1
+      shift
+      ;;
+    --slot-sync)
+      SLOT_SYNC="${2:-auto}"
+      shift 2
+      ;;
+    --warm-stale)
+      WARM_STALE=1
       shift
       ;;
     --status)
@@ -50,11 +73,43 @@ if ! [[ "$SLOT_COUNT" =~ ^[1-8]$ ]]; then
   exit 2
 fi
 
+case "$SLOT_SYNC" in
+  auto|bg-warm|lazy|eager|none) ;;
+  *)
+    echo "[provision-slots] --slot-sync must be auto|bg-warm|lazy|eager|none (got '$SLOT_SYNC')." >&2
+    exit 2
+    ;;
+esac
+
 mkdir -p "$LOCK_DIR"
 
+bg_warmer_status() {
+  if [[ -f "$BG_WARM_PID_FILE" ]]; then
+    local wpid
+    wpid="$(cat "$BG_WARM_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$wpid" ]] && kill -0 "$wpid" 2>/dev/null; then
+      printf 'running(pid=%s)' "$wpid"
+      return 0
+    fi
+  fi
+  printf 'idle'
+}
+
 print_status() {
-  printf "%-7s %-11s %-7s %-10s %-10s %-42s %-24s %-10s %-26s\n" \
-    "SLOT" "PROVISIONED" "LOCK" "DB_STATE" "SCHEMA_FP" "LAST_WORKTREE" "BRANCH" "HEAD" "SERVE"
+  local cur_gen cur_fp cur_infp base_state warmer_state
+  cur_gen="$(read_golden_gen)"
+  cur_fp="$(read_meta_value "$GOLDEN_META_FILE" "schema_fp")"
+  [[ -z "$cur_fp" && -s "$GOLDEN_FP_FILE" ]] && cur_fp="$(tr -d '[:space:]' < "$GOLDEN_FP_FILE")"
+  cur_infp="$(read_meta_value "$GOLDEN_META_FILE" "golden_input_fp")"
+  base_state="missing"
+  [[ -s "$BASE_UPSTREAM_FILE" ]] && base_state="cached($(du -h "$BASE_UPSTREAM_FILE" | cut -f1))"
+  warmer_state="$(bg_warmer_status)"
+
+  printf "[golden] gen=%s schema_fp=%s input_fp=%s base_upstream=%s bg_warmer=%s\n" \
+    "${cur_gen:--}" "${cur_fp:0:8}" "${cur_infp:0:8}" "$base_state" "$warmer_state"
+
+  printf "%-7s %-11s %-7s %-10s %-8s %-10s %-40s %-24s %-10s %-26s\n" \
+    "SLOT" "PROVISIONED" "LOCK" "DB_STATE" "GOLDEN" "SCHEMA_FP" "LAST_WORKTREE" "BRANCH" "HEAD" "SERVE"
   for k in $(seq 1 "$SLOT_COUNT"); do
     local slot_host_dir="$WSL_SLOTS_ROOT/slot-$k"
     local prov="missing"
@@ -69,12 +124,24 @@ print_status() {
     fi
 
     local meta_file="$LOCK_DIR/slot-$k.meta"
-    local last_wt last_branch last_head db_state schema_fp
+    local last_wt last_branch last_head db_state schema_fp slot_gen golden_col
     last_wt="$(read_meta_value "$meta_file" "last_worktree")"
     last_branch="$(read_meta_value "$meta_file" "last_branch")"
     last_head="$(read_meta_value "$meta_file" "last_head")"
     db_state="$(read_meta_value "$meta_file" "db_state")"
     schema_fp="$(read_meta_value "$meta_file" "schema_fp")"
+    slot_gen="$(read_meta_value "$meta_file" "golden_gen")"
+
+    golden_col="-"
+    if [[ -n "$cur_gen" && -n "$db_state" ]]; then
+      if [[ "$slot_gen" == "$cur_gen" ]]; then
+        golden_col="fresh"
+      elif [[ ( "$db_state" == "ready" || "$db_state" == "dirty" ) && -n "$last_wt" && "$last_wt" != "__GOLDEN__" && "$last_wt" != "$TRUNK_WORKTREE_ID" ]]; then
+        golden_col="sticky"
+      else
+        golden_col="stale"
+      fi
+    fi
 
     if [[ "$lock_state" == "busy" && -f "$LOCK_DIR/slot-$k.holder" ]]; then
       local holder_line holder_wt holder_branch
@@ -107,8 +174,8 @@ print_status() {
       fi
     fi
 
-    printf "%-7s %-11s %-7s %-10s %-10s %-42s %-24s %-10s %-26s\n" \
-      "slot-$k" "$prov" "$lock_state" "$db_state" "$schema_fp" "$last_wt" "$last_branch" "$last_head" "$serve_info"
+    printf "%-7s %-11s %-7s %-10s %-8s %-10s %-40s %-24s %-10s %-26s\n" \
+      "slot-$k" "$prov" "$lock_state" "$db_state" "$golden_col" "$schema_fp" "$last_wt" "$last_branch" "$last_head" "$serve_info"
   done
 }
 
@@ -116,10 +183,8 @@ print_history() {
   local limit="$1"
   if [[ ! -s "$HISTORY_FILE" ]]; then
     echo "[provision-slots] No slot lease history recorded yet at $HISTORY_FILE."
-    return 0
-  fi
-
-  python3 - "$HISTORY_FILE" "$limit" <<'PY'
+  else
+    python3 - "$HISTORY_FILE" "$limit" <<'PY'
 import json
 import sys
 from collections import Counter
@@ -183,6 +248,51 @@ for r in rows[-limit:]:
         f"{wait_s:>6} {rest_s:>6} {exec_s:>6} {str(rc):>3} {mode:<8} {branch:<26} {wt}"
     )
 PY
+  fi
+
+  if [[ -s "$PROMOTE_HISTORY_FILE" ]]; then
+    echo ""
+    python3 - "$PROMOTE_HISTORY_FILE" "$limit" <<'PY'
+import json
+import sys
+
+path, limit_str = sys.argv[1], sys.argv[2]
+limit = max(1, int(limit_str))
+rows = []
+with open(path, "r", encoding="utf-8", errors="replace") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+if rows:
+    print(f"[promote-history] recent={min(limit, len(rows))}/{len(rows)}")
+    print(
+        f"{'TIMESTAMP':<20} {'HEAD':<9} {'MIG':<4} {'GLD':<6} {'SLOT_SYNC':<9} "
+        f"{'SYNC':>6} {'PRIM':>6} {'GLDN':>6} {'STGB':>6} {'TOTAL':>7} {'RC':>3}"
+    )
+    for r in rows[-limit:]:
+        ts = str(r.get("ts", ""))[:19]
+        hd = str(r.get("head", "?"))[:8]
+        mig = "yes" if r.get("primary_migrated") else "no"
+        gld = "reblt" if r.get("golden_rebuilt") else "cache"
+        ss = str(r.get("slot_sync", "?"))[:9]
+        s_ms = f"{r.get('sync_ms', 0)/1000:.1f}s"
+        p_ms = f"{r.get('primary_ms', 0)/1000:.1f}s"
+        g_ms = f"{r.get('golden_ms', 0)/1000:.1f}s"
+        b_ms = f"{r.get('stage_b_ms', 0)/1000:.1f}s"
+        t_ms = f"{r.get('total_ms', 0)/1000:.1f}s"
+        rc = r.get("rc", "?")
+        print(
+            f"{ts:<20} {hd:<9} {mig:<4} {gld:<6} {ss:<9} "
+            f"{s_ms:>6} {p_ms:>6} {g_ms:>6} {b_ms:>6} {t_ms:>7} {str(rc):>3}"
+        )
+PY
+  fi
 }
 
 if [[ "$STATUS_ONLY" -eq 1 || "$HISTORY_LIMIT" -gt 0 ]]; then
@@ -203,13 +313,28 @@ fi
 
 mkdir -p "$WSL_SLOTS_ROOT/golden"
 
-ensure_golden_fp() {
-  local fp
-  fp="$(compute_schema_fp "$WSL_PRIMARY_BENCH/apps/ism")"
-  local tmp_fp="${GOLDEN_FP_FILE}.tmp.$$"
-  printf '%s\n' "$fp" > "$tmp_fp"
-  mv -f "$tmp_fp" "$GOLDEN_FP_FILE"
-  printf '%s' "$fp"
+read_primary_apps_csv() {
+  python3 - "$WSL_PRIMARY_BENCH/sites/development.localhost/site_config.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+apps = json.load(open(p, "r", encoding="utf-8")).get("installed_apps", []) if os.path.isfile(p) else []
+apps = [a for a in apps if a and a != "frappe"]
+print(",".join(apps) if apps else "erpnext,hrms,ism")
+PY
+}
+
+ensure_slot_asset_symlinks_host() {
+  local slot_host_dir="$1"
+  local assets_dir="$slot_host_dir/sites/assets"
+  [[ -d "$assets_dir" ]] || return 0
+  for item in assets.json assets-rtl.json css js locale; do
+    if [[ -e "$WSL_PRIMARY_BENCH/sites/assets/$item" ]]; then
+      if [[ -e "$assets_dir/$item" && ! -L "$assets_dir/$item" ]]; then
+        rm -rf "$assets_dir/$item"
+      fi
+      ln -sfn "../../../../frappe-bench/sites/assets/$item" "$assets_dir/$item"
+    fi
+  done
 }
 
 provision_bench_fs_and_venv() {
@@ -219,9 +344,31 @@ provision_bench_fs_and_venv() {
   local db_pw="$4"
   local redis_idx="$5"
   local refresh_ism="${6:-0}"
+  local host_slot_dir="$WSL_SLOTS_ROOT/$bench_dir_name"
+
+  mkdir -p "$host_slot_dir/apps"
+  if [[ ! -f "$host_slot_dir/apps/ism/pyproject.toml" || "$refresh_ism" -eq 1 ]]; then
+    for stale_name in .git .codegraph ism-agent-os scripts; do
+      if [[ ! -e "$WSL_PRIMARY_BENCH/apps/ism/$stale_name" && -e "$host_slot_dir/apps/ism/$stale_name" ]]; then
+        rm -rf "$host_slot_dir/apps/ism/$stale_name"
+      fi
+    done
+    rsync -a --delete \
+      --exclude='.git' \
+      --exclude='.codegraph' \
+      --exclude='node_modules' \
+      --exclude='__pycache__' \
+      --exclude='*.pyc' \
+      --exclude='.pytest_cache' \
+      --exclude='.venv' \
+      --exclude='.idea' \
+      --exclude='.vscode' \
+      "$WSL_PRIMARY_BENCH/apps/ism/" "$host_slot_dir/apps/ism/"
+  fi
+
   docker exec -i "$CONTAINER_FRAPPE" bash -s -- \
     "$bench_dir_name" "$site_name" "$db_name" "$db_pw" "$redis_idx" \
-    "$CONTAINER_PRIMARY_BENCH" "$CONTAINER_SLOTS_ROOT" "$refresh_ism" <<'EOF'
+    "$CONTAINER_PRIMARY_BENCH" "$CONTAINER_SLOTS_ROOT" <<'EOF'
 set -euo pipefail
 BENCH_DIR_NAME="$1"
 SITE_NAME="$2"
@@ -230,7 +377,6 @@ SLOT_PW="$4"
 REDIS_IDX="$5"
 PRIMARY_BENCH="$6"
 SLOTS_ROOT="$7"
-REFRESH_ISM="$8"
 SLOT_DIR="$SLOTS_ROOT/$BENCH_DIR_NAME"
 
 mkdir -p \
@@ -249,11 +395,6 @@ for app in frappe erpnext hrms induct_shop; do
     ln -sfn "$PRIMARY_BENCH/apps/$app" "$SLOT_DIR/apps/$app"
   fi
 done
-
-if [[ ! -f "$SLOT_DIR/apps/ism/pyproject.toml" || "$REFRESH_ISM" -eq 1 ]]; then
-  rm -rf "$SLOT_DIR/apps/ism"
-  cp -a "$PRIMARY_BENCH/apps/ism" "$SLOT_DIR/apps/ism"
-fi
 
 if [[ ! -d "$SLOT_DIR/env" ]]; then
   echo "[provision-slots] Hardlink-cloning env for $BENCH_DIR_NAME..."
@@ -304,15 +445,12 @@ for app in frappe erpnext hrms induct_shop; do
 done
 ln -sfn "$SLOT_DIR/apps/ism/ism/public" "$SLOT_DIR/sites/assets/ism"
 
-for f in assets.json assets-rtl.json; do
-  if [[ -f "$PRIMARY_BENCH/sites/assets/$f" ]]; then
-    cp -f "$PRIMARY_BENCH/sites/assets/$f" "$SLOT_DIR/sites/assets/$f"
-  fi
-done
-for d in css js locale; do
-  if [[ -d "$PRIMARY_BENCH/sites/assets/$d" ]]; then
-    rm -rf "$SLOT_DIR/sites/assets/$d"
-    cp -a "$PRIMARY_BENCH/sites/assets/$d" "$SLOT_DIR/sites/assets/$d"
+for item in assets.json assets-rtl.json css js locale; do
+  if [[ -e "$PRIMARY_BENCH/sites/assets/$item" ]]; then
+    if [[ -e "$SLOT_DIR/sites/assets/$item" && ! -L "$SLOT_DIR/sites/assets/$item" ]]; then
+      rm -rf "$SLOT_DIR/sites/assets/$item"
+    fi
+    ln -sfn "../../../../frappe-bench/sites/assets/$item" "$SLOT_DIR/sites/assets/$item"
   fi
 done
 
@@ -373,33 +511,213 @@ provision_slot_fs_and_venv() {
   provision_bench_fs_and_venv "slot-${k}" "wt${k}.localhost" "_ism_slot_${k}" "ism_slot_${k}_pw" "$k" "$refresh_ism"
 }
 
-build_clean_golden_snapshot() {
-  echo "[provision-slots] Building clean Golden DB snapshot from fresh site + ism.testing.catalog.seed_all..."
+seed_slot_from_golden() {
+  local k="$1"
+  local slot_db="_ism_slot_${k}"
+  local slot_pw="ism_slot_${k}_pw"
+  local site_name="wt${k}.localhost"
+  local meta_file="$LOCK_DIR/slot-$k.meta"
+
+  echo "[provision-slots] Seeding MariaDB '$slot_db' & Redis /$k for slot-$k..."
+  write_meta_file "$meta_file" "__GOLDEN__" "main" "golden" "restoring" "" ""
+
+  local snap_gen="" snap_fp=""
+  exec 203>"$LOCK_DIR/golden-build.lock"
+  flock -s 203
+  snap_gen="$(read_golden_gen)"
+  snap_fp="$(read_meta_value "$GOLDEN_META_FILE" "schema_fp")"
+  [[ -z "$snap_fp" && -s "$GOLDEN_FP_FILE" ]] && snap_fp="$(tr -d '[:space:]' < "$GOLDEN_FP_FILE")"
   (
-    exec 203>"$LOCK_DIR/golden-build.lock"
-    flock 203
+    exec 202>"$LOCK_DIR/mariadb-restore.lock"
+    flock 202
+    restore_sql_gz_to_db "$GOLDEN_FILE" "$slot_db" "$slot_pw"
+  )
+  exec 203>&-
 
-    local golden_wsl="$WSL_SLOTS_ROOT/golden-site"
-    local golden_ctr="$CONTAINER_SLOTS_ROOT/golden-site"
-    local golden_site="golden.localhost"
-    local golden_db="_ism_golden_build"
-    local golden_pw="ism_golden_pw"
+  docker exec "$CONTAINER_REDIS_CACHE" redis-cli -n "$k" FLUSHDB >/dev/null
+  docker exec "$CONTAINER_REDIS_QUEUE" redis-cli -n "$k" FLUSHDB >/dev/null
 
-    provision_bench_fs_and_venv "golden-site" "$golden_site" "$golden_db" "$golden_pw" "9" "1"
+  local slot_fp
+  slot_fp="$(compute_schema_fp "$WSL_SLOTS_ROOT/slot-$k/apps/ism")"
+  if [[ -n "$snap_fp" && "$slot_fp" != "$snap_fp" ]]; then
+    echo "[provision-slots] slot-$k schema differs from golden (${snap_fp:0:8} -> ${slot_fp:0:8}); running bench migrate..."
+    docker exec -w "$CONTAINER_SLOTS_ROOT/slot-$k" "$CONTAINER_FRAPPE" bash -c \
+      "export PATH=\"$CONTAINER_SLOTS_ROOT/slot-$k/env/bin:/home/frappe/.local/bin:/home/frappe/.nvm/versions/node/v24.13.0/bin:/home/frappe/.pyenv/shims:\$PATH\"; bench --site '$site_name' migrate"
+  fi
 
-    local apps_csv
-    apps_csv="$(python3 - "$WSL_PRIMARY_BENCH/sites/development.localhost/site_config.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-apps = json.load(open(p, "r", encoding="utf-8")).get("installed_apps", []) if os.path.isfile(p) else []
-apps = [a for a in apps if a and a != "frappe"]
-print(",".join(apps) if apps else "erpnext,hrms,ism")
-PY
-)"
+  write_meta_file "$meta_file" "__GOLDEN__" "main" "golden" "golden" "$slot_fp" "$snap_gen"
+}
 
-    install_clean_ism_site "$golden_wsl" "$golden_ctr" "$golden_site" "$golden_db" "$golden_pw" "9" "$apps_csv"
+warm_stale_slots() {
+  exec 204>"$LOCK_DIR/bg-warm.lock"
+  if ! flock -n 204; then
+    echo "[bg-warm] Background warmer already active; coalescing."
+    return 0
+  fi
 
-    docker exec -w "$golden_ctr/sites" "$CONTAINER_FRAPPE" "$golden_ctr/env/bin/python" - <<'PY'
+  printf '%s\n' "$$" > "$BG_WARM_PID_FILE"
+  trap 'rm -f "$BG_WARM_PID_FILE"' EXIT
+
+  local pass
+  for pass in 1 2 3; do
+    local target_gen
+    target_gen="$(read_golden_gen)"
+    if [[ -z "$target_gen" || ! -s "$GOLDEN_FILE" ]]; then
+      break
+    fi
+
+    for k in $(seq 1 "$SLOT_COUNT"); do
+      (
+        exec 200>"$LOCK_DIR/slot-$k.lock"
+        if ! flock -n 200; then
+          echo "[bg-warm] slot-$k is busy; skipping."
+          exit 0
+        fi
+
+        local slot_host_dir="$WSL_SLOTS_ROOT/slot-$k"
+        local meta_file="$LOCK_DIR/slot-$k.meta"
+        local cur_st cur_wt cur_gen
+        cur_st="$(read_meta_value "$meta_file" "db_state")"
+        cur_wt="$(read_meta_value "$meta_file" "last_worktree")"
+        cur_gen="$(read_meta_value "$meta_file" "golden_gen")"
+
+        if [[ ! -d "$slot_host_dir/env" || ! -f "$slot_host_dir/sites/wt${k}.localhost/site_config.json" ]]; then
+          provision_slot_fs_and_venv "$k" 1
+          seed_slot_from_golden "$k"
+          echo "[bg-warm] Provisioned & warmed slot-$k (gen=$target_gen)."
+          exit 0
+        fi
+
+        ensure_slot_asset_symlinks_host "$slot_host_dir"
+
+        if [[ ( "$cur_st" == "golden" || "$cur_st" == "ready" ) && "$cur_gen" == "$target_gen" ]]; then
+          exit 0
+        fi
+
+        if [[ ( "$cur_st" == "ready" || "$cur_st" == "dirty" ) && -n "$cur_wt" && "$cur_wt" != "__GOLDEN__" && "$cur_wt" != "$TRUNK_WORKTREE_ID" ]]; then
+          echo "[bg-warm] Preserving sticky feature worktree on slot-$k ($cur_wt)."
+          exit 0
+        fi
+
+        provision_slot_fs_and_venv "$k" 1
+        seed_slot_from_golden "$k"
+        echo "[bg-warm] Warmed slot-$k to golden gen=$target_gen."
+      )
+    done
+
+    local latest_gen
+    latest_gen="$(read_golden_gen)"
+    if [[ "$latest_gen" == "$target_gen" ]]; then
+      break
+    fi
+  done
+}
+
+if [[ "$WARM_STALE" -eq 1 ]]; then
+  warm_stale_slots
+  exit 0
+fi
+
+spawn_bg_warmer() {
+  local cur_gen="$1"
+  local needs_warm=0
+  for k in $(seq 1 "$SLOT_COUNT"); do
+    local slot_host_dir="$WSL_SLOTS_ROOT/slot-$k"
+    local mf="$LOCK_DIR/slot-$k.meta"
+    local st wt sgen
+    st="$(read_meta_value "$mf" "db_state")"
+    wt="$(read_meta_value "$mf" "last_worktree")"
+    sgen="$(read_meta_value "$mf" "golden_gen")"
+    if [[ ! -d "$slot_host_dir/env" ]]; then
+      needs_warm=1
+      break
+    fi
+    if [[ "$sgen" != "$cur_gen" ]]; then
+      if [[ "$st" == "golden" || "$st" == "restoring" || -z "$st" || "$wt" == "$TRUNK_WORKTREE_ID" || "$wt" == "__GOLDEN__" ]]; then
+        needs_warm=1
+        break
+      fi
+    fi
+  done
+
+  if [[ "$needs_warm" -eq 1 ]]; then
+    if command -v setsid >/dev/null 2>&1; then
+      setsid bash "$SCRIPT_DIR/provision-slots.sh" --slots "$SLOT_COUNT" --warm-stale \
+        </dev/null >>"$BG_WARM_LOG_FILE" 2>&1 &
+    else
+      nohup bash "$SCRIPT_DIR/provision-slots.sh" --slots "$SLOT_COUNT" --warm-stale \
+        </dev/null >>"$BG_WARM_LOG_FILE" 2>&1 &
+    fi
+    local bg_pid=$!
+    echo "[provision-slots] Spawned detached background slot pre-warmer (pid=$bg_pid, log=$BG_WARM_LOG_FILE)."
+  fi
+}
+
+GOLDEN_REBUILT=0
+
+build_or_reuse_golden_snapshot() {
+  exec 203>"$LOCK_DIR/golden-build.lock"
+  flock 203
+
+  local apps_csv upstream_fp schema_fp golden_input_fp prev_input_fp cur_gen
+  apps_csv="$(read_primary_apps_csv)"
+  upstream_fp="$(compute_upstream_fp "$WSL_PRIMARY_BENCH" "$apps_csv")"
+  schema_fp="$(compute_schema_fp "$WSL_PRIMARY_BENCH/apps/ism")"
+  golden_input_fp="$(compute_golden_input_fp "$WSL_PRIMARY_BENCH/apps/ism" "$upstream_fp")"
+  prev_input_fp="$(read_meta_value "$GOLDEN_META_FILE" "golden_input_fp")"
+  cur_gen="$(read_golden_gen)"
+
+  local force_cold_base=0
+  if [[ "$REBUILD_BASE" -eq 1 || "$RECREATE" -eq 1 ]]; then
+    force_cold_base=1
+  fi
+
+  local must_build=0
+  if [[ ! -s "$GOLDEN_FILE" || "$RECREATE" -eq 1 || "$FORCE_GOLDEN" -eq 1 || "$REBUILD_BASE" -eq 1 ]]; then
+    must_build=1
+  elif [[ "$REFRESH_GOLDEN" -eq 1 ]]; then
+    if [[ -z "$prev_input_fp" || "$prev_input_fp" != "$golden_input_fp" || -z "$cur_gen" ]]; then
+      must_build=1
+    fi
+  fi
+
+  if [[ "$must_build" -eq 0 ]]; then
+    if [[ ! -s "$GOLDEN_FP_FILE" ]]; then
+      local tmp_fp="${GOLDEN_FP_FILE}.tmp.$$"
+      printf '%s\n' "$schema_fp" > "$tmp_fp"
+      mv -f "$tmp_fp" "$GOLDEN_FP_FILE"
+    fi
+    if [[ -z "$cur_gen" ]]; then
+      local gz_sha
+      gz_sha="$(sha256sum "$GOLDEN_FILE" | cut -c1-8)"
+      cur_gen="legacy-${gz_sha}"
+      write_golden_meta "$cur_gen" "$schema_fp" "$golden_input_fp" "$upstream_fp" "existing"
+    fi
+    if [[ "$REFRESH_GOLDEN" -eq 1 ]]; then
+      echo "[provision-slots] Golden DB unchanged (input_fp=${golden_input_fp:0:8}, schema_fp=${schema_fp:0:8}, gen=${cur_gen}); skipping rebuild."
+    fi
+    GOLDEN_FP="$schema_fp"
+    GOLDEN_GEN="$cur_gen"
+    GOLDEN_REBUILT=0
+    exec 203>&-
+    return 0
+  fi
+
+  echo "[provision-slots] Building clean Golden DB snapshot (input_fp=${golden_input_fp:0:8}, upstream_fp=${upstream_fp:0:8}, force_base=${force_cold_base})..."
+
+  local golden_wsl="$WSL_SLOTS_ROOT/golden-site"
+  local golden_ctr="$CONTAINER_SLOTS_ROOT/golden-site"
+  local golden_site="golden.localhost"
+  local golden_db="_ism_golden_build"
+  local golden_pw="ism_golden_pw"
+
+  provision_bench_fs_and_venv "golden-site" "$golden_site" "$golden_db" "$golden_pw" "9" "1"
+
+  install_clean_ism_site \
+    "$golden_wsl" "$golden_ctr" "$golden_site" "$golden_db" "$golden_pw" "9" \
+    "$apps_csv" "$force_cold_base" "1" "1"
+
+  docker exec -w "$golden_ctr/sites" "$CONTAINER_FRAPPE" "$golden_ctr/env/bin/python" - <<'PY'
 import frappe
 frappe.init(site="golden.localhost", sites_path=".")
 frappe.connect()
@@ -412,101 +730,97 @@ finally:
     frappe.destroy()
 PY
 
-    local tmp_golden="${GOLDEN_FILE}.tmp.$$"
-    docker exec "$CONTAINER_DB" mariadb-dump -uroot -p"$MARIADB_ROOT_PW" \
-      --single-transaction --routines --triggers "$golden_db" \
-      | gzip -1 > "$tmp_golden"
-    if [[ ! -s "$tmp_golden" ]]; then
-      rm -f "$tmp_golden"
-      echo "[provision-slots] Clean Golden dump produced an empty archive." >&2
-      exit 1
-    fi
-    mv -f "$tmp_golden" "$GOLDEN_FILE"
-  )
+  dump_db_to_gz "$golden_db" "$GOLDEN_FILE"
+
+  local tmp_fp="${GOLDEN_FP_FILE}.tmp.$$"
+  printf '%s\n' "$schema_fp" > "$tmp_fp"
+  mv -f "$tmp_fp" "$GOLDEN_FP_FILE"
+
+  local gz_sha new_gen
+  gz_sha="$(sha256sum "$GOLDEN_FILE" | cut -c1-8)"
+  new_gen="$(date +%s)-${gz_sha}"
+  write_golden_meta "$new_gen" "$schema_fp" "$golden_input_fp" "$upstream_fp" "rebuilt"
+
+  GOLDEN_FP="$schema_fp"
+  GOLDEN_GEN="$new_gen"
+  GOLDEN_REBUILT=1
+  echo "[provision-slots] Clean Golden DB snapshot updated ($(du -h "$GOLDEN_FILE" | cut -f1), schema_fp=${GOLDEN_FP:0:8}, gen=${GOLDEN_GEN})."
+  exec 203>&-
 }
 
-if [[ ! -s "$GOLDEN_FILE" || "$REFRESH_GOLDEN" -eq 1 || "$RECREATE" -eq 1 ]]; then
-  build_clean_golden_snapshot
-  GOLDEN_FP="$(ensure_golden_fp)"
-  echo "[provision-slots] Clean Golden DB snapshot updated ($(du -h "$GOLDEN_FILE" | cut -f1), schema_fp=${GOLDEN_FP:0:8})."
-elif [[ ! -s "$GOLDEN_FP_FILE" ]]; then
-  GOLDEN_FP="$(ensure_golden_fp)"
-else
-  GOLDEN_FP="$(tr -d '[:space:]' < "$GOLDEN_FP_FILE")"
+EFFECTIVE_SYNC="$SLOT_SYNC"
+if [[ "$EFFECTIVE_SYNC" == "auto" ]]; then
+  if [[ "$RECREATE" -eq 1 ]]; then
+    EFFECTIVE_SYNC="eager"
+  elif [[ "$REFRESH_GOLDEN" -eq 1 ]]; then
+    EFFECTIVE_SYNC="bg-warm"
+  else
+    EFFECTIVE_SYNC="lazy"
+  fi
 fi
 
-seed_slot_db_and_migrate() {
-  local k="$1"
-  local slot_db="_ism_slot_${k}"
-  local slot_pw="ism_slot_${k}_pw"
-  local site_name="wt${k}.localhost"
-  local meta_file="$LOCK_DIR/slot-$k.meta"
+if [[ "$EFFECTIVE_SYNC" == "none" && "$RECREATE" -eq 0 && -s "$GOLDEN_FILE" ]]; then
+  echo "[provision-slots] --slot-sync none: skipping golden refresh and slot updates."
+  exit 0
+fi
 
-  echo "[provision-slots] Seeding MariaDB '$slot_db' & Redis /$k for slot-$k..."
-  write_meta_file "$meta_file" "__GOLDEN__" "main" "golden" "restoring" ""
-
-  (
-    exec 202>"$LOCK_DIR/mariadb-restore.lock"
-    flock 202
-    docker exec "$CONTAINER_DB" mariadb -uroot -p"$MARIADB_ROOT_PW" -e \
-      "DROP DATABASE IF EXISTS \`$slot_db\`; CREATE DATABASE \`$slot_db\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE USER IF NOT EXISTS '$slot_db'@'%' IDENTIFIED BY '$slot_pw'; ALTER USER '$slot_db'@'%' IDENTIFIED BY '$slot_pw'; GRANT ALL PRIVILEGES ON \`$slot_db\`.* TO '$slot_db'@'%'; FLUSH PRIVILEGES;"
-    { echo "SET SESSION sql_log_bin=0;"; gunzip -c "$GOLDEN_FILE"; } | docker exec -i "$CONTAINER_DB" mariadb -uroot -p"$MARIADB_ROOT_PW" "$slot_db"
-  )
-
-  docker exec "$CONTAINER_REDIS_CACHE" redis-cli -n "$k" FLUSHDB >/dev/null
-  docker exec "$CONTAINER_REDIS_QUEUE" redis-cli -n "$k" FLUSHDB >/dev/null
-
-  docker exec -w "$CONTAINER_SLOTS_ROOT/slot-$k" "$CONTAINER_FRAPPE" bash -c \
-    "export PATH=\"$CONTAINER_SLOTS_ROOT/slot-$k/env/bin:/home/frappe/.local/bin:/home/frappe/.nvm/versions/node/v24.13.0/bin:/home/frappe/.pyenv/shims:\$PATH\"; bench --site '$site_name' clear-cache && bench --site '$site_name' migrate"
-
-  local slot_fp
-  slot_fp="$(compute_schema_fp "$WSL_SLOTS_ROOT/slot-$k/apps/ism")"
-  write_meta_file "$meta_file" "__GOLDEN__" "main" "golden" "golden" "$slot_fp"
-}
+build_or_reuse_golden_snapshot
 
 for k in $(seq 1 "$SLOT_COUNT"); do
-  (
-    exec 200>"$LOCK_DIR/slot-$k.lock"
-    flock 200
+  slot_host_dir="$WSL_SLOTS_ROOT/slot-$k"
+  meta_file="$LOCK_DIR/slot-$k.meta"
+  needs_create=0
+  if [[ "$RECREATE" -eq 1 || ! -d "$slot_host_dir/env" || ! -d "$slot_host_dir/sites/wt${k}.localhost/logs" || ! -f "$slot_host_dir/sites/wt${k}.localhost/site_config.json" ]]; then
+    needs_create=1
+  fi
 
-    slot_host_dir="$WSL_SLOTS_ROOT/slot-$k"
-    meta_file="$LOCK_DIR/slot-$k.meta"
-    needs_create=0
-    if [[ "$RECREATE" -eq 1 || ! -d "$slot_host_dir/env" || ! -d "$slot_host_dir/sites/wt${k}.localhost/logs" || ! -f "$slot_host_dir/sites/wt${k}.localhost/site_config.json" ]]; then
-      needs_create=1
-    fi
+  if [[ "$needs_create" -eq 1 || "$EFFECTIVE_SYNC" == "eager" ]]; then
+    (
+      exec 200>"$LOCK_DIR/slot-$k.lock"
+      flock 200
 
-    if [[ "$RECREATE" -eq 1 && -d "$slot_host_dir" ]]; then
-      echo "[provision-slots] Recreating slot-$k..."
-      rm -rf "$slot_host_dir"
-    fi
-
-    if [[ "$needs_create" -eq 1 || "$REFRESH_GOLDEN" -eq 1 ]]; then
-      provision_slot_fs_and_venv "$k" "$REFRESH_GOLDEN"
-      seed_slot_db_and_migrate "$k"
-      echo "[provision-slots] slot-$k ready (wt${k}.localhost, port 800${k}, redis /$k)."
-    else
-      # Backfill schema_fp / updated_at_epoch on legacy golden/ready slots without rebuilding.
-      cur_db_state="$(read_meta_value "$meta_file" "db_state")"
-      cur_fp="$(read_meta_value "$meta_file" "schema_fp")"
-      cur_epoch="$(read_meta_value "$meta_file" "updated_at_epoch")"
-      if [[ -z "$cur_fp" || -z "$cur_epoch" ]] && [[ "$cur_db_state" == "golden" || "$cur_db_state" == "dirty" || "$cur_db_state" == "ready" ]]; then
-        cur_wt="$(read_meta_value "$meta_file" "last_worktree")"
-        cur_br="$(read_meta_value "$meta_file" "last_branch")"
-        cur_hd="$(read_meta_value "$meta_file" "last_head")"
-        [[ "$cur_db_state" == "dirty" ]] && cur_db_state="ready"
-        if [[ -z "$cur_fp" ]]; then
-          if [[ "$cur_db_state" == "golden" ]]; then
-            cur_fp="$GOLDEN_FP"
-          else
-            cur_fp="$(compute_schema_fp "$slot_host_dir/apps/ism")"
-          fi
-        fi
-        write_meta_file "$meta_file" "${cur_wt:-__GOLDEN__}" "${cur_br:-main}" "${cur_hd:-golden}" "$cur_db_state" "$cur_fp"
+      if [[ "$RECREATE" -eq 1 && -d "$slot_host_dir" ]]; then
+        echo "[provision-slots] Recreating slot-$k..."
+        rm -rf "$slot_host_dir"
       fi
-      echo "[provision-slots] slot-$k already provisioned (pass --refresh-golden or --recreate to rebuild)."
-    fi
-  )
+
+      provision_slot_fs_and_venv "$k" "1"
+      seed_slot_from_golden "$k"
+      echo "[provision-slots] slot-$k ready (wt${k}.localhost, port 800${k}, redis /$k, gen=$GOLDEN_GEN)."
+    )
+  else
+    # Non-blocking lightweight maintenance on idle slots (asset symlink upgrade & legacy metadata backfill).
+    (
+      exec 200>"$LOCK_DIR/slot-$k.lock"
+      if flock -n 200; then
+        ensure_slot_asset_symlinks_host "$slot_host_dir"
+        cur_db_state="$(read_meta_value "$meta_file" "db_state")"
+        cur_fp="$(read_meta_value "$meta_file" "schema_fp")"
+        cur_gen="$(read_meta_value "$meta_file" "golden_gen")"
+        cur_epoch="$(read_meta_value "$meta_file" "updated_at_epoch")"
+        if [[ "$GOLDEN_REBUILT" -eq 0 && -z "$cur_gen" && "$cur_db_state" == "golden" && "$cur_fp" == "$GOLDEN_FP" ]]; then
+          write_meta_file "$meta_file" "__GOLDEN__" "main" "golden" "golden" "$GOLDEN_FP" "$GOLDEN_GEN"
+        elif [[ -z "$cur_fp" || -z "$cur_epoch" ]] && [[ "$cur_db_state" == "golden" || "$cur_db_state" == "dirty" || "$cur_db_state" == "ready" ]]; then
+          cur_wt="$(read_meta_value "$meta_file" "last_worktree")"
+          cur_br="$(read_meta_value "$meta_file" "last_branch")"
+          cur_hd="$(read_meta_value "$meta_file" "last_head")"
+          [[ "$cur_db_state" == "dirty" ]] && cur_db_state="ready"
+          if [[ -z "$cur_fp" ]]; then
+            if [[ "$cur_db_state" == "golden" ]]; then
+              cur_fp="$GOLDEN_FP"
+            else
+              cur_fp="$(compute_schema_fp "$slot_host_dir/apps/ism")"
+            fi
+          fi
+          write_meta_file "$meta_file" "${cur_wt:-__GOLDEN__}" "${cur_br:-main}" "${cur_hd:-golden}" "$cur_db_state" "$cur_fp" "$cur_gen"
+        fi
+      fi
+    )
+  fi
 done
 
-echo "[provision-slots] All $SLOT_COUNT slot(s) ready."
+if [[ "$EFFECTIVE_SYNC" == "bg-warm" ]]; then
+  spawn_bg_warmer "$GOLDEN_GEN"
+fi
+
+echo "[provision-slots] Completed (slots=$SLOT_COUNT, sync=$EFFECTIVE_SYNC, golden_rebuilt=$GOLDEN_REBUILT, gen=$GOLDEN_GEN)."

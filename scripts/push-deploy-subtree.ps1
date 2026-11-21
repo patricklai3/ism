@@ -2,6 +2,7 @@ param (
     [string]$Remote = "frappe-deploy",
     [string]$Branch = "staging",
     [switch]$Force = $false,
+    [switch]$NoCache = $false,
     [switch]$DryRun = $false
 )
 
@@ -18,10 +19,49 @@ if ($DirtyIsmFrappe) {
     $DirtyIsmFrappe | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
 }
 
-Write-Host "[push-deploy-subtree] Splitting ism-frappe from HEAD in $RepoRoot..." -ForegroundColor Cyan
-$SplitSha = (git -C $RepoRoot subtree split --prefix=ism-frappe HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $SplitSha) {
-    throw "git subtree split --prefix=ism-frappe HEAD failed."
+$HeadSha = ((git -C $RepoRoot rev-parse HEAD).Trim())
+if ($LASTEXITCODE -ne 0 -or -not $HeadSha) {
+    throw "Failed to resolve HEAD in $RepoRoot"
+}
+
+$GitCommonDir = ((git -C $RepoRoot rev-parse --path-format=absolute --git-common-dir).Trim())
+$CacheFile = Join-Path $GitCommonDir "ism-subtree-cache.json"
+$SplitSha = ""
+
+if (-not $NoCache -and (Test-Path $CacheFile)) {
+    try {
+        $CacheObj = Get-Content -Raw -Path $CacheFile | ConvertFrom-Json
+        $CachedHead = [string]$CacheObj.head_sha
+        $CachedSplit = [string]$CacheObj.split_sha
+        if ($CachedHead -and $CachedSplit) {
+            git -C $RepoRoot cat-file -e "${CachedSplit}^{commit}" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                if ($CachedHead -eq $HeadSha) {
+                    $SplitSha = $CachedSplit
+                    Write-Host "[push-deploy-subtree] Reusing cached subtree split $SplitSha (HEAD unchanged)." -ForegroundColor Cyan
+                } else {
+                    git -C $RepoRoot merge-base --is-ancestor $CachedHead $HeadSha 2>$null
+                    if ($LASTEXITCODE -eq 0) {
+                        $DeltaCommits = (git -C $RepoRoot rev-list "${CachedHead}..${HeadSha}" -- ism-frappe 2>$null)
+                        if ($LASTEXITCODE -eq 0 -and -not $DeltaCommits) {
+                            $SplitSha = $CachedSplit
+                            Write-Host "[push-deploy-subtree] Reusing cached subtree split $SplitSha (no ism-frappe/ commits since $($CachedHead.Substring(0,8)))." -ForegroundColor Cyan
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        $SplitSha = ""
+    }
+}
+
+if (-not $SplitSha) {
+    Write-Host "[push-deploy-subtree] Splitting ism-frappe from HEAD in $RepoRoot..." -ForegroundColor Cyan
+    $SplitSha = (git -C $RepoRoot subtree split --prefix=ism-frappe HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $SplitSha) {
+        throw "git subtree split --prefix=ism-frappe HEAD failed."
+    }
 }
 
 git -C $RepoRoot cat-file -e "${SplitSha}:pyproject.toml"
@@ -32,6 +72,15 @@ if ($LASTEXITCODE -ne 0) {
 git -C $RepoRoot cat-file -e "${SplitSha}:ism/hooks.py"
 if ($LASTEXITCODE -ne 0) {
     throw "Split commit $SplitSha is missing ism/hooks.py at root."
+}
+
+if ($GitCommonDir -and (Test-Path $GitCommonDir)) {
+    $NewCache = @{
+        head_sha   = $HeadSha
+        split_sha  = $SplitSha
+        updated_at = (Get-Date).ToString("o")
+    } | ConvertTo-Json
+    [System.IO.File]::WriteAllText($CacheFile, $NewCache, [System.Text.UTF8Encoding]::new($false))
 }
 
 if ($DryRun) {

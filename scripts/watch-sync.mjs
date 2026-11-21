@@ -8,7 +8,7 @@ const GIT_ROOT_CANDIDATE = fileURLToPath(new URL("..", import.meta.url)).replace
 const ISM_FRAPPE_DIR = path.join(GIT_ROOT_CANDIDATE, "ism-frappe");
 const WATCH_DIR = process.env.ISM_WATCH_DIR || ISM_FRAPPE_DIR;
 const DEBOUNCE_MS = 250;
-const IGNORE_REGEX = /([\\/](\.git|node_modules|__pycache__|\.pytest_cache|\.venv|\.idea|\.vscode)([\\/]|$))|(\.(tmp|swp|lock)$)/;
+const IGNORE_REGEX = /([\\/](\.git|\.codegraph|node_modules|__pycache__|\.pytest_cache|\.venv|\.idea|\.vscode)([\\/]|$))|(\.(tmp|swp|lock)$)/;
 
 const defaultDest = "/home/real2/projects/.project/frappe_docker/development/frappe-bench/apps/ism/";
 let wslDest = process.env.ISM_WSL_DEST || defaultDest;
@@ -59,15 +59,20 @@ if (wslDest === defaultDest && process.env.ISM_ALLOW_WORKTREE_MAIN !== "1") {
 }
 
 let wslSource = "";
-try {
-  const normalized = WATCH_DIR.replace(/\\/g, "/");
-  wslSource = execSync(`wsl -d ${DISTRO} wslpath -u "${normalized}"`, { encoding: "utf-8" }).trim() + "/";
-} catch (err) {
-  console.error(`\x1b[31mFailed to resolve WSL path for ${WATCH_DIR}:\x1b[0m`, err.message);
-  process.exit(1);
+const normalized = WATCH_DIR.replace(/\\/g, "/");
+const driveMatch = normalized.match(/^([A-Za-z]):\/(.*)$/);
+if (driveMatch) {
+  wslSource = `/mnt/${driveMatch[1].toLowerCase()}/${driveMatch[2].replace(/\/+$/, "")}/`;
+} else {
+  try {
+    wslSource = execSync(`wsl -d ${DISTRO} wslpath -u "${normalized}"`, { encoding: "utf-8" }).trim() + "/";
+  } catch (err) {
+    console.error(`\x1b[31mFailed to resolve WSL path for ${WATCH_DIR}:\x1b[0m`, err.message);
+    process.exit(1);
+  }
 }
 
-const WSL_COMMAND = `rsync -rtvc --exclude='.git' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' --exclude='.venv' '${wslSource}' '${wslDest}'`;
+const WSL_COMMAND = `rsync -rt --modify-window=1 --exclude='.git' --exclude='.codegraph' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' --exclude='.venv' --exclude='.idea' --exclude='.vscode' '${wslSource}' '${wslDest}'`;
 
 let debounceTimer = null;
 let lastChangedFile = "";
@@ -83,7 +88,7 @@ function triggerSync() {
   const time = new Date().toLocaleTimeString();
   console.log(`\x1b[36m[${time}] Change detected (${lastChangedFile}). Syncing to WSL2...\x1b[0m`);
 
-  exec(`wsl -d ${DISTRO} bash -c "${WSL_COMMAND}"`, (error) => {
+  exec(`wsl -d ${DISTRO} --exec bash -c "${WSL_COMMAND}"`, (error) => {
     isSyncing = false;
     const finishTime = new Date().toLocaleTimeString();
     if (error) {

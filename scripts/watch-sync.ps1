@@ -61,11 +61,14 @@ if (($WslDestination -eq $PrimaryBenchDest) -and (-not $AllowWorktreeOnMain) -an
 }
 
 $LocalWatchPath = (Get-Item $CandidateWatchPath).FullName
-
 $NormalizedWatchPath = $LocalWatchPath.Replace('\', '/')
-$WslSource = (wsl -d $TargetDistro wslpath -u "$NormalizedWatchPath").Trim() + "/"
+if ($NormalizedWatchPath -match '^([A-Za-z]):/(.*)$') {
+    $WslSource = "/mnt/$($Matches[1].ToLowerInvariant())/$($Matches[2].TrimEnd('/'))/"
+} else {
+    $WslSource = (wsl -d $TargetDistro --exec wslpath -u "$NormalizedWatchPath").Trim() + "/"
+}
 
-$IgnorePattern = '([\\/](\.git|node_modules|__pycache__|\.pytest_cache|\.venv|\.idea|\.vscode)([\\/]|$))|(\.(tmp|swp|lock)$)|(sync-(to|from)-wsl\.ps1$)'
+$IgnorePattern = '([\\/](\.git|\.codegraph|node_modules|__pycache__|\.pytest_cache|\.venv|\.idea|\.vscode)([\\/]|$))|(\.(tmp|swp|lock)$)|(sync-(to|from)-wsl\.ps1$)'
 
 Get-EventSubscriber -SourceIdentifier "FS_*" -ErrorAction SilentlyContinue | Unregister-Event
 
@@ -107,8 +110,9 @@ try {
                 $timestamp = (Get-Date).ToString("HH:mm:ss")
                 Write-Host "[$timestamp] Change detected ($changedFile). Syncing..." -ForegroundColor Cyan
                 
-                $WslCommand = "rsync -rtvc --exclude='.git' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' --exclude='.venv' '$WslSource' '$WslDestination'"
-                wsl -d $TargetDistro bash -c $WslCommand | Out-Null
+                $WslCommand = "rsync -rt --modify-window=1 --exclude='.git' --exclude='.codegraph' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' --exclude='.venv' --exclude='.idea' --exclude='.vscode' '$WslSource' '$WslDestination'"
+                $CmdB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($WslCommand))
+                wsl -d $TargetDistro --exec python3 -c 'import base64,subprocess,sys;sys.exit(subprocess.call(sys.argv[2:4]+[base64.b64decode(sys.argv[1]).decode()]))' $CmdB64 bash -c | Out-Null
                 
                 Write-Host "[$timestamp] Synced to WSL2 successfully." -ForegroundColor Green
             }

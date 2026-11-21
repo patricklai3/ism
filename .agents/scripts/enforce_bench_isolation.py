@@ -408,12 +408,27 @@ def _segment_script_names(tokens: list[str]) -> set[str]:
 	return names
 
 
+PROVISION_MUTATING_FLAGS = {
+	"-recreate",
+	"-refreshgolden",
+	"-forcegolden",
+	"-rebuildbase",
+	"-warmstale",
+	"-slotsync",
+	"-slots",
+}
+
+
 def _is_provision_status_only(tokens: list[str]) -> bool:
 	low_tokens = {tok.lower() for tok in tokens}
 	has_readonly = ("-status" in low_tokens) or any(
-		tok == "-history" or tok.startswith("-history:") for tok in low_tokens
+		tok == "-history" or tok.startswith("-history:") or tok.startswith("-history=") for tok in low_tokens
 	)
-	has_mutating = bool(low_tokens & {"-recreate", "-refreshgolden", "-slots"})
+	has_mutating = bool(low_tokens & PROVISION_MUTATING_FLAGS) or any(
+		tok.startswith(flag + ":") or tok.startswith(flag + "=")
+		for tok in low_tokens
+		for flag in PROVISION_MUTATING_FLAGS
+	)
 	return has_readonly and not has_mutating
 
 

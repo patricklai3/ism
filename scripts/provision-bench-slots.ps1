@@ -1,7 +1,12 @@
 param (
     [int]$Slots = 5,
     [switch]$RefreshGolden = $false,
+    [switch]$ForceGolden = $false,
+    [switch]$RebuildBase = $false,
     [switch]$Recreate = $false,
+    [ValidateSet("auto", "bg-warm", "lazy", "eager", "none")]
+    [string]$SlotSync = "auto",
+    [switch]$WarmStale = $false,
     [switch]$Status = $false,
     [int]$History = 0,
     [string]$Distro = ""
@@ -33,7 +38,15 @@ function Test-PrimaryTrunkCheckout {
     return $true, "ok"
 }
 
-$IsMutating = ($RefreshGolden -or $Recreate -or (-not $Status -and $History -le 0))
+$IsMutating = (
+    $RefreshGolden -or
+    $ForceGolden -or
+    $RebuildBase -or
+    $Recreate -or
+    $WarmStale -or
+    ($SlotSync -ne "auto") -or
+    (-not $Status -and $History -le 0)
+)
 if ($IsMutating) {
     $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
     $Ok, $Why = Test-PrimaryTrunkCheckout -CheckPath $RepoRoot
@@ -82,7 +95,11 @@ $WslScriptPath = ConvertTo-WslPath -WinPath $WinScriptRealPath -DistroName $Targ
 
 $ArgList = @("--slots", "$Slots")
 if ($RefreshGolden) { $ArgList += "--refresh-golden" }
+if ($ForceGolden) { $ArgList += "--force-golden" }
+if ($RebuildBase) { $ArgList += "--rebuild-base" }
 if ($Recreate) { $ArgList += "--recreate" }
+if ($SlotSync -ne "auto") { $ArgList += @("--slot-sync", $SlotSync) }
+if ($WarmStale) { $ArgList += "--warm-stale" }
 if ($Status) { $ArgList += "--status" }
 if ($History -gt 0) { $ArgList += @("--history", "$History") }
 
