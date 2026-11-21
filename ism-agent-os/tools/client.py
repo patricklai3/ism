@@ -1009,6 +1009,106 @@ class IsmAgentClient:
 			resolution_notes=resolution_notes,
 		)
 
+	def _call_board(
+		self,
+		endpoint: str,
+		**kwargs: Any,
+	) -> dict[str, Any]:
+		"""Invoke an ism.api.board endpoint, stripping None values."""
+		return self.call_method(f"ism.api.board.{endpoint}", _drop_none(kwargs))
+
+	# --- Shop Board OS Methods ---
+
+	def list_board_threads(
+		self,
+		thread_type: Optional[str] = None,
+		status: Optional[str] = None,
+		assigned_only: bool = False,
+		query: Optional[str] = None,
+		limit: int = 50,
+	) -> dict[str, Any]:
+		"""List Shop Board threads filtered by type, status, assignment, or search query."""
+		return self._call_board(
+			"list_board_threads",
+			thread_type=thread_type,
+			status=status,
+			assigned_only=bool(assigned_only),
+			query=query,
+			limit=limit,
+		)
+
+	def get_board_thread(
+		self,
+		thread_key: Optional[str] = None,
+		repair_order: Optional[str] = None,
+		limit: int = 100,
+		before_event: Optional[str] = None,
+	) -> dict[str, Any]:
+		"""Fetch a Shop Board thread header, events, and pending cards by thread_key or repair_order."""
+		return self._call_board(
+			"get_board_thread",
+			thread_key=thread_key,
+			repair_order=repair_order,
+			limit=limit,
+			before_event=before_event,
+		)
+
+	def post_board_capture(
+		self,
+		thread_key: Optional[str] = None,
+		repair_order: Optional[str] = None,
+		text: Optional[str] = None,
+		intent_tag: Optional[str] = None,
+		metadata: Optional[dict[str, Any] | str] = None,
+		idempotency_key: Optional[str] = None,
+	) -> dict[str, Any]:
+		"""Post a text/artifact capture event onto a Shop Board thread."""
+		return self._call_board(
+			"post_board_capture",
+			thread_key=thread_key,
+			repair_order=repair_order,
+			text=text,
+			intent_tag=intent_tag,
+			metadata=metadata,
+			idempotency_key=idempotency_key,
+		)
+
+	def resolve_board_card(
+		self,
+		event_name: str,
+		decision: str,
+		selected_option: Optional[str] = None,
+		edited_message: Optional[str] = None,
+		form_patch: Optional[dict[str, Any] | str] = None,
+		notes: Optional[str] = None,
+		idempotency_key: Optional[str] = None,
+	) -> dict[str, Any]:
+		"""Resolve a pending Shop Board clarification or approval gate card."""
+		return self._call_board(
+			"resolve_board_card",
+			event_name=event_name,
+			decision=decision,
+			selected_option=selected_option,
+			edited_message=edited_message,
+			form_patch=form_patch,
+			notes=notes,
+			idempotency_key=idempotency_key,
+		)
+
+	def undo_board_receipt(
+		self,
+		event_name: str,
+		reason: Optional[str] = None,
+		idempotency_key: Optional[str] = None,
+	) -> dict[str, Any]:
+		"""Undo an AI receipt event on a Shop Board thread."""
+		return self._call_board(
+			"undo_board_receipt",
+			event_name=event_name,
+			reason=reason,
+			idempotency_key=idempotency_key,
+		)
+
 	# --- Generic Frappe Operations ---
 
 	def call_method(self, method: str, args: Optional[dict[str, Any]] = None) -> Any:
