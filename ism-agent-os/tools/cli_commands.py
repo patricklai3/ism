@@ -1026,6 +1026,39 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 	"call-method": lambda a, c, _s: c.call_method(
 		method=a.method, args=_parse_json_opt(a.args_json, expected_type=dict)
 	),
+	"board-threads": lambda a, c, _s: c.list_board_threads(
+		thread_type=a.thread_type,
+		status=a.status,
+		assigned_only=bool(a.assigned_only),
+		query=a.query,
+		limit=a.limit,
+	),
+	"board-thread": lambda a, c, _s: c.get_board_thread(
+		thread_key=a.thread_key,
+		repair_order=a.repair_order,
+		limit=a.limit,
+		before_event=a.before_event,
+	),
+	"board-post": lambda a, c, _s: c.post_board_capture(
+		thread_key=a.thread_key,
+		repair_order=a.repair_order,
+		text=a.text,
+		intent_tag=a.intent,
+		idempotency_key=a.idempotency_key,
+	),
+	"board-resolve": lambda a, c, _s: c.resolve_board_card(
+		event_name=a.event,
+		decision=a.decision,
+		selected_option=a.option,
+		edited_message=a.edited_message,
+		notes=a.notes,
+		idempotency_key=a.idempotency_key,
+	),
+	"board-undo": lambda a, c, _s: c.undo_board_receipt(
+		event_name=a.event,
+		reason=a.reason,
+		idempotency_key=a.idempotency_key,
+	),
 	"stage-receipt": _cmd_stage_receipt,
 }
 
