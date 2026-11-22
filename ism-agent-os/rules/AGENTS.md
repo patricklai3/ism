@@ -6,14 +6,15 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 
 - `skills/ism-service-advisor/SKILL.md` — intake, `quote`, `amend-quote`, `estimate`, `send-approval`, `decode-vin`, `vehicle-info`
 - `skills/ism-shop-dispatcher/SKILL.md` — `status`, `tech-overview`, `slots`, `intake-slots`, `book`, `reschedule`, `unscheduled`
-- `skills/ism-floor-technician/SKILL.md` — `job-status`, `toggle-service`, inspections, `add-supplement`, `checkout`
+- `skills/ism-floor-technician/SKILL.md` — `job-status`, `toggle-service`, inspections, `add-supplement`, `checkout`, `action-cards`, `board-post`
 - `skills/ism-parts-specialist/SKILL.md` — `check-stock`, `alternates`, `price-part`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, Tesla & catalog ingestion
-- `skills/ism-shop-executive/SKILL.md` — `cockpit`, `pnl-digest`, `publish-score`, `sync-action`, `list-docs`, `action-items`
+- `skills/ism-shop-executive/SKILL.md` — `cockpit`, `pnl-digest`, `publish-score`, `sync-action`, `list-docs`, `action-items`, `action-cards`, `board-threads`
 
 ## Operational Invariants
 
-1. **Local Staged Confirmation (`--stage`) or Pre-Dispatch Summary (ALL writes)**: Before ANY write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `deposit`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `resolve-action`, `sync-action`, `publish-score`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing writes):
+1. **Local Staged Confirmation (`--stage`) or Pre-Dispatch Summary (ALL domain writes)**: Before ANY domain write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `deposit`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `sync-action`, `publish-score`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `board-post`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing domain writes):
    - NEVER fabricate, guess, or substitute missing required fields (e.g. never invent `odometer_in=10000` or default `payment_method`).
+   - **Direct housekeeping (`resolve-action`)**: `resolve-action --action-item <ACT-ID> [--notes <TEXT>]` is directly executable without a separate human confirmation click (still validates `--action-item`) and is safe/idempotent if Frappe clearing conditions already cleared the card.
    - **Preferred (`--stage`)**: Run `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch --cmd "..." --cmd "..."` with PowerShell-safe `@stepN.<field>` / `@prev.<field>` chaining; `stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings) on Turn 1—even when required fields are omitted. *(In Antigravity on Windows, if `.ism_staged/server.json` is not alive, start `python -m tools.stage_server` with `IsDaemon=true` before `--stage` so the runner's Job Object does not kill the daemon on command exit.)* Present the returned clickable `127.0.0.1` URL (and any `missing_required` fields) to the user and end your turn (never auto-open a browser). The user completes any missing fields and clicks **Submit** locally. On follow-up turns, read created IDs via `python -m tools.cli --json stage-receipt` (`[--id <STAGE_ID>]`) or pass `@last` / `@last.<field>`.
    - **Legacy (`--dry-run`)**: Unless `ISM_STAGE_ONLY=1` is set, you may run `python -m tools.cli --dry-run <subcmd ...>`, output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing the live write command.
 2. **Direct intent-to-command routing (read-only & after confirmation)**: **NEVER run `--help`, `-h`, or `Get-ChildItem skills/`**. Use exact CLI flags from Quick Command Index and skill files. Do NOT run redundant pre-checks (`status`, `slots`, `tech-overview`, `estimate`, or `get-doc`) when sufficient inputs are given.
@@ -27,11 +28,21 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 7. **Delegate labor & tax math to Frappe; price parts via `ism-agent-os`**: Never calculate labor totals, Fenton-Wilkinson durations, or 13% Ontario HST manually. Calculate customer part selling prices exclusively in `ism-agent-os` via `python -m tools.cli --json price-part` or `ingest-parts` (per `rules/PARTS_PRICING.md` and `rules/parts_pricing.json`), and keep Tesla OEM comparison details out of customer-facing quote/invoice text.
 8. **Submit submittable documents after confirmation**: Quotes (`Repair Order`) start in `Draft Estimate` until customer approval, whereas all Frappe submittable documents (`Purchase Order`, `Request for Quotation`, `Purchase Receipt`, `Purchase Invoice`, `Payment Entry`, `Sales Invoice`) are submitted immediately upon live execution after `### ISM Pre-Dispatch Summary` confirmation. Never leave submittable documents in Draft or ask the user whether to keep them in Draft vs Submit unless they explicitly ask for `--draft`. Never run `checkout --confirm` without `--payment-method`, `--odometer-out`, and explicit human confirmation.
 9. **Use curated CLI wrappers first & show deep links**: Prefer curated CLI subcommands over generic REST calls. Include Desk, Calendar, Print, or Approval links from `urls` in replies. Pass `--summary` only when explicitly requested.
+10. **Addressing Shop Board Action Cards**:
+   1. Fetch 1 or N cards plus RO summary, capture transcript, media links, and clearing conditions in one call: `python -m tools.cli --json action-cards --action-item <ACT-1> [<ACT-2> ...]` (or `--repair-order <RO>`).
+   2. Execute or stage the required ERP domain writes via `--stage batch`.
+   3. Append `resolve-action --action-item <ACT-ID> --notes "<summary>"` in the `--stage batch` or run `resolve-action` directly after resolution completes (no extra confirmation click needed; safe/idempotent if Frappe clearing conditions already auto-cleared the card).
+   4. Only call `board-post --repair-order <RO> --text "..."` when the technician specifically needs a direct floor message (skips site AI by default; pass `--run-ai` only if AI processing is explicitly desired).
 
 ## Quick Command Index (`python -m tools.cli --json <cmd>`)
 
 - `status [--date <YYYY-MM-DD>]`
 - `cockpit [--date <YYYY-MM-DD>] [--data-only]`
+- `action-cards [--action-item <ACT-1> [<ACT-2> ...]] [--repair-order <RO>] [--status Open] [--limit 20] [--events-limit 20]`
+- `board-threads [--status OPEN|ALL|ACTIVE|NEEDS_ACTION|BLOCKED_PARTS|WAITING_CUSTOMER|CLOSED] [--assigned-only] [--query <TEXT>] [--limit 50]`
+- `board-thread (--thread-key RO:<RO> | --repair-order <RO>) [--limit 100] [--before-event <BE>]`
+- `board-post (--thread-key RO:<RO> | --repair-order <RO>) --text <TEXT> [--intent <TAG>] [--run-ai]`
+- `resolve-action --action-item <ACT-ID> [--notes <TEXT>]` (direct housekeeping — no separate human confirmation click; idempotent if auto-cleared)
 - `pnl-digest [--from-date <YYYY-MM-DD>] [--to-date <YYYY-MM-DD>] [--company <CO>]`
 - `publish-score --metric <KEY> --score <0-100> --verdict <TEXT> [--grade <Healthy|Watch|Critical>] [--period-date <YYYY-MM-DD>] [--report-url <URL>]`
 - `sync-action --dedup-key <KEY> --action <snooze|dismiss|reopen> [--snooze-minutes N] [--notes <TEXT>]`

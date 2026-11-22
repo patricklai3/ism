@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from .config import IsmConfig, validate_tesla_url
@@ -1019,18 +1020,34 @@ class IsmAgentClient:
 
 	# --- Shop Board OS Methods ---
 
+	def get_action_cards_context(
+		self,
+		action_items: Optional[list[str] | str] = None,
+		repair_order: Optional[str] = None,
+		status: str = "Open",
+		include_events_limit: int = 20,
+		limit: Optional[int] = None,
+	) -> dict[str, Any]:
+		"""Fetch Shop Board action card context bundle for one or more action items or a Repair Order."""
+		return self._call_board(
+			"get_action_cards_context",
+			action_items=action_items,
+			repair_order=repair_order,
+			status=status,
+			include_events_limit=include_events_limit,
+			limit=limit,
+		)
+
 	def list_board_threads(
 		self,
-		thread_type: Optional[str] = None,
-		status: Optional[str] = None,
+		status: str = "OPEN",
 		assigned_only: bool = False,
 		query: Optional[str] = None,
 		limit: int = 50,
 	) -> dict[str, Any]:
-		"""List Shop Board threads filtered by type, status, assignment, or search query."""
+		"""List active Repair Order Shop Board threads filtered by status, assignment, or search query."""
 		return self._call_board(
 			"list_board_threads",
-			thread_type=thread_type,
 			status=status,
 			assigned_only=bool(assigned_only),
 			query=query,
@@ -1044,7 +1061,7 @@ class IsmAgentClient:
 		limit: int = 100,
 		before_event: Optional[str] = None,
 	) -> dict[str, Any]:
-		"""Fetch a Shop Board thread header, events, and pending cards by thread_key or repair_order."""
+		"""Fetch an active Repair Order Shop Board thread header, events, and action cards."""
 		return self._call_board(
 			"get_board_thread",
 			thread_key=thread_key,
@@ -1061,51 +1078,29 @@ class IsmAgentClient:
 		intent_tag: Optional[str] = None,
 		metadata: Optional[dict[str, Any] | str] = None,
 		idempotency_key: Optional[str] = None,
+		skip_ai: bool = True,
 	) -> dict[str, Any]:
-		"""Post a text/artifact capture event onto a Shop Board thread."""
+		"""Post a text/artifact capture event onto an active Repair Order Shop Board thread."""
+		effective_metadata: Optional[dict[str, Any] | str] = metadata
+		if skip_ai:
+			if effective_metadata is None:
+				effective_metadata = {"skip_ai": True}
+			elif isinstance(effective_metadata, dict):
+				effective_metadata = {**effective_metadata, "skip_ai": True}
+			elif isinstance(effective_metadata, str):
+				try:
+					parsed = json.loads(effective_metadata)
+				except json.JSONDecodeError:
+					parsed = None
+				if isinstance(parsed, dict):
+					effective_metadata = {**parsed, "skip_ai": True}
 		return self._call_board(
 			"post_board_capture",
 			thread_key=thread_key,
 			repair_order=repair_order,
 			text=text,
 			intent_tag=intent_tag,
-			metadata=metadata,
-			idempotency_key=idempotency_key,
-		)
-
-	def resolve_board_card(
-		self,
-		event_name: str,
-		decision: str,
-		selected_option: Optional[str] = None,
-		edited_message: Optional[str] = None,
-		form_patch: Optional[dict[str, Any] | str] = None,
-		notes: Optional[str] = None,
-		idempotency_key: Optional[str] = None,
-	) -> dict[str, Any]:
-		"""Resolve a pending Shop Board clarification or approval gate card."""
-		return self._call_board(
-			"resolve_board_card",
-			event_name=event_name,
-			decision=decision,
-			selected_option=selected_option,
-			edited_message=edited_message,
-			form_patch=form_patch,
-			notes=notes,
-			idempotency_key=idempotency_key,
-		)
-
-	def undo_board_receipt(
-		self,
-		event_name: str,
-		reason: Optional[str] = None,
-		idempotency_key: Optional[str] = None,
-	) -> dict[str, Any]:
-		"""Undo an AI receipt event on a Shop Board thread."""
-		return self._call_board(
-			"undo_board_receipt",
-			event_name=event_name,
-			reason=reason,
+			metadata=effective_metadata,
 			idempotency_key=idempotency_key,
 		)
 
