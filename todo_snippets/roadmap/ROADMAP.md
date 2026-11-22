@@ -294,24 +294,24 @@ Follow this standardized runbook whenever executing any `plan_p*.md` file via An
 - [x] **Stage A — Project 1 (`plan_p1_comms_telnyx_otp.md`):** Telnyx v2 adapter, `SMS Audit Log` / `SMS Opt Out` / `Portal OTP Challenge` / `Customer Portal Session`, SMS-only OTP, persistent `ism_portal_session` cookie, rate-limited transactional email, batched 10-suite slot gate + `-Serve` webhook smoke passed.
 - [x] **Stage A — Project 2 (`plan_p2_payments_square_erpnext.md`):** `ISM Payment Transaction`, Square CAD Bank Account & MOP seeding, manual staff deposit requests, embedded SDK boot config, row-locked immediate ERPNext `Payment Entry` bridge, HMAC webhooks, batched 10-suite slot gate + `-Serve` Mock smoke passed.
 - [x] **Stage A — Project 3 (`plan_p3_scheduling_offset_catalog.md`):** Silent 15-min earlier arrival offset (`08:00 -> 07:45` opening-slot parity), curated predictable `Service Package` catalog, `Schedule Entry` extensions, atomic slot-swap reschedule & provisional booking engine, batched 8-suite slot gate passed.
-- [ ] **Stage B — Project 4 (`plan_p4_customer_portal_expansion.md`):** Dual-path auth + persistent cookie `/portal` & upgraded `/quote-approval`, encrypted always-prompt PIN-to-Drive + `Closed / Released` auto-purge, binary repair status only, self-serve reschedule, inline Square SDK deposits/balances, unpaid & paid `Sales Invoice` PDF/self-email, batched 10-suite slot gate + 9-step `-Serve` walkthrough passed.
-- [ ] **Stage B — Project 5 (`plan_p5_website_self_serve_booking.md`):** Hosted `/book` route (direct link, `X-Frame-Options: DENY`, zero iframe), anti-abuse & pre-commit SMS OTP funnel, seamless `booking_otp` cookie handoff to `/portal`, batched 8-suite slot gate + `-Serve` walkthrough passed.
+- [x] **Stage B — Project 4 (`plan_p4_customer_portal_expansion.md`):** Dual-path auth + persistent cookie `/portal` & upgraded `/quote-approval`, encrypted always-prompt PIN-to-Drive + `Closed / Released` auto-purge, binary repair status only, self-serve reschedule, inline Square SDK deposits/balances, unpaid & paid `Sales Invoice` PDF/self-email, batched 10-suite slot gate + 9-step `-Serve` walkthrough passed.
+- [x] **Stage B — Project 5 (`plan_p5_website_self_serve_booking.md`):** Hosted `/book` route (direct link, `X-Frame-Options: DENY`, zero iframe), anti-abuse & pre-commit SMS OTP funnel, seamless `booking_otp` cookie handoff to `/portal`, batched 8-suite slot gate + `-Serve` walkthrough passed.
 
 ### Track B — Internal Shop OS Frontend (Independent)
 - [x] **Project 6 (`plan_p6_shop_os_frontend.md`):** Generalized `Shop Board Thread` / `Shop Board Event`, Google Drive streaming storage + Range proxy, server-side 4-regime parts pricing, 9 autonomous + 13 Manager/Advisor-gated actions, multimodal AI Orchestrator + Context Firewall, `/board` PWA & `/cockpit` dashboard, 5 `ism-agent-os` CLI commands, batched 12-suite Frappe slot gate + `ism-agent-os` unittest + `-Serve` mobile/desktop walkthrough passed.
 
 ### Cross-Track Integration & Cutover Verification (Seams 1–6)
-- [ ] **Seam 1 (`ISM Settings`):** All 14 sections coexist after `bench migrate` with zero fieldname collisions and preserved operator overrides on re-seeding.
+- [x] **Seam 1 (`ISM Settings`):** All 14 sections coexist after `bench migrate` with zero fieldname collisions and preserved operator overrides on re-seeding.
 - [x] **Seam 2 (Outbound SMS):** `/board` customer SMS actions execute cleanly through P1's Telnyx/Mock bus with audit redaction and `STOP` opt-out enforcement.
 - [x] **Seam 3 (Billing Truth):** Floor payments (`RECORD_DEPOSIT`, `CHECKOUT_REPAIR_ORDER`) and online Square portal payments reconcile identically through ERPNext `Sales Invoice` / `Payment Entry` with zero parallel balances.
-- [ ] **Seam 4 (Arrival Offset Parity):** `/cockpit` swimlanes stay on Internal Capacity Start (`T`) while `/portal`, `/book`, confirmations, and `/board` Context Firewall all quote `T - offset` (`08:00 -> 07:45`) with zero buffer wording.
-- [ ] **Seam 5 (Shop Floor Alerts):** P2/P3/P4/P5 `Shop Action Item` records project into `RO:<id>` / `SHOP:INTAKE` as idempotent `SYSTEM` cards on `/board` with zero `ism.board` imports in Track A and zero `"board:"` self-echoes.
-- [ ] **Seam 6 (PIN-to-Drive Visibility):** `/board` Andon header and Desk `Workshop` button both reveal audited PINs with 15-second auto-mask while active and hide/block immediately after `Closed / Released` purge (`0` rows in `__Auth`).
-- [ ] **Hook & Dependency Audit:** `hooks.py` composes `Repair Order.on_update` in list-form cleanly across P4 + P6; `ism-frappe/pyproject.toml` has `0` new external packages; `0` Node build artifacts; `0` stray files in `git status`.
+- [x] **Seam 4 (Arrival Offset Parity):** `/cockpit` swimlanes stay on Internal Capacity Start (`T`) while `/portal`, `/book`, confirmations, and `/board` Context Firewall all quote `T - offset` (`08:00 -> 07:45`) with zero buffer wording.
+- [x] **Seam 5 (Shop Floor Alerts):** P2/P3/P4/P5 `Shop Action Item` records project into `RO:<id>` / `SHOP:INTAKE` as idempotent `SYSTEM` cards on `/board` with zero `ism.board` imports in Track A and zero `"board:"` self-echoes.
+- [x] **Seam 6 (PIN-to-Drive Visibility):** `/board` Andon header and Desk `Workshop` button both reveal audited PINs with 15-second auto-mask while active and hide/block immediately after `Closed / Released` purge (`0` rows in `__Auth`).
+- [x] **Hook & Dependency Audit:** `hooks.py` composes `Repair Order.on_update` in list-form cleanly across P4 + P6; `ism-frappe/pyproject.toml` has `0` new external packages; `0` Node build artifacts; `0` stray files in `git status`.
 
 ### Final Coordinator Cutover (Canonical `D:\ism` on `main` ONLY)
-- [ ] Merge each verified project branch onto canonical `main` in `D:\ism` (honoring `hooks.py` list-form `doc_events` and `ISM Settings` section placement).
-- [ ] Run a combined cross-track batched regression pass via `test-in-slot.ps1` covering all new suites and core ISM regression suites.
+- [x] Merge each verified project branch onto canonical `main` in `D:\ism` (honoring `hooks.py` list-form `doc_events` and `ISM Settings` section placement).
+- [x] Run a combined cross-track batched regression pass via `test-in-slot.ps1` covering all new suites and core ISM regression suites.
 - [ ] Execute canonical bench cutover strictly from `D:\ism` on `main` via:
   ```powershell
   powershell -ExecutionPolicy Bypass -File scripts\promote-to-main.ps1
