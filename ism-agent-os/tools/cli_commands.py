@@ -1026,8 +1026,20 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 	"call-method": lambda a, c, _s: c.call_method(
 		method=a.method, args=_parse_json_opt(a.args_json, expected_type=dict)
 	),
+	"action-cards": lambda a, c, _s: c.get_action_cards_context(
+		action_items=[
+			part.strip()
+			for raw in (a.action_item or [])
+			for part in str(raw).split(",")
+			if part.strip()
+		]
+		or None,
+		repair_order=a.repair_order,
+		status=a.status,
+		include_events_limit=a.events_limit,
+		limit=a.limit,
+	),
 	"board-threads": lambda a, c, _s: c.list_board_threads(
-		thread_type=a.thread_type,
 		status=a.status,
 		assigned_only=bool(a.assigned_only),
 		query=a.query,
@@ -1045,19 +1057,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 		text=a.text,
 		intent_tag=a.intent,
 		idempotency_key=a.idempotency_key,
-	),
-	"board-resolve": lambda a, c, _s: c.resolve_board_card(
-		event_name=a.event,
-		decision=a.decision,
-		selected_option=a.option,
-		edited_message=a.edited_message,
-		notes=a.notes,
-		idempotency_key=a.idempotency_key,
-	),
-	"board-undo": lambda a, c, _s: c.undo_board_receipt(
-		event_name=a.event,
-		reason=a.reason,
-		idempotency_key=a.idempotency_key,
+		skip_ai=not bool(a.run_ai),
 	),
 	"stage-receipt": _cmd_stage_receipt,
 }

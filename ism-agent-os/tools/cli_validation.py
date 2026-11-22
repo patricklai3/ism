@@ -34,8 +34,13 @@ READ_ONLY_COMMANDS = frozenset({
 	"list-docs",
 	"get-doc",
 	"stage-receipt",
+	"action-cards",
 	"board-threads",
 	"board-thread",
+})
+
+DIRECT_HOUSEKEEPING_COMMANDS = frozenset({
+	"resolve-action",
 })
 
 _STEP_PATH_RE = r"[A-Za-z0-9_-]+(?:\[\d+\])*(?:\.[A-Za-z0-9_-]+(?:\[\d+\])*)*"
@@ -482,20 +487,10 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	},
 	"board-post": {
 		"target": "ism.api.board.post_board_capture -> Shop Board Event",
-		"fields": ("thread_key", "repair_order", "text", "intent", "idempotency_key"),
+		"fields": ("thread_key", "repair_order", "text", "intent", "idempotency_key", "run_ai"),
 		"required": (("text", "--text"),),
 		"any_of": ((("thread_key", "repair_order"), "--thread-key/--repair-order (one required)"),),
 		"custom": _validate_board_target,
-	},
-	"board-resolve": {
-		"target": "ism.api.board.resolve_board_card -> Shop Board Event",
-		"fields": ("event", "decision", "option", "edited_message", "notes", "idempotency_key"),
-		"required": (("event", "--event"), ("decision", "--decision")),
-	},
-	"board-undo": {
-		"target": "ism.api.board.undo_board_receipt -> Shop Board Event",
-		"fields": ("event", "reason", "idempotency_key"),
-		"required": (("event", "--event"),),
 	},
 }
 
@@ -792,15 +787,11 @@ STAGE_FIELD_HINTS: dict[str, dict[str, Any]] = {
 	"name": {"type": "text", "label": "Document Name"},
 	"method": {"type": "text", "label": "Frappe Method"},
 	"args_json": {"type": "json", "label": "Arguments JSON", "placeholder": "{}"},
-	"thread_key": {"type": "text", "label": "Thread Key", "placeholder": "RO:RO-2026-00011 or SHOP:INTAKE"},
+	"thread_key": {"type": "text", "label": "Thread Key", "placeholder": "RO:RO-2026-00011"},
 	"text": {"type": "textarea", "label": "Capture Text", "placeholder": "Message or observation to post"},
 	"intent": {"type": "text", "label": "Intent Tag", "placeholder": "Optional quick-intent tag"},
 	"idempotency_key": {"type": "text", "label": "Idempotency Key"},
-	"event": {"type": "text", "label": "Board Event ID", "placeholder": "BE-..."},
-	"decision": {"type": "select", "label": "Decision", "choices": ["approve", "reject", "clarify"]},
-	"option": {"type": "text", "label": "Selected Option"},
-	"edited_message": {"type": "textarea", "label": "Edited Message"},
-	"reason": {"type": "textarea", "label": "Undo Reason"},
+	"run_ai": {"type": "bool", "label": "Run Site Board AI"},
 }
 
 _STAGE_CMD_FIELD_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
@@ -823,7 +814,7 @@ _STAGE_CMD_FIELD_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
 	("create-action", "source"): {
 		"type": "select",
 		"label": "Source",
-		"choices": ["Manual", "Agent", "Rule Snooze"],
+		"choices": ["Manual", "Agent", "Board AI", "Rule Snooze"],
 	},
 }
 

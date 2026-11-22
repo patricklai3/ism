@@ -15,6 +15,7 @@ from unittest.mock import patch
 from tools import cli
 from tools.cli_parsers import _build_parser
 from tools.cli_validation import (
+	DIRECT_HOUSEKEEPING_COMMANDS,
 	READ_ONLY_COMMANDS,
 	WRITE_COMMAND_META,
 	build_pre_dispatch_summary,
@@ -45,20 +46,37 @@ class TestBoardClientMethods(unittest.TestCase):
 		self.cfg = IsmConfig(url="http://localhost:8000", api_key="k1", api_secret="s1")
 		self.client = IsmAgentClient(self.cfg)
 
-	def test_all_five_board_methods_route_and_strip_none(self) -> None:
+	def test_removed_legacy_board_methods_absent(self) -> None:
+		self.assertFalse(hasattr(self.client, "resolve_board_card"))
+		self.assertFalse(hasattr(self.client, "undo_board_receipt"))
+
+	def test_board_client_methods_route_and_strip_none(self) -> None:
 		cases = [
 			(
+				lambda: self.client.get_action_cards_context(
+					action_items=["ACT-2026-00012", "ACT-2026-00013"],
+					repair_order="RO-2026-00011",
+					status="Open",
+					include_events_limit=15,
+				),
+				"ism.api.board.get_action_cards_context",
+				{
+					"action_items": ["ACT-2026-00012", "ACT-2026-00013"],
+					"repair_order": "RO-2026-00011",
+					"status": "Open",
+					"include_events_limit": 15,
+				},
+			),
+			(
 				lambda: self.client.list_board_threads(
-					thread_type="REPAIR_ORDER",
-					status="BLOCKED_DECISION",
+					status="NEEDS_ACTION",
 					assigned_only=True,
 					query="RO-2026",
 					limit=25,
 				),
 				"ism.api.board.list_board_threads",
 				{
-					"thread_type": "REPAIR_ORDER",
-					"status": "BLOCKED_DECISION",
+					"status": "NEEDS_ACTION",
 					"assigned_only": True,
 					"query": "RO-2026",
 					"limit": 25,
@@ -79,59 +97,37 @@ class TestBoardClientMethods(unittest.TestCase):
 			),
 			(
 				lambda: self.client.post_board_capture(
-					thread_key="SHOP:INTAKE",
-					text="Model 3 front brake noise",
-					intent_tag="DIAGNOSIS",
+					thread_key="RO:RO-2026-00011",
+					text="Parts ordered, ETA tomorrow 10am",
+					intent_tag="Parts",
 					metadata={"source": "cli"},
 					idempotency_key="idem-1",
 				),
 				"ism.api.board.post_board_capture",
 				{
-					"thread_key": "SHOP:INTAKE",
-					"text": "Model 3 front brake noise",
-					"intent_tag": "DIAGNOSIS",
-					"metadata": {"source": "cli"},
+					"thread_key": "RO:RO-2026-00011",
+					"text": "Parts ordered, ETA tomorrow 10am",
+					"intent_tag": "Parts",
+					"metadata": {"source": "cli", "skip_ai": True},
 					"idempotency_key": "idem-1",
 				},
 			),
 			(
-				lambda: self.client.resolve_board_card(
-					event_name="BE-00042",
-					decision="approve",
-					selected_option="opt_1",
-					edited_message="Updated SMS",
-					form_patch={"notes": "ok"},
-					notes="Manager approved",
-					idempotency_key="idem-2",
+				lambda: self.client.post_board_capture(
+					repair_order="RO-2026-00011",
+					text="Front left upper control arm cracked",
+					skip_ai=False,
 				),
-				"ism.api.board.resolve_board_card",
+				"ism.api.board.post_board_capture",
 				{
-					"event_name": "BE-00042",
-					"decision": "approve",
-					"selected_option": "opt_1",
-					"edited_message": "Updated SMS",
-					"form_patch": {"notes": "ok"},
-					"notes": "Manager approved",
-					"idempotency_key": "idem-2",
-				},
-			),
-			(
-				lambda: self.client.undo_board_receipt(
-					event_name="BE-00043",
-					reason="Wrong side",
-					idempotency_key="idem-3",
-				),
-				"ism.api.board.undo_board_receipt",
-				{
-					"event_name": "BE-00043",
-					"reason": "Wrong side",
-					"idempotency_key": "idem-3",
+					"repair_order": "RO-2026-00011",
+					"text": "Front left upper control arm cracked",
 				},
 			),
 		]
 
 		for call_fn, expected_method, expected_payload in cases:
-			with self.subTest(method=expected_method):
+			with self.subTest(method=expected_method, payload=expected_payload):
 				with patch(
 					"urllib.request.urlopen",
 					return_value=_FakeHttpResponse({"message": {"success": True, "method": expected_method}}),
@@ -147,21 +143,21 @@ class TestBoardClientMethods(unittest.TestCase):
 
 	def test_board_api_error_propagates_cleanly(self) -> None:
 		err_payload = json.dumps({
-			"_server_messages": [json.dumps({"message": "Only managers can resolve APPROVAL_GATE cards."})]
+			"_server_messages": [json.dumps({"message": "Captures are locked for closed Repair Orders."})]
 		}).encode("utf-8")
 		http_err = urllib.error.HTTPError(
-			"http://localhost:8000/api/method/ism.api.board.resolve_board_card",
-			403,
-			"Forbidden",
+			"http://localhost:8000/api/method/ism.api.board.post_board_capture",
+			417,
+			"Expectation Failed",
 			{},
 			io.BytesIO(err_payload),
 		)
 		with patch("urllib.request.urlopen", side_effect=http_err):
 			with self.assertRaises(IsmApiError) as ctx:
-				self.client.resolve_board_card(event_name="BE-00042", decision="approve")
+				self.client.post_board_capture(repair_order="RO-2026-00011", text="Late update")
 
-		self.assertEqual(ctx.exception.status_code, 403)
-		self.assertIn("Only managers can resolve APPROVAL_GATE cards.", str(ctx.exception))
+		self.assertEqual(ctx.exception.status_code, 417)
+		self.assertIn("Captures are locked for closed Repair Orders.", str(ctx.exception))
 
 
 class TestBoardCliParsingAndGating(unittest.TestCase):
@@ -172,12 +168,53 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 			"FRAPPE_API_SECRET": "s1",
 		}
 
-	def test_read_only_and_write_metadata_classification(self) -> None:
-		self.assertIn("board-threads", READ_ONLY_COMMANDS)
-		self.assertIn("board-thread", READ_ONLY_COMMANDS)
-		for write_cmd in ("board-post", "board-resolve", "board-undo"):
-			self.assertNotIn(write_cmd, READ_ONLY_COMMANDS)
-			self.assertIn(write_cmd, WRITE_COMMAND_META)
+	def test_read_only_housekeeping_and_write_metadata_classification(self) -> None:
+		for ro_cmd in ("action-cards", "board-threads", "board-thread"):
+			self.assertIn(ro_cmd, READ_ONLY_COMMANDS)
+			self.assertNotIn(ro_cmd, WRITE_COMMAND_META)
+
+		self.assertIn("resolve-action", DIRECT_HOUSEKEEPING_COMMANDS)
+		self.assertNotIn("board-post", READ_ONLY_COMMANDS)
+		self.assertIn("board-post", WRITE_COMMAND_META)
+
+		parser = _build_parser(relax_required=False)
+		subcommands = parser._subparsers._group_actions[0].choices
+		for removed_cmd in ("board-resolve", "board-undo"):
+			self.assertNotIn(removed_cmd, subcommands)
+			self.assertNotIn(removed_cmd, WRITE_COMMAND_META)
+			self.assertNotIn(removed_cmd, READ_ONLY_COMMANDS)
+
+	def test_action_cards_and_board_parsers(self) -> None:
+		parser = _build_parser(relax_required=False)
+
+		ns_ac = parser.parse_args([
+			"action-cards",
+			"--action-item",
+			"ACT-2026-00012",
+			"ACT-2026-00013",
+			"--repair-order",
+			"RO-2026-00011",
+			"--status",
+			"Open",
+			"--limit",
+			"10",
+			"--events-limit",
+			"12",
+		])
+		self.assertEqual(ns_ac.action_item, ["ACT-2026-00012", "ACT-2026-00013"])
+		self.assertEqual(ns_ac.repair_order, "RO-2026-00011")
+		self.assertEqual(ns_ac.status, "Open")
+		self.assertEqual(ns_ac.limit, 10)
+		self.assertEqual(ns_ac.events_limit, 12)
+
+		ns_bts = parser.parse_args(["board-threads"])
+		self.assertEqual(ns_bts.status, "OPEN")
+		with redirect_stderr(io.StringIO()):
+			with self.assertRaises(SystemExit):
+				parser.parse_args(["board-threads", "--thread-type", "REPAIR_ORDER"])
+
+		ns_ca = parser.parse_args(["create-action", "--title", "Needs quote", "--source", "Board AI"])
+		self.assertEqual(ns_ca.source, "Board AI")
 
 	def test_thread_key_and_repair_order_mutual_exclusion_and_required(self) -> None:
 		parser = _build_parser(relax_required=False)
@@ -191,16 +228,20 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 			with self.assertRaises(SystemExit):
 				parser.parse_args(["board-post", "--thread-key", "RO:RO-1", "--repair-order", "RO-1", "--text", "hello"])
 
-		ns_tk = parser.parse_args(["board-thread", "--thread-key", "SHOP:INTAKE", "--limit", "20"])
-		self.assertEqual(ns_tk.thread_key, "SHOP:INTAKE")
+		ns_tk = parser.parse_args(["board-thread", "--thread-key", "RO:RO-2026-00011", "--limit", "20"])
+		self.assertEqual(ns_tk.thread_key, "RO:RO-2026-00011")
 		self.assertIsNone(ns_tk.repair_order)
 		self.assertEqual(ns_tk.limit, 20)
 
-		ns_ro = parser.parse_args(["board-post", "--repair-order", "RO-2026-00011", "--text", "Pad wear 2mm", "--intent", "INSPECTION"])
+		ns_ro = parser.parse_args(["board-post", "--repair-order", "RO-2026-00011", "--text", "Pad wear 2mm", "--intent", "Supplement"])
 		self.assertEqual(ns_ro.repair_order, "RO-2026-00011")
 		self.assertIsNone(ns_ro.thread_key)
 		self.assertEqual(ns_ro.text, "Pad wear 2mm")
-		self.assertEqual(ns_ro.intent, "INSPECTION")
+		self.assertEqual(ns_ro.intent, "Supplement")
+		self.assertFalse(ns_ro.run_ai)
+
+		ns_ai = parser.parse_args(["board-post", "--repair-order", "RO-2026-00011", "--text", "Need supplement", "--run-ai"])
+		self.assertTrue(ns_ai.run_ai)
 
 		# Direct Namespace validation also rejects mutually exclusive targets (e.g. batch dict or stage).
 		both_ns = argparse.Namespace(
@@ -214,19 +255,14 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 
 	def test_cli_dry_run_gating_for_board_writes(self) -> None:
 		with patch.dict("os.environ", self.env_vars, clear=False), patch("urllib.request.urlopen") as mock_open:
-			for argv in (
-				["--json", "--dry-run", "board-post", "--thread-key", "SHOP:DISPATCH", "--text", "Bay 2 clear"],
-				["--json", "--dry-run", "board-resolve", "--event", "BE-001", "--decision", "clarify", "--option", "FL"],
-				["--json", "--dry-run", "board-undo", "--event", "BE-002", "--reason", "Duplicate"],
-			):
-				buf = io.StringIO()
-				with redirect_stdout(buf):
-					rc = cli.main(argv)
-				self.assertEqual(rc, 0)
-				out = json.loads(buf.getvalue())
-				self.assertTrue(out["dry_run"])
-				self.assertTrue(out["has_writes"])
-				self.assertEqual(out["missing_required"], [])
+			buf = io.StringIO()
+			with redirect_stdout(buf):
+				rc = cli.main(["--json", "--dry-run", "board-post", "--thread-key", "RO:RO-2026-00011", "--text", "Parts ETA 2pm"])
+			self.assertEqual(rc, 0)
+			out = json.loads(buf.getvalue())
+			self.assertTrue(out["dry_run"])
+			self.assertTrue(out["has_writes"])
+			self.assertEqual(out["missing_required"], [])
 		self.assertEqual(mock_open.call_count, 0)
 
 		summary = build_pre_dispatch_summary([
@@ -256,28 +292,54 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 
 		spec = build_stage_form_spec([
 			argparse.Namespace(
-				command="board-resolve",
-				event="BE-009",
-				decision="approve",
-				option=None,
-				edited_message="Your Model 3 is ready.",
-				notes=None,
+				command="board-post",
+				thread_key=None,
+				repair_order="RO-2026-00011",
+				text="Parts ordered for bay 2",
+				intent="Parts",
 				idempotency_key=None,
+				run_ai=False,
 			)
 		])
 		self.assertTrue(spec["ready"])
 		self.assertTrue(spec["has_writes"])
-		self.assertEqual(spec["steps"][0]["target"], "ism.api.board.resolve_board_card -> Shop Board Event")
+		self.assertEqual(spec["steps"][0]["target"], "ism.api.board.post_board_capture -> Shop Board Event")
 
-	def test_cli_main_executes_all_board_commands_and_propagates_errors(self) -> None:
+	def test_cli_main_executes_board_commands_with_skip_ai_and_propagates_errors(self) -> None:
 		with patch.dict("os.environ", self.env_vars, clear=False):
-			for argv, expected_method in (
-				(["--json", "board-threads", "--thread-type", "REPAIR_ORDER", "--assigned-only"], "ism.api.board.list_board_threads"),
-				(["--json", "board-thread", "--repair-order", "RO-2026-00011"], "ism.api.board.get_board_thread"),
-				(["--json", "board-post", "--thread-key", "RO:RO-2026-00011", "--text", "Done"], "ism.api.board.post_board_capture"),
-				(["--json", "board-resolve", "--event", "BE-001", "--decision", "reject", "--notes", "Wait"], "ism.api.board.resolve_board_card"),
-				(["--json", "board-undo", "--event", "BE-002", "--reason", "Undo"], "ism.api.board.undo_board_receipt"),
-			):
+			cases = [
+				(
+					["--json", "action-cards", "--action-item", "ACT-2026-00012", "ACT-2026-00013", "--events-limit", "10"],
+					"ism.api.board.get_action_cards_context",
+					{
+						"action_items": ["ACT-2026-00012", "ACT-2026-00013"],
+						"status": "Open",
+						"include_events_limit": 10,
+						"limit": 20,
+					},
+				),
+				(
+					["--json", "board-threads", "--status", "NEEDS_ACTION", "--assigned-only"],
+					"ism.api.board.list_board_threads",
+					{"status": "NEEDS_ACTION", "assigned_only": True, "limit": 50},
+				),
+				(
+					["--json", "board-thread", "--repair-order", "RO-2026-00011"],
+					"ism.api.board.get_board_thread",
+					{"repair_order": "RO-2026-00011", "limit": 100},
+				),
+				(
+					["--json", "board-post", "--thread-key", "RO:RO-2026-00011", "--text", "Done"],
+					"ism.api.board.post_board_capture",
+					{"thread_key": "RO:RO-2026-00011", "text": "Done", "metadata": {"skip_ai": True}},
+				),
+				(
+					["--json", "board-post", "--repair-order", "RO-2026-00011", "--text", "Check strut", "--run-ai"],
+					"ism.api.board.post_board_capture",
+					{"repair_order": "RO-2026-00011", "text": "Check strut"},
+				),
+			]
+			for argv, expected_method, expected_payload in cases:
 				with self.subTest(argv=argv):
 					with patch(
 						"urllib.request.urlopen",
@@ -288,27 +350,26 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 							rc = cli.main(argv)
 					self.assertEqual(rc, 0)
 					self.assertEqual(mock_open.call_count, 1)
-					self.assertEqual(
-						mock_open.call_args[0][0].full_url,
-						f"http://localhost:8000/api/method/{expected_method}",
-					)
+					req_obj = mock_open.call_args[0][0]
+					self.assertEqual(req_obj.full_url, f"http://localhost:8000/api/method/{expected_method}")
+					self.assertEqual(json.loads(req_obj.data.decode("utf-8")), expected_payload)
 
 			http_err = urllib.error.HTTPError(
-				"http://localhost:8000/api/method/ism.api.board.undo_board_receipt",
+				"http://localhost:8000/api/method/ism.api.board.post_board_capture",
 				417,
 				"Expectation Failed",
 				{},
-				io.BytesIO(json.dumps({"exception": "Undo window expired."}).encode("utf-8")),
+				io.BytesIO(json.dumps({"exception": "Repair Order is closed."}).encode("utf-8")),
 			)
 			with patch("urllib.request.urlopen", side_effect=http_err):
 				out_buf = io.StringIO()
 				err_buf = io.StringIO()
 				with redirect_stdout(out_buf), redirect_stderr(err_buf):
-					rc = cli.main(["--json", "board-undo", "--event", "BE-002"])
+					rc = cli.main(["--json", "board-post", "--repair-order", "RO-2026-00011", "--text", "Hi"])
 			self.assertEqual(rc, 1)
 			err_json = json.loads(out_buf.getvalue())
 			self.assertFalse(err_json["success"])
-			self.assertIn("Undo window expired.", err_json["error"])
+			self.assertIn("Repair Order is closed.", err_json["error"])
 
 
 if __name__ == "__main__":
