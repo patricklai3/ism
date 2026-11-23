@@ -23,6 +23,9 @@ description: >-
 | Duplicate symmetrical LH/RH service row | `python -m tools.cli --json duplicate-side --repair-order <RO> --service-row <ROW>` |
 | Check stock for parts hold | `python -m tools.cli --json check-stock --repair-order <RO>` |
 | Log floor discrepancy / escalation | `python -m tools.cli --json create-action --title <TITLE> [--ref-doctype "Repair Order" --ref-name <RO>] [--details <TEXT>]` |
+| Read Shop Board action card(s) + RO transcript | `python -m tools.cli --json action-cards [--action-item <ACT-1> [<ACT-2> ...]] [--repair-order <RO>] [--status Open]` |
+| Post direct floor message on active RO thread | `python -m tools.cli --json board-post --repair-order <RO> --text <TEXT> [--intent <TAG>] [--run-ai]` |
+| Clear / resolve handled action card (direct) | `python -m tools.cli --json resolve-action --action-item <ACT-ID> [--notes <TEXT>]` |
 | Checkout, collect payment, release vehicle | `python -m tools.cli --json checkout --repair-order <RO> --confirm [--payment-method <METHOD>] [--paid-amount <AMT>] [--odometer-out <KM>]` |
 | Multi-step floor actions in one process | `python -m tools.cli --json batch --cmd "job-status --repair-order <RO> --action hold" --cmd "check-stock --repair-order <RO>"` (or `--file @cmds.json`; alias: `ism-agent-os batch`) |
 

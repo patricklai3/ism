@@ -296,7 +296,7 @@ def _register_floor_and_action_parsers(sub: argparse._SubParsersAction) -> None:
 	p_cai.add_argument("--item-code")
 	p_cai.add_argument("--details")
 	p_cai.add_argument("--dedup-key")
-	p_cai.add_argument("--source", choices=("Manual", "Agent", "Rule Snooze"))
+	p_cai.add_argument("--source", choices=("Manual", "Agent", "Board AI", "Rule Snooze"))
 
 	p_rai = sub.add_parser("resolve-action", help="Resolve a Shop Action Item")
 	p_rai.add_argument("--action-item", "--name", dest="action_item", required=True)
@@ -494,45 +494,48 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 
 
 def _register_board_parsers(sub: argparse._SubParsersAction) -> None:
-	p_bts = sub.add_parser("board-threads", help="List Shop Board threads")
-	p_bts.add_argument(
-		"--thread-type",
-		choices=("REPAIR_ORDER", "INTAKE", "AP_RECEIVING", "DISPATCH"),
-		help="Filter by board thread type",
+	p_ac = sub.add_parser(
+		"action-cards",
+		help="Fetch Shop Board action card(s) with RO summary, capture transcript, media links, and clearing conditions",
 	)
+	p_ac.add_argument(
+		"--action-item",
+		action="extend",
+		nargs="+",
+		help="One or more Shop Action Item IDs (e.g. ACT-2026-00012)",
+	)
+	p_ac.add_argument("--repair-order", help="Filter action cards for a specific Repair Order")
+	p_ac.add_argument("--status", default="Open", help="Filter by action item status (default Open)")
+	p_ac.add_argument("--limit", type=int, default=20, help="Maximum action cards to return (default 20)")
+	p_ac.add_argument("--events-limit", type=int, default=20, help="Maximum recent RO board events to include (default 20)")
+
+	p_bts = sub.add_parser("board-threads", help="List active Repair Order Shop Board threads")
 	p_bts.add_argument(
 		"--status",
-		choices=("ACTIVE", "BLOCKED_PARTS", "BLOCKED_DECISION", "WAITING_CUSTOMER", "CLOSED"),
-		help="Filter by board thread status",
+		choices=("OPEN", "ALL", "ACTIVE", "NEEDS_ACTION", "BLOCKED_PARTS", "WAITING_CUSTOMER", "CLOSED"),
+		default="OPEN",
+		help="Filter by board thread status (default OPEN)",
 	)
 	p_bts.add_argument("--assigned-only", action="store_true", help="Only return threads assigned to the current user")
 	p_bts.add_argument("--query", help="Search thread keys, titles, or repair orders")
 	p_bts.add_argument("--limit", type=int, default=50, help="Maximum threads to return (default 50)")
 
-	p_bt = sub.add_parser("board-thread", help="Fetch a single Shop Board thread and its event timeline")
+	p_bt = sub.add_parser("board-thread", help="Fetch an active Repair Order Shop Board thread and its event timeline")
 	grp_bt = p_bt.add_mutually_exclusive_group(required=True)
-	grp_bt.add_argument("--thread-key", help="Generalized thread key (e.g. RO:RO-2026-00011 or SHOP:INTAKE)")
+	grp_bt.add_argument("--thread-key", help="Active Repair Order thread key (e.g. RO:RO-2026-00011)")
 	grp_bt.add_argument("--repair-order", help="Repair Order ID (resolves to RO:<id>)")
 	p_bt.add_argument("--limit", type=int, default=100, help="Maximum events to return (default 100)")
 	p_bt.add_argument("--before-event", help="Paginate events older than this Shop Board Event ID")
 
-	p_bp = sub.add_parser("board-post", help="Post a text capture onto a Shop Board thread")
+	p_bp = sub.add_parser("board-post", help="Post a text message onto an active Repair Order Shop Board thread")
 	grp_bp = p_bp.add_mutually_exclusive_group(required=True)
-	grp_bp.add_argument("--thread-key", help="Generalized thread key (e.g. RO:RO-2026-00011 or SHOP:INTAKE)")
+	grp_bp.add_argument("--thread-key", help="Active Repair Order thread key (e.g. RO:RO-2026-00011)")
 	grp_bp.add_argument("--repair-order", help="Repair Order ID (resolves to RO:<id>)")
 	p_bp.add_argument("--text", required=True, help="Capture text to post onto the thread")
 	p_bp.add_argument("--intent", help="Optional quick-intent tag")
 	p_bp.add_argument("--idempotency-key", help="Optional idempotency key for safe retries")
-
-	p_br = sub.add_parser("board-resolve", help="Resolve a pending Shop Board clarification or approval card")
-	p_br.add_argument("--event", required=True, help="Shop Board Event ID (e.g. BE-...)")
-	p_br.add_argument("--decision", required=True, choices=("approve", "reject", "clarify"), help="Card resolution decision")
-	p_br.add_argument("--option", help="Selected option key or label")
-	p_br.add_argument("--edited-message", help="Edited customer-facing message override")
-	p_br.add_argument("--notes", help="Optional resolution notes")
-	p_br.add_argument("--idempotency-key", help="Optional idempotency key for safe retries")
-
-	p_bu = sub.add_parser("board-undo", help="Undo an AI receipt event on a Shop Board thread")
-	p_bu.add_argument("--event", required=True, help="Shop Board Event ID of the AI receipt to undo")
-	p_bu.add_argument("--reason", help="Optional undo reason")
-	p_bu.add_argument("--idempotency-key", help="Optional idempotency key for safe retries")
+	p_bp.add_argument(
+		"--run-ai",
+		action="store_true",
+		help="Allow site Board AI to analyze this capture (default skips AI)",
+	)

@@ -24,6 +24,7 @@ from tools.cli import (  # noqa: E402
 	_load_batch_items,
 	validate_write_command_args,
 )
+from tools.cli_validation import DIRECT_HOUSEKEEPING_COMMANDS  # noqa: E402
 
 PRE_DISPATCH_MARKER = "ISM Pre-Dispatch Summary"
 
@@ -352,13 +353,6 @@ def evaluate_hook_payload(payload: dict[str, Any]) -> tuple[str, Optional[str]]:
 	if not write_namespaces:
 		return ("allow", None)
 
-	if os.environ.get("ISM_STAGE_ONLY", "").strip().lower() in ("1", "true", "yes", "on"):
-		return (
-			"deny",
-			f"Blocked live ISM write command(s) [{', '.join(ns.command for ns in write_namespaces)}]: "
-			"ISM_STAGE_ONLY=1 requires staging writes via `--stage` instead of direct live execution.",
-		)
-
 	for ns in write_namespaces:
 		missing = validate_write_command_args(ns)
 		if missing:
@@ -368,13 +362,24 @@ def evaluate_hook_payload(payload: dict[str, Any]) -> tuple[str, Optional[str]]:
 				"Run with --dry-run and present '### ISM Pre-Dispatch Summary' to the user first.",
 			)
 
+	gated_namespaces = [ns for ns in write_namespaces if ns.command not in DIRECT_HOUSEKEEPING_COMMANDS]
+	if not gated_namespaces:
+		return ("allow", None)
+
+	if os.environ.get("ISM_STAGE_ONLY", "").strip().lower() in ("1", "true", "yes", "on"):
+		return (
+			"deny",
+			f"Blocked live ISM write command(s) [{', '.join(ns.command for ns in gated_namespaces)}]: "
+			"ISM_STAGE_ONLY=1 requires staging writes via `--stage` instead of direct live execution.",
+		)
+
 	transcript_path = payload.get("transcriptPath") or payload.get("transcript_path")
 	entries = _load_transcript_entries(transcript_path)
-	ok, reason = _has_confirmed_summary_in_transcript(entries, [ns.command for ns in write_namespaces])
+	ok, reason = _has_confirmed_summary_in_transcript(entries, [ns.command for ns in gated_namespaces])
 	if not ok:
 		return (
 			"deny",
-			f"Blocked live ISM write command(s) [{', '.join(ns.command for ns in write_namespaces)}]: {reason} "
+			f"Blocked live ISM write command(s) [{', '.join(ns.command for ns in gated_namespaces)}]: {reason} "
 			"Run `--dry-run`, output '### ISM Pre-Dispatch Summary' (with no [MISSING] fields), and wait for explicit user confirmation.",
 		)
 

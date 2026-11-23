@@ -558,7 +558,7 @@ class TestCockpitHTTPAndCLI(unittest.TestCase):
 		ns_ca = relaxed.parse_args(["create-action", "--title", "Margin Drop", "--source", "Agent", "--dedup-key", "pnl:1"])
 		spec_ca = build_stage_form_spec([ns_ca], relaxed)
 		src_field = next(f for f in spec_ca["steps"][0]["fields"] if f["name"] == "source")
-		self.assertEqual(src_field["choices"], ["Manual", "Agent", "Rule Snooze"])
+		self.assertEqual(src_field["choices"], ["Manual", "Agent", "Board AI", "Rule Snooze"])
 
 		# Dry-run pre-dispatch summary works cleanly
 		summary = build_pre_dispatch_summary([ns_ok])

@@ -323,3 +323,74 @@ class TestIsmWriteGateHook(unittest.TestCase):
 						"toolCall": {"name": "run_command", "args": {"CommandLine": allowed_cmd}},
 					})
 					self.assertEqual(d_ok, "allow", f"Expected allow under ISM_STAGE_ONLY=1 for {allowed_cmd}: {r_ok}")
+
+	def test_direct_housekeeping_resolve_action_bypass_and_validation(self) -> None:
+		# action-cards is read-only and allowed without summary
+		d_ro, r_ro = hook_mod.evaluate_hook_payload({
+			"toolCall": {
+				"name": "run_command",
+				"args": {"CommandLine": "python -m tools.cli --json action-cards --action-item ACT-2026-00012"},
+			},
+		})
+		self.assertEqual(d_ro, "allow", f"Expected read-only allow for action-cards: {r_ro}")
+
+		# Valid resolve-action is allowed directly without transcript confirmation and even under ISM_STAGE_ONLY=1
+		valid_resolve = 'python -m tools.cli --json resolve-action --action-item ACT-2026-00012 --notes "Added supplement"'
+		with patch.dict(os.environ, {"ISM_STAGE_ONLY": "1"}):
+			d_ok, r_ok = hook_mod.evaluate_hook_payload({
+				"toolCall": {"name": "run_command", "args": {"CommandLine": valid_resolve}},
+			})
+			self.assertEqual(d_ok, "allow", f"Expected direct housekeeping allow for resolve-action: {r_ok}")
+
+		# Missing or empty --action-item must still be denied
+		for bad_cmd in (
+			'python -m tools.cli --json resolve-action --notes "Forgot ID"',
+			'python -m tools.cli --json resolve-action --action-item "" --notes "Blank ID"',
+		):
+			d_bad, r_bad = hook_mod.evaluate_hook_payload({
+				"toolCall": {"name": "run_command", "args": {"CommandLine": bad_cmd}},
+			})
+			self.assertEqual(d_bad, "deny", f"Expected deny for missing --action-item: {bad_cmd}")
+			self.assertIn("action-item", (r_bad or "").lower())
+
+		# Mixed batch containing an ERP write + resolve-action remains strictly gated!
+		mixed_batch = (
+			'python -m tools.cli --json batch '
+			'--cmd "add-supplement --repair-order RO-2026-00011 --title Brake --hours 1.0" '
+			'--cmd "resolve-action --action-item ACT-2026-00012 --notes Done"'
+		)
+		d_mix_no_summary, r_mix_no_summary = hook_mod.evaluate_hook_payload({
+			"toolCall": {"name": "run_command", "args": {"CommandLine": mixed_batch}},
+		})
+		self.assertEqual(d_mix_no_summary, "deny")
+		self.assertIn("add-supplement", r_mix_no_summary or "")
+
+		with patch.dict(os.environ, {"ISM_STAGE_ONLY": "1"}):
+			d_mix_stage, r_mix_stage = hook_mod.evaluate_hook_payload({
+				"toolCall": {"name": "run_command", "args": {"CommandLine": mixed_batch}},
+			})
+			self.assertEqual(d_mix_stage, "deny")
+			self.assertIn("ISM_STAGE_ONLY=1", r_mix_stage or "")
+
+		# Confirmed summary covering the ERP write allows the mixed batch (without requiring resolve-action in summary)
+		with tempfile.TemporaryDirectory() as tmp:
+			transcript_path = _write_transcript(
+				tmp,
+				entries=[
+					{"step_index": 1, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Add supplement"},
+					{
+						"step_index": 2,
+						"type": "PLANNER_RESPONSE",
+						"source": "MODEL",
+						"content": "### ISM Pre-Dispatch Summary\n- **Command**: `add-supplement`\n- **Status**: `READY`",
+					},
+					{"step_index": 3, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Confirmed"},
+				],
+			)
+			with patch.dict(os.environ, {}, clear=False):
+				os.environ.pop("ISM_STAGE_ONLY", None)
+				d_mix_ok, r_mix_ok = hook_mod.evaluate_hook_payload({
+					"toolCall": {"name": "run_command", "args": {"CommandLine": mixed_batch}},
+					"transcriptPath": transcript_path,
+				})
+				self.assertEqual(d_mix_ok, "allow", f"Expected mixed batch allow after ERP summary: {r_mix_ok}")
