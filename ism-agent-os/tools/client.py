@@ -371,6 +371,7 @@ class IsmAgentClient:
 		correction_code: Optional[str] = None,
 		labor_hours: float = 1.0,
 		model: str = "Model 3",
+		applicable_generation: Optional[str] = None,
 		parts: Optional[list[Any] | str] = None,
 		repair_order: Optional[str] = None,
 		url: Optional[str] = None,
@@ -390,6 +391,7 @@ class IsmAgentClient:
 			correction_code=correction_code,
 			labor_hours=labor_hours,
 			model=model,
+			applicable_generation=applicable_generation,
 			parts=parts,
 			repair_order=repair_order,
 			url=url,
@@ -517,12 +519,18 @@ class IsmAgentClient:
 			include_summary=include_summary,
 		)
 
-	def decode_vehicle_vin(self, vin: str, include_summary: bool = False) -> dict[str, Any]:
+	def decode_vehicle_vin(
+		self,
+		vin: str,
+		manufactured_month: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
 		"""Decode a 17-character Tesla VIN and resolve recommended service manual URL."""
 		return self._call_agent(
 			"decode_vehicle_vin",
 			include_summary=include_summary,
 			vin=vin,
+			manufactured_month=manufactured_month,
 		)
 
 	def search_vehicles(
@@ -530,16 +538,18 @@ class IsmAgentClient:
 		query: Optional[str] = None,
 		customer: Optional[str] = None,
 		model: Optional[str] = None,
+		generation: Optional[str] = None,
 		limit: int = 20,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
-		"""Search Repair Vehicles by VIN, license plate, customer, or model."""
+		"""Search Repair Vehicles by VIN, license plate, customer, model, or generation."""
 		return self._call_agent(
 			"search_vehicles",
 			include_summary=include_summary,
 			query=query,
 			customer=customer,
 			model=model,
+			generation=generation,
 			limit=limit,
 		)
 

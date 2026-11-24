@@ -958,6 +958,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 		correction_code=a.code,
 		labor_hours=a.hours,
 		model=a.model,
+		applicable_generation=a.generation,
 		parts=_parse_json_opt(a.parts_json, expected_type=list),
 		repair_order=a.repair_order,
 		url=a.url,
@@ -972,15 +973,18 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 	"ingest-tesla": lambda a, c, s: TeslaManualParser(c).ingest_from_url(
 		a.url,
 		model_override=a.model,
+		generation_override=a.generation,
 		repair_order=a.repair_order,
 		on_conflict=a.on_conflict,
 		force=bool(a.force),
 		side=a.side,
 		include_summary=s,
 	),
-	"decode-vin": lambda a, c, s: c.decode_vehicle_vin(vin=a.vin, include_summary=s),
+	"decode-vin": lambda a, c, s: c.decode_vehicle_vin(
+		vin=a.vin, manufactured_month=a.manufactured_month, include_summary=s
+	),
 	"search-vehicles": lambda a, c, s: c.search_vehicles(
-		query=a.query, customer=a.customer, model=a.model, limit=a.limit, include_summary=s
+		query=a.query, customer=a.customer, model=a.model, generation=a.generation, limit=a.limit, include_summary=s
 	),
 	"vehicle-info": lambda a, c, s: c.get_vehicle_intelligence(
 		vehicle=a.vehicle, history_limit=a.history_limit, include_summary=s

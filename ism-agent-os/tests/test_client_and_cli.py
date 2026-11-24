@@ -1965,6 +1965,41 @@ class TestCli(unittest.TestCase):
 				srv.shutdown()
 				srv.server_close()
 
+	def test_cli_generation_and_manufactured_month_flags(self) -> None:
+		from tools.cli import main as cli_main
+
+		fake_client = MagicMock()
+		fake_client.__enter__.return_value = fake_client
+		fake_client.__exit__.return_value = None
+		fake_client.decode_vehicle_vin.return_value = {"success": True, "data": {}}
+		fake_client.search_vehicles.return_value = {"success": True, "data": {"vehicles": []}}
+		fake_client.import_tesla_procedure.return_value = {"success": True, "data": {}}
+
+		with patch("tools.cli.IsmAgentClient", return_value=fake_client):
+			cli_main(["decode-vin", "--vin", "5YJSA1E50MF000123", "--manufactured-month", "01/21"])
+			self.assertEqual(fake_client.decode_vehicle_vin.call_args.kwargs["manufactured_month"], "01/21")
+
+			cli_main(["search-vehicles", "--model", "Model S", "--generation", "Model S Feb 2021 - May 2025"])
+			self.assertEqual(
+				fake_client.search_vehicles.call_args.kwargs["generation"],
+				"Model S Feb 2021 - May 2025",
+			)
+
+			cli_main([
+				"import-tesla",
+				"--title",
+				"Cabin Air Filter",
+				"--model",
+				"Model 3",
+				"--generation",
+				"Model 3 Jan 2024",
+			])
+			self.assertEqual(
+				fake_client.import_tesla_procedure.call_args.kwargs["applicable_generation"],
+				"Model 3 Jan 2024",
+			)
+
+
 
 if __name__ == "__main__":
 	unittest.main()
