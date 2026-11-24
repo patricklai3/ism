@@ -43,12 +43,11 @@ description: >-
 4. **Surface deferred services**: Check `data.deferred_services` (`deferred_count > 0`) returned by `quote` or `vehicle-info`. Highlight any `safety_hazard` items immediately and offer `add-deferred`.
 5. **Server math, parts pricing & links**: Never compute labor rates, durations, or 13% HST manually; calculate part selling rates via `price-part` (reusing non-zero Frappe `Item.standard_rate` on repeat quotes unless a fresh Tesla lookup at `https://parts.tesla.com/en-CA/find-part?searchTerm=<query>` is requested, and keeping Tesla comparison data out of customer-facing quote text). Return server totals from `data` and Desk/Print/Approval links from `urls` (pass `--summary` only if a markdown `summary_card` is requested).
 
-## Required Fields, `--stage` & Pre-Dispatch Callback
+## Required Fields & Pre-Dispatch Callback
 
 - **`quote` / `intake-slots` required fields**: `--customer`, `--vehicle`, `--odometer-in` (`>= 0`; NEVER guess or default), vehicle **color** (`--color` / `--vehicle-color`) and **license plate** (`--license-plate` / `--plate`) if not already on the `Repair Vehicle`, and at least one `--service`/`--services-json`/`--notes`.
 - **Human-facing vehicle references**: Always refer to vehicles by **year, color, model, and license plate** (not VIN-only). Under tight space, drop VIN first, then year and plate (keep color + model).
-- **Preferred Turn-1 Staged Form (`--stage`)**: Stage single writes (`python -m tools.cli --json --stage quote ...`) or chained pipelines (`python -m tools.cli --json --stage batch --cmd "quote ..." --cmd "amend-quote --repair-order @step0.data.name ..." --cmd "send-approval --repair-order @prev.data.name --medium link"` or `quote` + `deposit --repair-order @step0.data.name --amount <CAD> --payment-method <METHOD>`), even when `--odometer-in` or optional fields need user input. Use PowerShell-safe `@stepN.<field>` / `@prev.<field>` (`stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings). Present the returned `127.0.0.1` URL and end the turn. On follow-up turns, read created IDs via `python -m tools.cli --json stage-receipt` or pass `@last` / `@last.<field>`.
-- **Legacy Callback (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), run `--dry-run`, output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing live writes.
+- **Pre-Dispatch Callback (`--dry-run`)**: Run `--dry-run` (or `--dry-run batch` with PowerShell-safe `@stepN.<field>` / `@prev.<field>`), output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing live writes.
 
 ## Verification
 

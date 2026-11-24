@@ -1,15 +1,13 @@
-"""Tests for Shop Board OS client methods, CLI parsers, validation, and --stage/--dry-run gating."""
+"""Tests for Shop Board OS client methods, CLI parsers, validation, and --dry-run gating."""
 
 from __future__ import annotations
 
 import argparse
 import io
 import json
-import tempfile
 import unittest
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path
 from unittest.mock import patch
 
 from tools import cli
@@ -19,7 +17,6 @@ from tools.cli_validation import (
 	READ_ONLY_COMMANDS,
 	WRITE_COMMAND_META,
 	build_pre_dispatch_summary,
-	build_stage_form_spec,
 	validate_write_command_args,
 )
 from tools.client import IsmAgentClient, IsmApiError
@@ -177,7 +174,7 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 		self.assertNotIn("board-post", READ_ONLY_COMMANDS)
 		self.assertIn("board-post", WRITE_COMMAND_META)
 
-		parser = _build_parser(relax_required=False)
+		parser = _build_parser()
 		subcommands = parser._subparsers._group_actions[0].choices
 		for removed_cmd in ("board-resolve", "board-undo"):
 			self.assertNotIn(removed_cmd, subcommands)
@@ -185,7 +182,7 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 			self.assertNotIn(removed_cmd, READ_ONLY_COMMANDS)
 
 	def test_action_cards_and_board_parsers(self) -> None:
-		parser = _build_parser(relax_required=False)
+		parser = _build_parser()
 
 		ns_ac = parser.parse_args([
 			"action-cards",
@@ -217,7 +214,7 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 		self.assertEqual(ns_ca.source, "Board AI")
 
 	def test_thread_key_and_repair_order_mutual_exclusion_and_required(self) -> None:
-		parser = _build_parser(relax_required=False)
+		parser = _build_parser()
 		with redirect_stderr(io.StringIO()):
 			with self.assertRaises(SystemExit):
 				parser.parse_args(["board-thread"])
@@ -243,7 +240,7 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 		ns_ai = parser.parse_args(["board-post", "--repair-order", "RO-2026-00011", "--text", "Need supplement", "--run-ai"])
 		self.assertTrue(ns_ai.run_ai)
 
-		# Direct Namespace validation also rejects mutually exclusive targets (e.g. batch dict or stage).
+		# Direct Namespace validation also rejects mutually exclusive targets (e.g. batch dict).
 		both_ns = argparse.Namespace(
 			command="board-post",
 			thread_key="RO:RO-1",
@@ -271,39 +268,6 @@ class TestBoardCliParsingAndGating(unittest.TestCase):
 		self.assertFalse(summary["ready"])
 		self.assertIn("board-post:--text", summary["missing_required"])
 		self.assertIn("board-post:--thread-key/--repair-order (one required)", summary["missing_required"])
-
-	def test_cli_stage_gating_for_board_writes_without_network(self) -> None:
-		with tempfile.TemporaryDirectory() as tmp:
-			staged_dir = Path(tmp) / "staged"
-			with (
-				patch.dict("os.environ", {**self.env_vars, "ISM_STAGE_DIR": str(staged_dir)}, clear=False),
-				patch("tools.cli.ensure_server_running", return_value={"port": 54321, "pid": 999}),
-				patch("urllib.request.urlopen") as mock_open,
-			):
-				buf = io.StringIO()
-				with redirect_stdout(buf):
-					rc = cli.main(["--stage", "board-post", "--text", "Needs parts check"])
-				self.assertEqual(rc, 0)
-				out = json.loads(buf.getvalue())
-				self.assertTrue(out["staged"])
-				self.assertFalse(out["ready"])
-				self.assertIn("board-post:--thread-key/--repair-order (one required)", out["missing_required"])
-				self.assertEqual(mock_open.call_count, 0)
-
-		spec = build_stage_form_spec([
-			argparse.Namespace(
-				command="board-post",
-				thread_key=None,
-				repair_order="RO-2026-00011",
-				text="Parts ordered for bay 2",
-				intent="Parts",
-				idempotency_key=None,
-				run_ai=False,
-			)
-		])
-		self.assertTrue(spec["ready"])
-		self.assertTrue(spec["has_writes"])
-		self.assertEqual(spec["steps"][0]["target"], "ism.api.board.post_board_capture -> Shop Board Event")
 
 	def test_cli_main_executes_board_commands_with_skip_ai_and_propagates_errors(self) -> None:
 		with patch.dict("os.environ", self.env_vars, clear=False):

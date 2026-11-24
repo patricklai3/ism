@@ -34,7 +34,7 @@ PROFILE_EXECUTE_FNS: dict[str, str] = {
 	"monte_carlo": "ism.testing.monte_carlo.seed_monte_carlo",
 }
 
-_DOTENV_BACKUP_REL = Path(".ism_staged") / "env.slot_backup"
+_DOTENV_BACKUP_REL = Path(".ism_runtime") / "env.slot_backup"
 
 
 def default_offline_eval_manifest(target_date: Optional[str] = None) -> dict[str, Any]:
@@ -560,7 +560,7 @@ def configure_slot_dotenv(
 
 
 def restore_slot_dotenv(agent_os_root: Path = _AGENT_OS_ROOT) -> bool:
-	"""Restore ism-agent-os/.env from .ism_staged/env.slot_backup if present."""
+	"""Restore ism-agent-os/.env from .ism_runtime/env.slot_backup if present."""
 	env_path = agent_os_root / ".env"
 	backup_path = agent_os_root / _DOTENV_BACKUP_REL
 	if not backup_path.is_file():

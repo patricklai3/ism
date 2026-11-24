@@ -1,14 +1,11 @@
-"""Unit and localhost HTTP tests for ISM monitoring cockpit, triage queue, and CLI."""
+"""Unit tests for ISM monitoring cockpit data view, triage queue, and CLI."""
 
 from __future__ import annotations
 
 import copy
-import http.client
+import io
 import json
-import tempfile
-import threading
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from tools import cli
@@ -17,11 +14,9 @@ from tools.cli_validation import (
 	READ_ONLY_COMMANDS,
 	WRITE_COMMAND_META,
 	build_pre_dispatch_summary,
-	build_stage_form_spec,
 	validate_write_command_args,
 )
 from tools.monitoring import build_cockpit_view
-from tools.stage_server import start_stage_server
 
 
 def _base_snapshot() -> dict:
@@ -423,120 +418,14 @@ class TestMonitoringTriageAndGauges(unittest.TestCase):
 		self.assertEqual(view_tech["capacity"]["bottleneck"], "Tech-Bound")
 
 
-class TestCockpitHTTPAndCLI(unittest.TestCase):
-	def setUp(self) -> None:
-		self._tmp = tempfile.TemporaryDirectory()
-		self.staged_dir = Path(self._tmp.name)
-		self.server = start_stage_server(
-			self.staged_dir,
-			port=0,
-			cockpit_token="cockpit-secret-token-123",
-		)
-		self.port = self.server.server_port
-		self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-		self.thread.start()
-
-	def tearDown(self) -> None:
-		self.server.shutdown()
-		self.server.server_close()
-		self._tmp.cleanup()
-
-	def _req(self, method: str, path: str, *, body: dict | None = None, headers: dict | None = None):
-		conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
-		hdrs = {"Host": f"127.0.0.1:{self.port}", "Connection": "close"}
-		if headers:
-			hdrs.update(headers)
-		raw = None
-		if body is not None:
-			raw = json.dumps(body).encode("utf-8")
-			hdrs["Content-Type"] = "application/json"
-			hdrs["Content-Length"] = str(len(raw))
-		try:
-			conn.request(method, path, body=raw, headers=hdrs)
-			resp = conn.getresponse()
-			return resp.status, dict(resp.getheaders()), resp.read().decode("utf-8")
-		finally:
-			conn.close()
-
-	def test_cockpit_http_security_and_routes(self) -> None:
-		# Missing / invalid token rejected
-		st, _, _ = self._req("GET", "/cockpit")
-		self.assertEqual(st, 403)
-		st, _, _ = self._req("GET", "/api/cockpit/snapshot", headers={"X-Cockpit-Token": "wrong"})
-		self.assertEqual(st, 403)
-
-		# Valid token renders HTML
-		st, _, html = self._req("GET", "/cockpit?token=cockpit-secret-token-123")
-		self.assertEqual(st, 200)
-		self.assertIn("ISM Shop Health Cockpit", html)
-
-		# Bad date -> 400
-		st, _, raw = self._req(
-			"GET",
-			"/api/cockpit/snapshot?date=not-a-date",
-			headers={"X-Cockpit-Token": "cockpit-secret-token-123"},
-		)
-		self.assertEqual(st, 400)
-
-		# Cross-origin POST -> 403
-		st, _, _ = self._req(
-			"POST",
-			"/api/cockpit/action-sync",
-			body={"dedup_key": "k1", "action": "snooze"},
-			headers={
-				"Origin": "http://evil.example.com",
-				"X-Cockpit-Token": "cockpit-secret-token-123",
-			},
-		)
-		self.assertEqual(st, 403)
-
-		# Valid snapshot and action-sync with mocked client
-		class _FakeClient:
-			def __init__(self, *_a, **_kw) -> None:
-				pass
-
-			def __enter__(self):
-				return self
-
-			def __exit__(self, *_a) -> None:
-				pass
-
-			def get_cockpit_snapshot(self, date=None):
-				return _base_snapshot()
-
-			def sync_action_item_state(self, **kwargs):
-				return {"success": True, "data": {"status": "Open", "dedup_key": kwargs["dedup_key"]}}
-
-		with patch("tools.cockpit_routes.IsmAgentClient", _FakeClient):
-			st, _, raw = self._req(
-				"GET",
-				"/api/cockpit/snapshot?date=2026-11-17",
-				headers={"X-Cockpit-Token": "cockpit-secret-token-123"},
-			)
-			self.assertEqual(st, 200, raw)
-			payload = json.loads(raw)
-			self.assertTrue(payload["success"])
-			self.assertEqual(len(payload["gauges"]), 7)
-
-			st, _, raw = self._req(
-				"POST",
-				"/api/cockpit/action-sync",
-				body={"dedup_key": "dead_lift:RO-1", "action": "snooze", "snooze_minutes": 60},
-				headers={
-					"Origin": f"http://127.0.0.1:{self.port}",
-					"X-Cockpit-Token": "cockpit-secret-token-123",
-				},
-			)
-			self.assertEqual(st, 200, raw)
-			self.assertEqual(json.loads(raw)["data"]["dedup_key"], "dead_lift:RO-1")
-
-	def test_cli_validation_and_stage_specs_for_monitoring_commands(self) -> None:
+class TestCockpitCLI(unittest.TestCase):
+	def test_cli_validation_for_monitoring_commands(self) -> None:
 		self.assertIn("cockpit", READ_ONLY_COMMANDS)
 		self.assertIn("pnl-digest", READ_ONLY_COMMANDS)
 		self.assertIn("publish-score", WRITE_COMMAND_META)
 		self.assertIn("sync-action", WRITE_COMMAND_META)
 
-		parser = _build_parser(relax_required=False)
+		parser = _build_parser()
 		ns_pub = parser.parse_args([
 			"publish-score", "--metric", "pnl_health", "--score", "105", "--verdict", "Bad score"
 		])
@@ -548,33 +437,31 @@ class TestCockpitHTTPAndCLI(unittest.TestCase):
 		])
 		self.assertEqual(validate_write_command_args(ns_ok), [])
 
-		# Check --stage field overrides don't collide across commands
-		relaxed = _build_parser(relax_required=True)
-		ns_sync = relaxed.parse_args(["sync-action", "--dedup-key", "pnl:1", "--action", "snooze"])
-		spec_sync = build_stage_form_spec([ns_sync], relaxed)
-		action_field = next(f for f in spec_sync["steps"][0]["fields"] if f["name"] == "action")
-		self.assertEqual(action_field["choices"], ["snooze", "dismiss", "reopen"])
-
-		ns_ca = relaxed.parse_args(["create-action", "--title", "Margin Drop", "--source", "Agent", "--dedup-key", "pnl:1"])
-		spec_ca = build_stage_form_spec([ns_ca], relaxed)
-		src_field = next(f for f in spec_ca["steps"][0]["fields"] if f["name"] == "source")
-		self.assertEqual(src_field["choices"], ["Manual", "Agent", "Board AI", "Rule Snooze"])
-
 		# Dry-run pre-dispatch summary works cleanly
 		summary = build_pre_dispatch_summary([ns_ok])
 		self.assertTrue(summary["ready"])
 		self.assertTrue(summary["has_writes"])
 
-		# cockpit --stage is rejected cleanly
-		self.assertEqual(cli.main(["--stage", "cockpit"]), 1)
+		# cockpit returns computed JSON directly via IsmAgentClient (no local HTTP server)
+		class _FakeClient:
+			def __init__(self, *_a, **_kw) -> None:
+				pass
 
-		# cockpit without --data-only prints localhost URL using ensure_server_running
-		with patch("tools.stage_server.ensure_server_running", return_value={
-			"port": 51234,
-			"cockpit_token": "tok-xyz",
-		}):
+			def __enter__(self):
+				return self
+
+			def __exit__(self, *_a) -> None:
+				pass
+
+			def get_cockpit_snapshot(self, date=None, include_summary=False):
+				return _base_snapshot()
+
+		with patch("tools.cli.IsmAgentClient", _FakeClient), patch("sys.stdout", new_callable=io.StringIO) as out:
 			rc = cli.main(["--json", "cockpit", "--date", "2026-11-17"])
 			self.assertEqual(rc, 0)
+			payload = json.loads(out.getvalue())
+			self.assertTrue(payload["success"])
+			self.assertEqual(len(payload["gauges"]), 7)
 
 
 if __name__ == "__main__":

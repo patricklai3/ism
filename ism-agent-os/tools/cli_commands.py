@@ -31,7 +31,6 @@ from .cli_validation import (
 from .client import IsmAgentClient, IsmApiError
 from .monitoring import build_cockpit_view
 from .pricing import calculate_part_price, load_pricing_config
-from .stage_store import extract_receipt_metadata, read_latest_receipt, resolve_staged_dir
 
 try:
 	from .ingestion.supplier_catalog import SupplierCatalogSanitizer
@@ -305,9 +304,6 @@ _STEP_TOKEN_RE = re.compile(
 	rf"|(?<![A-Za-z0-9_.$@-])(?P<r_target>step\d+|prev)\.(?P<r_path>{_STEP_PATH_RE})(?![A-Za-z0-9_@-])"
 	rf")"
 )
-_AT_LAST_RE = re.compile(
-	rf"(?<![A-Za-z0-9._%+-])@last(?:\.({_STEP_PATH_RE}))?(?![A-Za-z0-9_@-])"
-)
 
 
 def _extract_step_match(m: re.Match[str]) -> tuple[str, Optional[str]]:
@@ -345,77 +341,25 @@ def _stringify_resolved_value(val: Any) -> str:
 	return str(val)
 
 
-def _lookup_at_last_token(path: Optional[str], receipt: dict[str, Any]) -> Any:
-	if not path:
-		primary = receipt.get("primary_id")
-		if not primary and isinstance(receipt.get("data"), dict):
-			primary = receipt["data"].get("name")
-		if not primary:
-			raise ValueError("Latest staged receipt has no primary_id to resolve '@last'.")
-		return primary
-
-	for candidate in (receipt, receipt.get("ids"), receipt.get("data"), receipt.get("result")):
-		if isinstance(candidate, dict):
-			found, val = _traverse_path(candidate, path)
-			if found and val is not None:
-				return val
-	raise ValueError(f"Could not resolve '@last.{path}' from latest staged receipt.")
-
-
-def resolve_at_last_value(
-	val: Any,
-	*,
-	staged_dir: Optional[str | Path] = None,
-	_receipt_cache: Optional[dict[str, Any]] = None,
-) -> Any:
-	"""Recursively resolve @last and @last.<field> tokens from .ism_staged/latest.json."""
-	cache = _receipt_cache if _receipt_cache is not None else {}
-
-	def _get_receipt() -> dict[str, Any]:
-		if "receipt" not in cache:
-			resp = read_latest_receipt(staged_dir=staged_dir)
-			rec = resp.get("data")
-			if not isinstance(rec, dict):
-				raise ValueError("Latest staged receipt is empty.")
-			cache["receipt"] = rec
-		return cache["receipt"]
-
-	if isinstance(val, str):
-		if not _AT_LAST_RE.search(val):
-			return val
-		stripped = val.strip()
-		exact = _AT_LAST_RE.fullmatch(stripped)
-		if exact:
-			return _lookup_at_last_token(exact.group(1), _get_receipt())
-		return _AT_LAST_RE.sub(
-			lambda m: _stringify_resolved_value(_lookup_at_last_token(m.group(1), _get_receipt())),
-			val,
-		)
-	if isinstance(val, list):
-		return [resolve_at_last_value(x, staged_dir=staged_dir, _receipt_cache=cache) for x in val]
-	if isinstance(val, tuple):
-		return tuple(resolve_at_last_value(x, staged_dir=staged_dir, _receipt_cache=cache) for x in val)
-	if isinstance(val, dict):
-		return {
-			k: resolve_at_last_value(v, staged_dir=staged_dir, _receipt_cache=cache)
-			for k, v in val.items()
-		}
-	return val
-
-
-def resolve_namespace_at_last(
-	args: argparse.Namespace,
-	*,
-	staged_dir: Optional[str | Path] = None,
-) -> argparse.Namespace:
-	"""Resolve @last tokens across parsed argparse.Namespace attributes."""
-	cache: dict[str, Any] = {}
-	for key, val in list(vars(args).items()):
-		if key in ("command", "env_file", "json", "summary", "dry_run", "stage"):
-			continue
-		if val is not None:
-			setattr(args, key, resolve_at_last_value(val, staged_dir=staged_dir, _receipt_cache=cache))
-	return args
+def _extract_primary_id(res_obj: Any) -> Optional[str]:
+	if not isinstance(res_obj, dict):
+		return None
+	data = res_obj.get("data") if isinstance(res_obj.get("data"), dict) else res_obj
+	for key in (
+		"name",
+		"repair_order",
+		"schedule_entry",
+		"purchase_order",
+		"purchase_invoice",
+		"payment_entry",
+		"sales_invoice",
+		"action_item",
+		"id",
+	):
+		val = data.get(key)
+		if val is not None and str(val).strip():
+			return str(val).strip()
+	return None
 
 
 def _iter_strings(value: Any):
@@ -429,12 +373,12 @@ def _iter_strings(value: Any):
 			yield from _iter_strings(elem)
 	elif isinstance(value, argparse.Namespace):
 		for k, v in vars(value).items():
-			if k not in ("command", "env_file", "json", "summary", "dry_run", "stage"):
+			if k not in ("command", "env_file", "json", "summary", "dry_run"):
 				yield from _iter_strings(v)
 
 
 def validate_batch_step_references(items: list[Any], *, is_batch: bool = True) -> None:
-	"""Validate @stepN/stepN/$stepN and @prev/prev/$prev reference bounds before staging or executing."""
+	"""Validate @stepN/stepN/$stepN and @prev/prev/$prev reference bounds before executing."""
 	for idx, item in enumerate(items):
 		for text in _iter_strings(item):
 			raise_if_corrupted_step_ref(text)
@@ -472,12 +416,7 @@ def _lookup_step_token(
 		)
 	res_obj = prior.get("result")
 	if not path:
-		meta = extract_receipt_metadata(
-			res_obj if isinstance(res_obj, dict) else {},
-			mode="single",
-			commands=[str(prior.get("command") or "")],
-		)
-		primary = meta.get("primary_id")
+		primary = _extract_primary_id(res_obj)
 		if not primary:
 			raise ValueError(f"Step {ref_idx} produced no primary ID for '${target}'.")
 		return primary
@@ -525,20 +464,15 @@ def _resolve_batch_item_to_argv(
 	item: Any,
 	step_idx: int,
 	prior_results: list[dict[str, Any]],
-	*,
-	staged_dir: Optional[str | Path] = None,
 ) -> list[str]:
-	"""Convert a batch item to argv and resolve @last / $stepN / $prev references safely."""
-	cache: dict[str, Any] = {}
+	"""Convert a batch item to argv and resolve @stepN / @prev / $stepN / $prev references safely."""
 	if isinstance(item, (dict, list)):
-		resolved_item = resolve_at_last_value(item, staged_dir=staged_dir, _receipt_cache=cache)
-		resolved_item = resolve_step_tokens(resolved_item, step_idx, prior_results)
+		resolved_item = resolve_step_tokens(item, step_idx, prior_results)
 		return _batch_item_to_argv(resolved_item)
 	argv_item = _batch_item_to_argv(item)
 	out: list[str] = []
 	for tok in argv_item:
-		tok_val = resolve_at_last_value(tok, staged_dir=staged_dir, _receipt_cache=cache)
-		tok_val = resolve_step_tokens(tok_val, step_idx, prior_results)
+		tok_val = resolve_step_tokens(tok, step_idx, prior_results)
 		out.append(_stringify_resolved_value(tok_val))
 	return out
 
@@ -628,8 +562,6 @@ def _parse_batch_subcommand(
 		sub_args = parser.parse_args(argv_item)
 	if sub_args.command in ("batch", "test", "verify-connection"):
 		raise ValueError(f"Command '{sub_args.command}' is not allowed inside batch.")
-	if bool(getattr(sub_args, "stage", False)):
-		raise ValueError("Nested '--stage' is not allowed inside batch subcommands.")
 	return cmd_label, sub_args
 
 
@@ -689,38 +621,15 @@ def _cmd_batch(
 	}
 
 
-def _cmd_stage_receipt(a: argparse.Namespace, _c: Optional[IsmAgentClient], _s: bool) -> dict[str, Any]:
-	return read_latest_receipt(stage_id=getattr(a, "stage_id", None))
-
-
-def _cmd_cockpit(a: argparse.Namespace, c: Optional[IsmAgentClient], s: bool) -> dict[str, Any]:
-	if getattr(a, "data_only", False):
-		if c is None:
-			raise ValueError("Frappe client is required for cockpit --data-only.")
-		snap = c.get_cockpit_snapshot(date=getattr(a, "date", None), include_summary=s)
-		if isinstance(snap, dict) and snap.get("success") is False:
-			return snap
-		view = build_cockpit_view(snap)
-		out: dict[str, Any] = {"success": True, **view}
-		if s and isinstance(snap, dict) and snap.get("summary_card"):
-			out["summary_card"] = snap["summary_card"]
-		return out
-
-	from .stage_server import ensure_server_running
-
-	raw_env = getattr(a, "env_file", None)
-	resolved_env = str(Path(raw_env).expanduser().resolve()) if raw_env else None
-	staged_dir = resolve_staged_dir()
-	srv = ensure_server_running(staged_dir, require_cockpit=True, env_file=resolved_env)
-	url = f"http://127.0.0.1:{srv['port']}/cockpit?token={srv['cockpit_token']}"
-	if getattr(a, "date", None):
-		url += f"&date={a.date}"
-	return {
-		"success": True,
-		"url": url,
-		"port": srv["port"],
-		"date": getattr(a, "date", None),
-	}
+def _cmd_cockpit(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> dict[str, Any]:
+	snap = c.get_cockpit_snapshot(date=getattr(a, "date", None), include_summary=s)
+	if isinstance(snap, dict) and snap.get("success") is False:
+		return snap
+	view = build_cockpit_view(snap)
+	out: dict[str, Any] = {"success": True, **view}
+	if s and isinstance(snap, dict) and snap.get("summary_card"):
+		out["summary_card"] = snap["summary_card"]
+	return out
 
 
 def _cmd_publish_score(a: argparse.Namespace, c: IsmAgentClient, s: bool) -> dict[str, Any]:
@@ -1070,7 +979,6 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 		idempotency_key=a.idempotency_key,
 		skip_ai=not bool(a.run_ai),
 	),
-	"stage-receipt": _cmd_stage_receipt,
 }
 
 

@@ -256,74 +256,6 @@ class TestIsmWriteGateHook(unittest.TestCase):
 				})
 				self.assertEqual(decision, "allow", f"Expected allow for {cmd}: {reason}")
 
-	def test_allows_stage_commands_without_summary(self) -> None:
-		for cmd in (
-			"python -m tools.cli --json --stage quote --customer Rob --vehicle VIN1 --service 'Lateral Link'",
-			"python -m tools.cli --stage book --repair-order RO-1",
-			"python -m tools.cli quote --stage --customer Rob",
-			"ism-agent-os --stage checkout --repair-order RO-1",
-			"python -m tools.cli --json --stage batch --cmd \"quote --customer Rob --vehicle VIN1 --service Brake\" --cmd \"send-approval --repair-order '$step0.data.name' --medium link\"",
-			"python -m tools.cli --json stage-receipt",
-		):
-			decision, reason = hook_mod.evaluate_hook_payload({
-				"toolCall": {"name": "run_command", "args": {"CommandLine": cmd}},
-			})
-			self.assertEqual(decision, "allow", f"Expected stage allow for {cmd}: {reason}")
-
-		# Passing literal '--stage' as a flag value without enabling --stage must still be denied
-		for spoof_cmd in (
-			"python -m tools.cli --json quote --customer Rob --vehicle VIN1 --odometer-in 48250 --notes --stage",
-			"python -m tools.cli --json quote --customer Rob --vehicle VIN1 --odometer-in 48250 --notes=--stage",
-		):
-			decision, _ = hook_mod.evaluate_hook_payload({
-				"toolCall": {"name": "run_command", "args": {"CommandLine": spoof_cmd}},
-			})
-			self.assertEqual(decision, "deny", f"Expected deny for spoof {spoof_cmd}")
-
-	def test_stage_only_env_enforces_stage_while_default_preserves_dry_run_flow(self) -> None:
-		valid_cmd = (
-			"python -m tools.cli --json quote --customer Rob --vehicle VIN1 "
-			"--odometer-in 48250 --service 'Lateral Link Diagnosis'"
-		)
-		summary = "### ISM Pre-Dispatch Summary\n- **Command**: `quote`\n- **Status**: `READY`\n- **Missing Required Fields**: `None`"
-		with tempfile.TemporaryDirectory() as tmp:
-			transcript_path = _write_transcript(
-				tmp,
-				entries=[
-					{"step_index": 1, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Odo 48250"},
-					{"step_index": 2, "type": "PLANNER_RESPONSE", "source": "MODEL", "content": summary},
-					{"step_index": 3, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Confirmed"},
-				],
-			)
-			# Default (ISM_STAGE_ONLY unset): legacy confirmed live write stays allowed
-			with patch.dict(os.environ, {}, clear=False):
-				os.environ.pop("ISM_STAGE_ONLY", None)
-				decision, reason = hook_mod.evaluate_hook_payload({
-					"toolCall": {"name": "run_command", "args": {"CommandLine": valid_cmd}},
-					"transcriptPath": transcript_path,
-				})
-				self.assertEqual(decision, "allow", f"Expected legacy allow: {reason}")
-
-			# Strict toggle ISM_STAGE_ONLY=1 denies live writes even with confirmed summary
-			with patch.dict(os.environ, {"ISM_STAGE_ONLY": "1"}):
-				decision, reason = hook_mod.evaluate_hook_payload({
-					"toolCall": {"name": "run_command", "args": {"CommandLine": valid_cmd}},
-					"transcriptPath": transcript_path,
-				})
-				self.assertEqual(decision, "deny")
-				self.assertIn("ISM_STAGE_ONLY=1", reason or "")
-
-				# --stage, --dry-run, and stage-receipt remain allowed under ISM_STAGE_ONLY=1
-				for allowed_cmd in (
-					"python -m tools.cli --json --stage quote --customer Rob --vehicle VIN1",
-					"python -m tools.cli --dry-run quote --customer Rob --vehicle VIN1 --service Test",
-					"python -m tools.cli --json stage-receipt",
-				):
-					d_ok, r_ok = hook_mod.evaluate_hook_payload({
-						"toolCall": {"name": "run_command", "args": {"CommandLine": allowed_cmd}},
-					})
-					self.assertEqual(d_ok, "allow", f"Expected allow under ISM_STAGE_ONLY=1 for {allowed_cmd}: {r_ok}")
-
 	def test_direct_housekeeping_resolve_action_bypass_and_validation(self) -> None:
 		# action-cards is read-only and allowed without summary
 		d_ro, r_ro = hook_mod.evaluate_hook_payload({
@@ -334,13 +266,12 @@ class TestIsmWriteGateHook(unittest.TestCase):
 		})
 		self.assertEqual(d_ro, "allow", f"Expected read-only allow for action-cards: {r_ro}")
 
-		# Valid resolve-action is allowed directly without transcript confirmation and even under ISM_STAGE_ONLY=1
+		# Valid resolve-action is allowed directly without transcript confirmation
 		valid_resolve = 'python -m tools.cli --json resolve-action --action-item ACT-2026-00012 --notes "Added supplement"'
-		with patch.dict(os.environ, {"ISM_STAGE_ONLY": "1"}):
-			d_ok, r_ok = hook_mod.evaluate_hook_payload({
-				"toolCall": {"name": "run_command", "args": {"CommandLine": valid_resolve}},
-			})
-			self.assertEqual(d_ok, "allow", f"Expected direct housekeeping allow for resolve-action: {r_ok}")
+		d_ok, r_ok = hook_mod.evaluate_hook_payload({
+			"toolCall": {"name": "run_command", "args": {"CommandLine": valid_resolve}},
+		})
+		self.assertEqual(d_ok, "allow", f"Expected direct housekeeping allow for resolve-action: {r_ok}")
 
 		# Missing or empty --action-item must still be denied
 		for bad_cmd in (
@@ -365,13 +296,6 @@ class TestIsmWriteGateHook(unittest.TestCase):
 		self.assertEqual(d_mix_no_summary, "deny")
 		self.assertIn("add-supplement", r_mix_no_summary or "")
 
-		with patch.dict(os.environ, {"ISM_STAGE_ONLY": "1"}):
-			d_mix_stage, r_mix_stage = hook_mod.evaluate_hook_payload({
-				"toolCall": {"name": "run_command", "args": {"CommandLine": mixed_batch}},
-			})
-			self.assertEqual(d_mix_stage, "deny")
-			self.assertIn("ISM_STAGE_ONLY=1", r_mix_stage or "")
-
 		# Confirmed summary covering the ERP write allows the mixed batch (without requiring resolve-action in summary)
 		with tempfile.TemporaryDirectory() as tmp:
 			transcript_path = _write_transcript(
@@ -387,10 +311,8 @@ class TestIsmWriteGateHook(unittest.TestCase):
 					{"step_index": 3, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Confirmed"},
 				],
 			)
-			with patch.dict(os.environ, {}, clear=False):
-				os.environ.pop("ISM_STAGE_ONLY", None)
-				d_mix_ok, r_mix_ok = hook_mod.evaluate_hook_payload({
-					"toolCall": {"name": "run_command", "args": {"CommandLine": mixed_batch}},
-					"transcriptPath": transcript_path,
-				})
-				self.assertEqual(d_mix_ok, "allow", f"Expected mixed batch allow after ERP summary: {r_mix_ok}")
+			d_mix_ok, r_mix_ok = hook_mod.evaluate_hook_payload({
+				"toolCall": {"name": "run_command", "args": {"CommandLine": mixed_batch}},
+				"transcriptPath": transcript_path,
+			})
+			self.assertEqual(d_mix_ok, "allow", f"Expected mixed batch allow after ERP summary: {r_mix_ok}")

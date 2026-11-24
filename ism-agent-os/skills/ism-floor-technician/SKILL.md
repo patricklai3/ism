@@ -36,14 +36,13 @@ description: >-
 3. **Human confirmation for checkout**: Never run `checkout --confirm` without explicit human confirmation.
 4. **Exception-only `/board` vs `/tech`**: Technicians work assigned jobs in `/tech`; use `board-post` only for floor exceptions or direct technician communication (routine state transitions are no longer echoed onto `/board`).
 
-## Required Fields, `--stage` & Pre-Dispatch Callback
+## Required Fields & Pre-Dispatch Callback
 
 - **`record-inspection` check-in requirements**: Vehicle **color** (`--color` / `--vehicle-color`) and **license plate** (`--license-plate` / `--plate`) are required on check-in if not already recorded on the `Repair Vehicle`.
 - **Human-facing vehicle references**: Refer to vehicles by **year, color, model, and license plate** (not VIN-only). Under tight space, drop VIN first, then year and plate (keep color + model).
 - **`job-status --action complete` required fields**: `--repair-order`, `--action complete`, and `--odometer-out` (`>= odometer_in`).
 - **`checkout` required fields**: `--repair-order`, `--payment-method` (no silent default), `--odometer-out` (`>= odometer_in`), and `--confirm`.
-- **Preferred Turn-1 Staged Form (`--stage`)**: Stage floor writes (`job-status`, `toggle-service`, `record-inspection`, `add-supplement`, `duplicate-side`, `checkout`) via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch` with PowerShell-safe `@stepN.<field>` / `@prev.<field>`; `stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings), present the returned `127.0.0.1` URL for the technician/advisor to fill missing fields (like `--odometer-out` or `--payment-method` + `--confirm`) and submit locally, and recall submitted results with `python -m tools.cli --json stage-receipt` or `@last`.
-- **Legacy Callback (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), run `--dry-run` first, output `### ISM Pre-Dispatch Summary`, and wait for explicit user confirmation before executing any floor write or checkout.
+- **Pre-Dispatch Callback (`--dry-run`)**: Run `--dry-run` first (or `--dry-run batch` with PowerShell-safe `@stepN.<field>` / `@prev.<field>`), output `### ISM Pre-Dispatch Summary` (marking any missing required fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing any floor write or checkout.
 
 ## Verification
 

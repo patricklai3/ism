@@ -1,4 +1,4 @@
-"""Unit tests for SimManifest evaluation scripts, --stage submitter, and multi-seed sim_runner.py."""
+"""Unit tests for SimManifest evaluation scripts and multi-seed sim_runner.py."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import json
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 from typing import Any
@@ -19,10 +18,6 @@ if str(_AGENT_OS_ROOT) not in sys.path:
 	sys.path.insert(0, str(_AGENT_OS_ROOT))
 
 from scripts import demo_shop_flow, eval_nl_loop, eval_scenarios, sim_runner  # noqa: E402
-from tools.cli_parsers import _build_parser as _build_cli_parser  # noqa: E402
-from tools.cli_validation import build_stage_form_spec  # noqa: E402
-from tools.stage_server import StageRequestHandler, start_stage_server  # noqa: E402
-from tools.stage_store import create_stage_record  # noqa: E402
 
 
 def _custom_eval_manifest(target_date: str = "2027-02-18") -> dict[str, Any]:
@@ -380,11 +375,11 @@ class TestEvalNlLoop(unittest.TestCase):
 		)
 		self.assertTrue(s29["db_verified"], s29)
 
-	def test_analyze_commands_stage_and_step_chaining(self) -> None:
+	def test_analyze_commands_batch_step_chaining_and_dry_run(self) -> None:
 		m_eval = _custom_eval_manifest("2027-08-12")
 		by_id = {s.id: s for s in eval_nl_loop.get_scenarios(manifest=m_eval)}
 
-		# 1. Single --stage batch with $step0/$prev chaining for S13
+		# 1. Single live batch with $step0/$prev chaining for S13
 		s13_metrics = eval_nl_loop._analyze_commands(
 			by_id["S13_quote_amend_approval"],
 			{
@@ -392,7 +387,7 @@ class TestEvalNlLoop(unittest.TestCase):
 				"commands_run": [
 					{
 						"cmd": (
-							'python -m tools.cli --json --stage batch '
+							'python -m tools.cli --json batch '
 							'--cmd "quote --customer \'Liam Chen\' --vehicle 5YJ3E1EB8PF210100 --odometer-in 48200 --service \'Tire Rotation::0.5\'" '
 							'--cmd "amend-quote --repair-order \'$step0.data.name\' --add-service \'Wiper Blade Replacement::0.3\'" '
 							'--cmd "send-approval --repair-order \'$prev.data.name\' --medium link"'
@@ -402,100 +397,19 @@ class TestEvalNlLoop(unittest.TestCase):
 				],
 			},
 		)
-		self.assertEqual(s13_metrics["staged_calls"], 1)
+		self.assertEqual(s13_metrics["live_cli_calls"], 1)
 		self.assertEqual(s13_metrics["domain_cli_calls"], 1)
 		self.assertEqual(s13_metrics["redundant_calls"], 0)
 
-		# 2. Missing-field --stage quote (S25 without --odometer-in) parses cleanly
-		s25_metrics = eval_nl_loop._analyze_commands(
-			by_id["S25_missing_field_write_gate"],
-			{
-				"id": "S25_missing_field_write_gate",
-				"commands_run": [
-					{
-						"cmd": "python -m tools.cli --json --stage quote --customer 'Liam Chen' --vehicle 5YJ3E1EB8PF210100 --service 'Cabin Air Filter Replacement::0.5'",
-						"exit_code": 0,
-					}
-				],
-			},
-		)
-		self.assertEqual(s25_metrics["staged_calls"], 1)
-		self.assertEqual(s25_metrics["redundant_calls"], 0)
-		self.assertEqual(s25_metrics["unexpected_errors"], 0)
-
-		# 3. Post-stage @last.repair_order follow-up on S14
-		s14_metrics = eval_nl_loop._analyze_commands(
-			by_id["S14_multi_service_quote_estimate"],
-			{
-				"id": "S14_multi_service_quote_estimate",
-				"commands_run": [
-					{
-						"cmd": "python -m tools.cli --json --stage quote --customer 'Liam Chen' --vehicle 5YJ3E1EB8PF210100 --odometer-in 48200 --service 'Brake Fluid Flush::1.0' --service 'Cabin Air Filter Replacement::0.5'",
-						"exit_code": 0,
-					},
-					{
-						"cmd": "python -m tools.cli --json estimate --repair-order @last.repair_order",
-						"exit_code": 0,
-					},
-				],
-			},
-		)
-		self.assertEqual(s14_metrics["domain_cli_calls"], 2)
-		self.assertEqual(s14_metrics["redundant_calls"], 0)
-
-		# 4. --stage on read-only status penalized as redundant
-		s01_stage_bad = eval_nl_loop._analyze_commands(
+		# 2. Dry-run on read-only status penalized as redundant
+		s01_dry_bad = eval_nl_loop._analyze_commands(
 			by_id["S01_shop_status_relative"],
 			{
 				"id": "S01_shop_status_relative",
-				"commands_run": [{"cmd": "python -m tools.cli --json --stage status --date 2027-08-12", "exit_code": 0}],
+				"commands_run": [{"cmd": "python -m tools.cli --json --dry-run status --date 2027-08-12", "exit_code": 0}],
 			},
 		)
-		self.assertEqual(s01_stage_bad["redundant_calls"], 1)
-
-	def test_submit_stage_against_live_stage_server(self) -> None:
-		with tempfile.TemporaryDirectory() as tmp:
-			staged_dir = Path(tmp) / ".ism_staged"
-			parser = _build_cli_parser(relax_required=True)
-			ns = parser.parse_args([
-				"--stage",
-				"quote",
-				"--customer",
-				"Liam Chen",
-				"--vehicle",
-				sim_runner.DEFAULT_MODEL3_VIN,
-				"--service",
-				"Cabin Air Filter Replacement::0.5",
-			])
-			form_spec = build_stage_form_spec([ns], parser)
-			record = create_stage_record(form_spec, mode="single", staged_dir=staged_dir)
-			srv = start_stage_server(staged_dir=staged_dir, port=0, idle_timeout=60.0)
-			thread = threading.Thread(target=srv.serve_forever, daemon=True)
-			thread.start()
-			try:
-				port = int(srv.server_address[1])
-				url = f"http://127.0.0.1:{port}/?id={record['stage_id']}&token={record['nonce']}"
-				mock_client = MagicMock()
-				mock_client.__enter__.return_value = mock_client
-				mock_client.create_quote.return_value = {
-					"success": True,
-					"data": {"name": "RO-2027-00101", "status": "Draft Estimate"},
-				}
-
-				with patch("tools.stage_server.IsmAgentClient", return_value=mock_client):
-					res = eval_nl_loop.submit_staged_url(
-						url,
-						set_items=["odometer_in=54100"],
-						expect_missing=["--odometer-in"],
-					)
-				self.assertTrue(res["success"], res)
-				self.assertTrue(res["missing_check_passed"])
-				self.assertEqual(res["http_status"], 200)
-				self.assertEqual(res["receipt"]["ids"]["repair_order"], "RO-2027-00101")
-				self.assertEqual(mock_client.create_quote.call_args.kwargs["odometer_in"], 54100)
-			finally:
-				srv.shutdown()
-				srv.server_close()
+		self.assertEqual(s01_dry_bad["redundant_calls"], 1)
 
 	def test_main_round_and_scenarios_with_manifest_file(self) -> None:
 		manifest = _custom_eval_manifest("2027-08-12")

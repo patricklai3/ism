@@ -25,7 +25,7 @@ logs/
 ism-frappe/logs/
 scripts/.tunnel-config.json
 ism-agent-os/scripts/eval_results/
-.ism_staged/
+.ism_runtime/
 
 # OS & editors
 .DS_Store

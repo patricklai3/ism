@@ -24,7 +24,6 @@ from .cli_commands import (
 	_load_batch_items,
 	_parse_batch_subcommand,
 	_print_result,
-	resolve_namespace_at_last,
 	SupplierCatalogSanitizer,
 	TeslaManualParser,
 	validate_batch_step_references,
@@ -42,27 +41,22 @@ from .cli_parsing import (
 )
 from .cli_validation import (
 	READ_ONLY_COMMANDS,
-	STAGE_FIELD_HINTS,
 	WRITE_COMMAND_META,
 	_check_non_negative_int_arg,
 	_has_value,
 	build_pre_dispatch_summary,
-	build_stage_form_spec,
 	validate_temporal_args,
 	validate_write_command_args,
 )
 from .client import IsmAgentClient, IsmApiError
 from .config import IsmConfig
 from .diagnostics import run_diagnostics
-from .stage_server import ensure_server_running
-from .stage_store import create_stage_record, resolve_staged_dir
 
 __all__ = [
 	"IsmAgentClient",
 	"IsmApiError",
 	"IsmConfig",
 	"READ_ONLY_COMMANDS",
-	"STAGE_FIELD_HINTS",
 	"SupplierCatalogSanitizer",
 	"TeslaManualParser",
 	"WRITE_COMMAND_META",
@@ -86,7 +80,6 @@ __all__ = [
 	"_print_result",
 	"_repair_unquoted_json",
 	"build_pre_dispatch_summary",
-	"build_stage_form_spec",
 	"main",
 	"run_diagnostics",
 	"validate_temporal_args",
@@ -115,65 +108,11 @@ def _emit_cli_error(exc: BaseException | str, *, raw_json: bool) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
 	"""Parse CLI arguments and execute the requested ISM Agent OS command."""
-	raw_argv = list(argv) if argv is not None else sys.argv[1:]
-	has_stage_flag = "--stage" in raw_argv and not any(tok in ("-h", "--help") for tok in raw_argv)
-	parser = _build_parser(relax_required=has_stage_flag)
+	parser = _build_parser()
 	args = parser.parse_args(argv)
-	stage_mode = bool(getattr(args, "stage", False))
-	if has_stage_flag and not stage_mode:
-		parser = _build_parser(relax_required=False)
-		args = parser.parse_args(argv)
 
 	dry_run = bool(getattr(args, "dry_run", False))
 	raw_json = bool(getattr(args, "json", False))
-	if stage_mode and dry_run:
-		_emit_cli_error("Cannot combine --stage and --dry-run.", raw_json=raw_json)
-		return 1
-
-	if stage_mode:
-		if args.command in ("test", "verify-connection", "stage-receipt", "cockpit"):
-			_emit_cli_error(f"Command '{args.command}' cannot be used with --stage.", raw_json=raw_json)
-			return 1
-		try:
-			if args.command == "batch":
-				items = _load_batch_items(args)
-				parsed_items = [
-					resolve_namespace_at_last(_parse_batch_subcommand(item, parser, suppress_stderr=True)[1])
-					for item in items
-				]
-				validate_batch_step_references(parsed_items, is_batch=True)
-				mode = "batch"
-			else:
-				parsed_items = [resolve_namespace_at_last(args)]
-				validate_batch_step_references(parsed_items, is_batch=False)
-				mode = "single"
-
-			form_spec = build_stage_form_spec(parsed_items, parser)
-			staged_dir = resolve_staged_dir()
-			resolved_env_file = str(Path(args.env_file).expanduser().resolve()) if args.env_file else None
-			record = create_stage_record(
-				form_spec,
-				mode=mode,
-				env_file=resolved_env_file,
-				cwd=str(Path.cwd()),
-				staged_dir=staged_dir,
-			)
-			srv = ensure_server_running(staged_dir, env_file=resolved_env_file)
-			url = f"http://127.0.0.1:{srv['port']}/?id={record['stage_id']}&token={record['nonce']}"
-			res = {
-				"success": True,
-				"staged": True,
-				"stage_id": record["stage_id"],
-				"url": url,
-				"ready": form_spec["ready"],
-				"missing_required": form_spec["missing_required"],
-				"commands": form_spec["commands_summary"],
-			}
-			_print_result(res, raw_json=True)
-			return 0
-		except (SystemExit, json.JSONDecodeError, OSError, RuntimeError, ValueError) as exc:
-			_emit_cli_error(exc, raw_json=raw_json)
-			return 1
 
 	if dry_run:
 		try:
@@ -204,23 +143,18 @@ def main(argv: Optional[list[str]] = None) -> int:
 			_print_result(res, raw_json=args.json)
 			return 0 if res.get("success") else 1
 
-		if args.command not in ("price-part", "stage-receipt"):
-			resolve_namespace_at_last(args)
 		missing = validate_write_command_args(args)
 		if args.command in READ_ONLY_COMMANDS:
 			missing.extend(validate_temporal_args(args))
 		if missing:
 			raise ValueError(
 				f"Missing or invalid required field(s) for '{args.command}': {', '.join(missing)}. "
-				"Run with --dry-run or --stage to inspect and confirm before dispatching."
+				"Run with --dry-run to inspect and confirm before dispatching."
 			)
 		handler = _COMMAND_HANDLERS.get(args.command)
 		if not handler:
 			return 1
-		if (
-			args.command in ("price-part", "stage-receipt")
-			or (args.command == "cockpit" and not getattr(args, "data_only", False))
-		):
+		if args.command == "price-part":
 			res = handler(args, None, show_summary)
 		else:
 			with IsmAgentClient(config) as client:

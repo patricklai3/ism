@@ -34,7 +34,6 @@ READ_ONLY_COMMANDS = frozenset({
 	"pnl-digest",
 	"list-docs",
 	"get-doc",
-	"stage-receipt",
 	"action-cards",
 	"board-threads",
 	"board-thread",
@@ -56,7 +55,7 @@ _STEP_REF_PATTERN = re.compile(
 _CORRUPTED_STEP_REF_PATTERN = re.compile(
 	r"(?<![A-Za-z0-9_./\\])\.(?:data|urls|result|ids)(?:\.[A-Za-z0-9_-]+(?:\[\d+\])*)+(?![A-Za-z0-9_./\\-])"
 )
-_AT_SPECIAL_REF_RE = re.compile(r"^@(?:last|step\d+|prev)(?:\.|$)")
+_AT_SPECIAL_REF_RE = re.compile(r"^@(?:step\d+|prev)(?:\.|$)")
 _AT_FILE_JSON_ATTRS = (
 	"parts_json",
 	"items_json",
@@ -89,7 +88,7 @@ def find_corrupted_step_ref(val: Any) -> Optional[str]:
 				return found
 	elif isinstance(val, argparse.Namespace):
 		for k, v in vars(val).items():
-			if k not in ("command", "env_file", "json", "summary", "dry_run", "stage"):
+			if k not in ("command", "env_file", "json", "summary", "dry_run"):
 				found = find_corrupted_step_ref(v)
 				if found:
 					return found
@@ -615,7 +614,7 @@ def build_pre_dispatch_summary(parsed_items: list[argparse.Namespace]) -> dict[s
 		all_missing.extend(f"{cmd}:{m}" for m in missing)
 
 		fields_list = meta["fields"] if meta else tuple(
-			k for k in vars(sub_args).keys() if k not in ("command", "env_file", "json", "summary", "dry_run", "stage")
+			k for k in vars(sub_args).keys() if k not in ("command", "env_file", "json", "summary", "dry_run")
 		)
 		payload: dict[str, Any] = {}
 		field_lines: list[str] = []
@@ -686,289 +685,4 @@ def build_pre_dispatch_summary(parsed_items: list[argparse.Namespace]) -> dict[s
 		"missing_required": all_missing,
 		"commands": item_summaries,
 		"summary_card": "\n".join(md_lines),
-	}
-
-
-STAGE_FIELD_HINTS: dict[str, dict[str, Any]] = {
-	"customer": {"type": "text", "label": "Customer", "placeholder": "Customer name or ID"},
-	"vehicle": {"type": "text", "label": "Vehicle", "placeholder": "VIN, plate, or Repair Vehicle ID"},
-	"vehicle_color": {"type": "text", "label": "Vehicle Color", "placeholder": "e.g. Pearl White"},
-	"license_plate": {"type": "text", "label": "License Plate", "placeholder": "e.g. EV-402"},
-	"odometer_in": {"type": "int", "label": "Odometer In (km)", "min": 0, "placeholder": "e.g. 48250"},
-	"odometer_out": {"type": "int", "label": "Odometer Out (km)", "min": 0, "placeholder": "e.g. 48260"},
-	"service": {"type": "textarea", "label": "Services", "multi": True, "placeholder": "One per line, e.g. Brake Service::1.0"},
-	"add_service": {"type": "textarea", "label": "Add Services", "multi": True, "placeholder": "One per line, e.g. Wiper Blade Replacement::0.3"},
-	"services_json": {"type": "json", "label": "Services JSON", "placeholder": '[{"service_title": "...", "labor_hours": 1.0}]'},
-	"add_services_json": {"type": "json", "label": "Add Services JSON", "placeholder": '[{"service_title": "...", "labor_hours": 0.5}]'},
-	"remove_indices_json": {"type": "json", "label": "Remove Service Indices JSON", "placeholder": "[0]"},
-	"update_services": {"type": "json", "label": "Update Services JSON", "placeholder": '[{"idx": 1, "labor_hours": 1.5}]'},
-	"parts_json": {"type": "json", "label": "Parts JSON", "placeholder": '[{"item_code": "...", "qty": 1}]'},
-	"notes": {"type": "textarea", "label": "Notes"},
-	"phone": {"type": "text", "label": "Phone", "placeholder": "+1..."},
-	"email": {"type": "text", "label": "Email", "placeholder": "customer@example.com"},
-	"recipient": {"type": "text", "label": "Recipient", "placeholder": "Email address or contact"},
-	"company": {"type": "text", "label": "Company"},
-	"date": {"type": "date", "label": "Date (YYYY-MM-DD)", "placeholder": "YYYY-MM-DD"},
-	"time": {"type": "time", "label": "Start Time (HH:MM:SS)", "placeholder": "09:00:00"},
-	"min_time": {"type": "time", "label": "Min Time (HH:MM:SS)", "placeholder": "08:00:00"},
-	"days": {"type": "int", "label": "Days Ahead", "min": 1},
-	"duration": {"type": "int", "label": "Duration (minutes)", "min": 1},
-	"tags": {"type": "textarea", "label": "Equipment Tags", "multi": True, "placeholder": "Lift, Alignment Rack, HV Diagnostic"},
-	"bay": {"type": "text", "label": "Service Bay", "placeholder": "Service Bay ID or name"},
-	"technician": {"type": "text", "label": "Technician", "placeholder": "Technician ID or name"},
-	"tech": {"type": "text", "label": "Technician", "placeholder": "Technician ID or name"},
-	"schedule_entry": {"type": "text", "label": "Schedule Entry", "placeholder": "SE-00001"},
-	"repair_order": {"type": "text", "label": "Repair Order", "placeholder": "RO-2026-00001"},
-	"discount_amount": {"type": "float", "label": "Discount Amount (CAD)", "min": 0},
-	"shop_supplies_amount": {"type": "float", "label": "Shop Supplies Amount (CAD)", "min": 0},
-	"environmental_fee_amount": {"type": "float", "label": "Environmental Fee Amount (CAD)", "min": 0},
-	"medium": {"type": "select", "label": "Approval Medium", "choices": ["sms", "email", "link"]},
-	"entry_type": {"type": "text", "label": "Entry Type", "suggestions": ["Diagnostic", "Repair"]},
-	"provisional_customer": {"type": "text", "label": "Provisional Customer"},
-	"provisional_vehicle": {"type": "text", "label": "Provisional Vehicle"},
-	"status": {"type": "text", "label": "Status"},
-	"action": {"type": "select", "label": "Action", "choices": ["start", "hold", "park", "complete"]},
-	"amount": {"type": "float", "label": "Amount (CAD)", "min": 0},
-	"payment_method": {"type": "text", "label": "Payment Method", "suggestions": ["Debit / Interac", "Visa", "Mastercard", "Amex", "Cash", "E-Transfer"]},
-	"reference_no": {"type": "text", "label": "Reference No"},
-	"reference_date": {"type": "date", "label": "Reference Date (YYYY-MM-DD)", "placeholder": "YYYY-MM-DD"},
-	"payments": {"type": "json", "label": "Split Payments JSON", "placeholder": '[{"payment_method": "Visa", "amount": 100}]'},
-	"paid_amount": {"type": "float", "label": "Paid Amount (CAD)", "min": 0},
-	"confirm": {"type": "bool", "label": "Confirm Checkout"},
-	"service_row": {"type": "textarea", "label": "Service Row(s)", "multi": True, "placeholder": "One row ID or 1-based index per line"},
-	"service_rows_json": {"type": "json", "label": "Service Rows JSON", "placeholder": '["row-1"]'},
-	"reopen": {"type": "bool", "label": "Reopen Service(s)"},
-	"title": {"type": "text", "label": "Title"},
-	"category": {"type": "text", "label": "Category"},
-	"hours": {"type": "float", "label": "Labor Hours", "min": 0},
-	"rate": {"type": "float", "label": "Labor Rate (CAD/hr)", "min": 0},
-	"item": {"type": "textarea", "label": "Deferred Items", "multi": True, "placeholder": "One item per line"},
-	"items_json": {"type": "json", "label": "Items JSON", "placeholder": "[]"},
-	"priority": {"type": "select", "label": "Priority", "choices": ["Low", "Medium", "High", "Critical"]},
-	"ref_doctype": {"type": "text", "label": "Reference DocType"},
-	"ref_name": {"type": "text", "label": "Reference Name"},
-	"item_code": {"type": "text", "label": "Item Code"},
-	"details": {"type": "textarea", "label": "Details"},
-	"dedup_key": {"type": "text", "label": "Deduplication Key", "placeholder": "e.g. pnl_margin:2026-11-17"},
-	"snooze_minutes": {"type": "int", "label": "Snooze Minutes", "min": 1, "placeholder": "60"},
-	"metric": {"type": "text", "label": "Metric Key", "placeholder": "pnl_health or tomorrow_readiness"},
-	"score": {"type": "int", "label": "Health Score (0-100)", "min": 0, "placeholder": "0..100"},
-	"grade": {"type": "select", "label": "Grade", "choices": ["Healthy", "Watch", "Critical"]},
-	"verdict": {"type": "textarea", "label": "Verdict (1-Line Driver)"},
-	"period_date": {"type": "date", "label": "Period Date (YYYY-MM-DD)", "placeholder": "YYYY-MM-DD"},
-	"report_url": {"type": "text", "label": "Frappe Report URL"},
-	"details_json": {"type": "json", "label": "Details JSON", "placeholder": "{}"},
-	"action_item": {"type": "text", "label": "Action Item ID"},
-	"template": {"type": "text", "label": "Inspection Template"},
-	"replace": {"type": "bool", "label": "Replace Existing"},
-	"concern": {"type": "textarea", "label": "Customer Concern"},
-	"auto_apply": {"type": "bool", "label": "Auto-Apply Template"},
-	"draft": {"type": "bool", "label": "Keep in Draft"},
-	"purchase_order": {"type": "text", "label": "Purchase Order", "placeholder": "PUR-ORD-..."},
-	"purchase_invoice": {"type": "text", "label": "Purchase Invoice", "placeholder": "ACC-PINV-..."},
-	"submit_po": {"type": "bool", "label": "Submit Purchase Order"},
-	"supplier": {"type": "text", "label": "Supplier"},
-	"update_stock": {"type": "bool", "label": "Update Stock"},
-	"bill_no": {"type": "text", "label": "Supplier Invoice / Bill No"},
-	"bill_date": {"type": "date", "label": "Bill Date (YYYY-MM-DD)", "placeholder": "YYYY-MM-DD"},
-	"no_attach_advances": {"type": "bool", "label": "Do Not Attach Advances"},
-	"file": {"type": "text", "label": "Catalog File Path"},
-	"source": {"type": "select", "label": "Part Source", "choices": ["OEM", "Aftermarket"]},
-	"condition": {"type": "select", "label": "Part Condition", "choices": ["New", "Used", "Reconditioned"]},
-	"service_package": {"type": "text", "label": "Service Package"},
-	"url": {"type": "text", "label": "Tesla Manual URL", "placeholder": "https://service.tesla.com/..."},
-	"data_json": {"type": "json", "label": "Data JSON", "placeholder": "{}"},
-	"code": {"type": "text", "label": "Correction Code"},
-	"model": {"type": "text", "label": "Vehicle Model"},
-	"generation": {"type": "text", "label": "Vehicle Generation", "placeholder": "e.g. Model 3 (2017-2023)"},
-	"on_conflict": {"type": "select", "label": "On Conflict", "choices": ["skip", "overwrite", "add", "error"]},
-	"force": {"type": "bool", "label": "Force"},
-	"side": {"type": "select", "label": "Side", "choices": ["", "LH", "RH", "Both"]},
-	"supplement": {"type": "bool", "label": "Add as Supplement"},
-	"primary": {"type": "bool", "label": "Primary Owner"},
-	"relationship": {"type": "text", "label": "Relationship"},
-	"doctype": {"type": "text", "label": "DocType"},
-	"name": {"type": "text", "label": "Document Name"},
-	"method": {"type": "text", "label": "Frappe Method"},
-	"args_json": {"type": "json", "label": "Arguments JSON", "placeholder": "{}"},
-	"thread_key": {"type": "text", "label": "Thread Key", "placeholder": "RO:RO-2026-00011"},
-	"text": {"type": "textarea", "label": "Capture Text", "placeholder": "Message or observation to post"},
-	"intent": {"type": "text", "label": "Intent Tag", "placeholder": "Optional quick-intent tag"},
-	"idempotency_key": {"type": "text", "label": "Idempotency Key"},
-	"run_ai": {"type": "bool", "label": "Run Site Board AI"},
-}
-
-_STAGE_CMD_FIELD_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
-	("appointment-status", "status"): {
-		"type": "select",
-		"label": "Status",
-		"choices": ["Draft", "Scheduled", "Confirmed", "In Progress", "Completed", "No Show", "Cancelled"],
-	},
-	("duplicate-side", "service_row"): {
-		"type": "text",
-		"label": "Service Row",
-		"multi": False,
-		"placeholder": "Service row ID or 1-based index",
-	},
-	("sync-action", "action"): {
-		"type": "select",
-		"label": "Sync Action",
-		"choices": ["snooze", "dismiss", "reopen"],
-	},
-	("create-action", "source"): {
-		"type": "select",
-		"label": "Source",
-		"choices": ["Manual", "Agent", "Board AI", "Rule Snooze"],
-	},
-}
-
-_STAGE_POSITIONAL_FIELDS: dict[str, set[str]] = {
-	"deposit": {"repair_order"},
-	"ingest-parts": {"file"},
-	"fetch-tesla": {"url"},
-	"ingest-tesla": {"url"},
-}
-
-
-def _default_hint_for_field(cmd: str, field: str, raw_val: Any) -> dict[str, Any]:
-	override = _STAGE_CMD_FIELD_OVERRIDES.get((cmd, field))
-	if override:
-		return dict(override)
-	base = STAGE_FIELD_HINTS.get(field)
-	if base:
-		return dict(base)
-	if isinstance(raw_val, bool):
-		ftype = "bool"
-	elif isinstance(raw_val, int):
-		ftype = "int"
-	elif isinstance(raw_val, float):
-		ftype = "float"
-	else:
-		ftype = "text"
-	return {"type": ftype, "label": field.replace("_", " ").title()}
-
-
-def build_stage_form_spec(
-	parsed_items: list[argparse.Namespace],
-	parser: Optional[argparse.ArgumentParser] = None,
-) -> dict[str, Any]:
-	"""Build typed form schema and pre-populated step definitions for --stage UI."""
-	del parser  # Reserved for optional parser introspection; metadata drives field schemas.
-	steps: list[dict[str, Any]] = []
-	commands_summary: list[dict[str, Any]] = []
-	all_missing: list[str] = []
-	has_writes = False
-
-	for idx, sub_args in enumerate(parsed_items):
-		cmd = getattr(sub_args, "command", "unknown")
-		meta = WRITE_COMMAND_META.get(cmd)
-		is_write = cmd not in READ_ONLY_COMMANDS
-		if is_write:
-			has_writes = True
-
-		missing = validate_write_command_args(sub_args, allow_step_refs=True)
-		if cmd in READ_ONLY_COMMANDS:
-			missing.extend(validate_temporal_args(sub_args, allow_step_refs=True))
-		all_missing.extend(f"{cmd}:{m}" for m in missing)
-
-		fields_list = meta["fields"] if meta else tuple(
-			k
-			for k in vars(sub_args).keys()
-			if k not in ("command", "env_file", "json", "summary", "dry_run", "stage")
-		)
-		required_attrs = {attr for attr, _ in (meta.get("required", ()) if meta else ())}
-		required_attrs.update(attr for attr, _ in (meta.get("required_bool", ()) if meta else ()))
-		non_neg_attrs = {attr for attr, _ in (meta.get("non_neg_ints", ()) if meta else ())}
-		if cmd == "job-status" and getattr(sub_args, "action", None) == "complete":
-			required_attrs.add("odometer_out")
-			non_neg_attrs.add("odometer_out")
-
-		any_of_groups: list[dict[str, Any]] = []
-		any_of_by_field: dict[str, str] = {}
-		if meta:
-			for group_idx, (choices, label) in enumerate(meta.get("any_of", ())):
-				satisfied = any(_has_value(getattr(sub_args, f, None)) for f in choices)
-				any_of_groups.append({
-					"id": f"any_of_{group_idx}",
-					"fields": list(choices),
-					"label": label,
-					"satisfied": satisfied,
-				})
-				for f in choices:
-					any_of_by_field[f] = label
-
-		positional_set = _STAGE_POSITIONAL_FIELDS.get(cmd, set())
-		field_specs: list[dict[str, Any]] = []
-		values: dict[str, Any] = {}
-		payload: dict[str, Any] = {}
-
-		for field in fields_list:
-			val = getattr(sub_args, field, None)
-			flag = field if field in positional_set else f"--{field.replace('_', '-')}"
-			is_missing_field = any(
-				m in (flag, field) or m.startswith((f"{flag} ", f"{field} "))
-				for m in missing
-			)
-			hint = _default_hint_for_field(cmd, field, val)
-			if field in non_neg_attrs and "min" not in hint:
-				hint["min"] = 0
-
-			has_val = _has_value(val) or val == 0
-			is_invalid = bool(is_missing_field and has_val)
-			is_missing = bool(is_missing_field and not has_val)
-			is_req = field in required_attrs or field in non_neg_attrs or is_missing_field
-
-			norm_val = list(val) if hint.get("multi") and isinstance(val, (list, tuple)) else val
-			values[field] = norm_val
-			if is_missing:
-				payload[field] = None
-			elif has_val:
-				payload[field] = norm_val
-
-			field_specs.append({
-				"name": field,
-				"flag": flag,
-				"positional": field in positional_set,
-				"label": hint.get("label") or field.replace("_", " ").title(),
-				"type": hint.get("type", "text"),
-				"required": is_req,
-				"missing": is_missing,
-				"invalid": is_invalid,
-				"value": norm_val,
-				"placeholder": hint.get("placeholder"),
-				"choices": hint.get("choices"),
-				"suggestions": hint.get("suggestions"),
-				"multi": bool(hint.get("multi", False)),
-				"min": hint.get("min"),
-				"any_of_group": any_of_by_field.get(field),
-				"is_step_ref": _contains_step_ref(norm_val),
-			})
-
-		target = meta["target"] if meta else f"Read-only command ({cmd})"
-		steps.append({
-			"index": idx,
-			"command": cmd,
-			"is_write": is_write,
-			"target": target,
-			"ready": len(missing) == 0,
-			"missing_required": list(missing),
-			"any_of": any_of_groups,
-			"fields": field_specs,
-			"values": values,
-		})
-		commands_summary.append({
-			"command": cmd,
-			"is_write": is_write,
-			"target": target,
-			"ready": len(missing) == 0,
-			"missing_required": list(missing),
-			"payload": payload,
-		})
-
-	return {
-		"ready": len(all_missing) == 0,
-		"has_writes": has_writes,
-		"missing_required": all_missing,
-		"steps": steps,
-		"commands_summary": commands_summary,
 	}

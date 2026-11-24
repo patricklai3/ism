@@ -274,19 +274,14 @@ def _parse_write_commands(
 
 	err_buf = io.StringIO()
 	old_cwd = os.getcwd()
-	has_stage_token = "--stage" in argv
 	try:
 		if cwd_path and cwd_path.is_dir():
 			os.chdir(cwd_path)
 		import contextlib
 
-		active_parser = _build_parser(relax_required=True) if has_stage_token else parser
 		with contextlib.redirect_stderr(err_buf):
-			args = active_parser.parse_args(argv)
-		if has_stage_token and not bool(getattr(args, "stage", False)):
-			with contextlib.redirect_stderr(err_buf):
-				args = parser.parse_args(argv)
-		if bool(getattr(args, "dry_run", False)) or bool(getattr(args, "stage", False)):
+			args = parser.parse_args(argv)
+		if bool(getattr(args, "dry_run", False)):
 			return ([], None)
 		if args.command in READ_ONLY_COMMANDS:
 			return ([], None)
@@ -365,13 +360,6 @@ def evaluate_hook_payload(payload: dict[str, Any]) -> tuple[str, Optional[str]]:
 	gated_namespaces = [ns for ns in write_namespaces if ns.command not in DIRECT_HOUSEKEEPING_COMMANDS]
 	if not gated_namespaces:
 		return ("allow", None)
-
-	if os.environ.get("ISM_STAGE_ONLY", "").strip().lower() in ("1", "true", "yes", "on"):
-		return (
-			"deny",
-			f"Blocked live ISM write command(s) [{', '.join(ns.command for ns in gated_namespaces)}]: "
-			"ISM_STAGE_ONLY=1 requires staging writes via `--stage` instead of direct live execution.",
-		)
 
 	transcript_path = payload.get("transcriptPath") or payload.get("transcript_path")
 	entries = _load_transcript_entries(transcript_path)

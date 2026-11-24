@@ -1424,112 +1424,7 @@ class TestCli(unittest.TestCase):
 		self.assertEqual(captured[0]["payment_method"], "Debit / Interac")
 		self.assertEqual(captured[0]["reference_no"], "REF-1")
 
-	def test_cli_stage_single_and_batch_without_client_or_browser(self) -> None:
-		from tools.stage_store import load_stage_record
-
-		with tempfile.TemporaryDirectory() as tmp, \
-			patch.dict(os.environ, {"ISM_STAGED_DIR": tmp}), \
-			patch("tools.cli.ensure_server_running", return_value={"port": 54321, "pid": 4242}) as mock_srv, \
-			patch("webbrowser.open") as mock_browser, \
-			patch("urllib.request.urlopen") as mock_open, \
-			patch("tools.cli.IsmAgentClient") as mock_client:
-
-			# 1. Single quote missing --odometer-in stages immediately with exit 0
-			with patch("sys.stdout", new_callable=io.StringIO) as out:
-				code = cli.main([
-					"--json",
-					"--stage",
-					"quote",
-					"--customer",
-					"Rob",
-					"--vehicle",
-					"5YJ3E1EA1PF200101",
-					"--service",
-					"Lateral Link Diagnosis::1.0",
-				])
-			self.assertEqual(code, 0)
-			res = json.loads(out.getvalue())
-			self.assertTrue(res["success"])
-			self.assertTrue(res["staged"])
-			self.assertFalse(res["ready"])
-			self.assertIn("quote:--odometer-in", res["missing_required"])
-			self.assertTrue(res["url"].startswith("http://127.0.0.1:54321/?id=stg_"))
-			self.assertIn("&token=", res["url"])
-			rec = load_stage_record(res["stage_id"], staged_dir=tmp)
-			self.assertIsNotNone(rec)
-			self.assertEqual(rec["status"], "pending")
-
-			# 2. book missing argparse-required --date/--time and deposit missing positional repair_order
-			with patch("sys.stdout", new_callable=io.StringIO) as out:
-				code_book = cli.main(["--json", "--stage", "book", "--repair-order", "RO-2026-00011"])
-			self.assertEqual(code_book, 0)
-			res_book = json.loads(out.getvalue())
-			self.assertFalse(res_book["ready"])
-			self.assertIn("book:--date", res_book["missing_required"])
-			self.assertIn("book:--time", res_book["missing_required"])
-
-			with patch("sys.stdout", new_callable=io.StringIO) as out:
-				code_dep = cli.main(["--json", "--stage", "deposit"])
-			self.assertEqual(code_dep, 0)
-			res_dep = json.loads(out.getvalue())
-			self.assertFalse(res_dep["ready"])
-			self.assertIn("deposit:repair_order", res_dep["missing_required"])
-			self.assertIn("deposit:--amount", res_dep["missing_required"])
-
-			# 3. Multi-step chained batch staging with $step0 and $prev
-			with patch("sys.stdout", new_callable=io.StringIO) as out:
-				code_batch = cli.main([
-					"--json",
-					"--stage",
-					"batch",
-					"--cmd",
-					"quote --customer Rob --vehicle 5YJ3E1EA1PF200101 --service 'Brake Service::1.0'",
-					"--cmd",
-					"amend-quote --repair-order '$step0.data.name' --add-service 'Wiper::0.3'",
-					"--cmd",
-					"send-approval --repair-order '$prev.data.name' --medium link",
-				])
-			self.assertEqual(code_batch, 0)
-			res_batch = json.loads(out.getvalue())
-			self.assertTrue(res_batch["staged"])
-			self.assertFalse(res_batch["ready"])
-			self.assertEqual(len(res_batch["commands"]), 3)
-			self.assertEqual(res_batch["missing_required"], ["quote:--odometer-in"])
-			batch_rec = load_stage_record(res_batch["stage_id"], staged_dir=tmp)
-			self.assertEqual(batch_rec["mode"], "batch")
-			ro_field = next(f for f in batch_rec["commands"][1]["fields"] if f["name"] == "repair_order")
-			self.assertTrue(ro_field["is_step_ref"])
-
-			# 4. Out-of-bounds $stepN / $prev in batch or single command rejected before staging
-			for bad_argv in (
-				["--stage", "quote", "--customer", "$step0.data.name", "--vehicle", "VIN1", "--notes", "Test"],
-				[
-					"--stage",
-					"batch",
-					"--cmd",
-					"quote --customer Rob --vehicle VIN1 --odometer-in 100 --notes Test",
-					"--cmd",
-					"amend-quote --repair-order '$step2.data.name' --notes Check",
-				],
-				[
-					"--stage",
-					"batch",
-					"--cmd",
-					"amend-quote --repair-order '$prev.data.name' --notes Check",
-				],
-				["--stage", "--dry-run", "quote", "--customer", "Rob", "--vehicle", "VIN1", "--notes", "Test"],
-			):
-				with patch("sys.stderr", new_callable=io.StringIO):
-					self.assertEqual(cli.main(bad_argv), 1, f"Expected exit 1 for {bad_argv}")
-
-			mock_srv.assert_called()
-			mock_browser.assert_not_called()
-			mock_open.assert_not_called()
-			mock_client.assert_not_called()
-
-	def test_cli_batch_step_chaining_and_at_last_receipt_recall(self) -> None:
-		from tools.stage_store import create_stage_record, record_receipt
-
+	def test_cli_batch_step_chaining(self) -> None:
 		def _mock_urlopen_seq(req, timeout=30):
 			body = json.loads(req.data.decode("utf-8")) if req.data else {}
 			url = req.full_url
@@ -1598,68 +1493,6 @@ class TestCli(unittest.TestCase):
 		self.assertFalse(fail_res["results"][1]["ok"])
 		self.assertIn("did not succeed", fail_res["results"][1]["error"])
 
-		# stage-receipt and @last / @last.<field> recall while preserving bob@last.com
-		with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"ISM_STAGED_DIR": tmp}):
-			rec = create_stage_record({"ready": True, "missing_required": [], "steps": []}, staged_dir=tmp)
-			record_receipt(
-				rec["stage_id"],
-				{
-					"success": True,
-					"data": {"name": "RO-2026-00999", "grand_total": 310.75},
-					"urls": {"desk": "http://localhost:8000/app/repair-order/RO-2026-00999"},
-				},
-				commands=["quote"],
-				mode="single",
-				staged_dir=tmp,
-			)
-
-			with patch("urllib.request.urlopen") as mock_open, \
-				patch("sys.stdout", new_callable=io.StringIO) as out1:
-				rc1 = cli.main(["--json", "stage-receipt"])
-			with patch("urllib.request.urlopen") as mock_open2, \
-				patch("sys.stdout", new_callable=io.StringIO) as out2:
-				rc2 = cli.main(["--json", "stage-receipt", "--id", rec["stage_id"]])
-			self.assertEqual(rc1, 0)
-			self.assertEqual(rc2, 0)
-			mock_open.assert_not_called()
-			mock_open2.assert_not_called()
-			self.assertEqual(json.loads(out1.getvalue())["data"]["primary_id"], "RO-2026-00999")
-			self.assertEqual(json.loads(out2.getvalue())["data"]["primary_id"], "RO-2026-00999")
-
-			with patch.dict(os.environ, {"FRAPPE_URL": "http://localhost:8000", "FRAPPE_API_KEY": "k", "FRAPPE_API_SECRET": "s"}), \
-				patch("urllib.request.urlopen", side_effect=_mock_urlopen_seq), \
-				patch("sys.stdout", new_callable=io.StringIO) as out:
-				rc_get = cli.main(["--json", "get-doc", "--doctype", "Repair Order", "--name", "@last"])
-			self.assertEqual(rc_get, 0)
-			self.assertEqual(json.loads(out.getvalue())["name"], "RO-2026-00999")
-
-			captured_quote: list[dict] = []
-
-			def _capture_quote(req, timeout=30):
-				captured_quote.append(json.loads(req.data.decode("utf-8")))
-				return _FakeHttpResponse({"message": {"success": True, "data": {"name": "RO-2026-01000"}}})
-
-			with patch.dict(os.environ, {"FRAPPE_URL": "http://localhost:8000", "FRAPPE_API_KEY": "k", "FRAPPE_API_SECRET": "s"}), \
-				patch("urllib.request.urlopen", side_effect=_capture_quote), \
-				patch("sys.stdout", new_callable=io.StringIO):
-				rc_email = cli.main([
-					"--json",
-					"quote",
-					"--customer",
-					"Bob",
-					"--vehicle",
-					"VIN1",
-					"--odometer-in",
-					"50000",
-					"--email",
-					"bob@last.com",
-					"--notes",
-					"Follow-up for @last.repair_order",
-				])
-			self.assertEqual(rc_email, 0)
-			self.assertEqual(captured_quote[0]["customer_email"], "bob@last.com")
-			self.assertEqual(captured_quote[0]["notes"], "Follow-up for RO-2026-00999")
-
 	def test_powershell_safe_step_refs_and_corruption_rejection(self) -> None:
 		# @stepN / @prev and bare stepN.<field> / prev.<field> resolve identically to $stepN / $prev
 		def _mock_seq(req, timeout=30):
@@ -1701,7 +1534,7 @@ class TestCli(unittest.TestCase):
 		with self.assertRaisesRegex(ValueError, "@step0.data.name"):
 			cli.validate_write_command_args(argparse.Namespace(command="send-approval", repair_order=".urls.approval"))
 
-	def test_json_error_envelope_and_flag_ergonomics_and_at_file_stage_check(self) -> None:
+	def test_json_error_envelope_and_flag_ergonomics_and_at_file_dry_run_check(self) -> None:
 		# 1) --json emits structured error envelope on stdout for IsmApiError and ValueError
 		err_body = json.dumps({
 			"exc_type": "ValidationError",
@@ -1743,128 +1576,24 @@ class TestCli(unittest.TestCase):
 		self.assertEqual(dep_flag.repair_order, "RO-2026-00012")
 		self.assertEqual(rai_name.action_item, "ACT-2026-00001")
 
-		# 3) Missing @file.json fails immediately at --stage time
-		with patch("sys.stdout", new_callable=io.StringIO) as out:
-			rc_stage = cli.main([
+		# 3) Missing @file.json fails immediately at --dry-run time
+		with patch("sys.stdout", new_callable=io.StringIO) as out, \
+			patch("sys.stderr", new_callable=io.StringIO):
+			rc_dry = cli.main([
 				"--json",
-				"--stage",
+				"--dry-run",
 				"procure",
 				"--parts-json",
 				"@does_not_exist_12345.json",
 			])
-		self.assertEqual(rc_stage, 1)
-		stage_err = json.loads(out.getvalue())
-		self.assertIs(stage_err["success"], False)
-		self.assertIn("does_not_exist_12345.json", stage_err["error"])
+		self.assertEqual(rc_dry, 1)
+		dry_err = json.loads(out.getvalue())
+		self.assertIs(dry_err["success"], False)
+		self.assertIn("does_not_exist_12345.json", dry_err["error"])
 
-	def test_toggle_service_all_and_stage_server_batch_submit(self) -> None:
-		import http.client
-		import threading
-		from tools.stage_server import StageHTTPServer, StageRequestHandler
-		from tools.stage_store import load_stage_record
-
-		with tempfile.TemporaryDirectory() as tmp:
-			srv = StageHTTPServer(("127.0.0.1", 0), StageRequestHandler, staged_dir=tmp)
-			port = int(srv.server_address[1])
-			th = threading.Thread(target=srv.serve_forever, daemon=True)
-			th.start()
-			try:
-				with patch("tools.cli.resolve_staged_dir", return_value=Path(tmp)), \
-					patch("tools.cli.ensure_server_running", return_value={"port": port}), \
-					patch("sys.stdout", new_callable=io.StringIO) as out:
-					rc = cli.main([
-						"--json",
-						"--stage",
-						"batch",
-						"--cmd",
-						"toggle-service --repair-order RO-2026-00041 --all",
-						"--cmd",
-						"job-status --repair-order RO-2026-00041 --action complete",
-					])
-				self.assertEqual(rc, 0)
-				staged_res = json.loads(out.getvalue())
-				self.assertFalse(staged_res["ready"])
-				self.assertEqual(staged_res["missing_required"], ["job-status:--odometer-out"])
-				rec = load_stage_record(staged_res["stage_id"], staged_dir=tmp)
-				steps = rec["form_spec"]["steps"]
-				self.assertTrue(steps[0]["values"].get("all"))
-
-				calls: list[tuple[str, dict]] = []
-
-				class _MockStageClient:
-					def __init__(self, *_a, **_kw) -> None:
-						pass
-
-					def __enter__(self):
-						return self
-
-					def __exit__(self, *_a) -> None:
-						return None
-
-					def get_document(self, doctype: str, name: str):
-						calls.append(("get_document", {"doctype": doctype, "name": name}))
-						return {
-							"data": {
-								"name": name,
-								"services": [
-									{"name": "ROW-1", "status": "Approved"},
-									{"name": "ROW-2", "status": "In Progress"},
-									{"name": "ROW-3", "status": "Declined"},
-								],
-							}
-						}
-
-					def toggle_service_completion(self, **kwargs):
-						calls.append(("toggle_service_completion", kwargs))
-						return {"success": True, "data": {"toggled": kwargs.get("service_row_ids")}}
-
-					def update_job_status(self, **kwargs):
-						calls.append(("update_job_status", kwargs))
-						return {"success": True, "data": {"name": kwargs["repair_order"], "status": "Work Completed"}}
-
-				submit_body = json.dumps({
-					"steps": [
-						{"values": steps[0]["values"]},
-						{"values": {**steps[1]["values"], "odometer_out": 48500}},
-					]
-				})
-				with patch("tools.stage_server.IsmAgentClient", _MockStageClient):
-					conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-					conn.request(
-						"POST",
-						f"/api/stage/{rec['stage_id']}/submit",
-						body=submit_body,
-						headers={
-							"Host": f"127.0.0.1:{port}",
-							"Origin": f"http://127.0.0.1:{port}",
-							"X-Stage-Token": rec["nonce"],
-							"Content-Type": "application/json",
-						},
-					)
-					resp = conn.getresponse()
-					resp_data = json.loads(resp.read().decode("utf-8"))
-					conn.close()
-
-				self.assertEqual(resp.status, 200)
-				self.assertTrue(resp_data["success"])
-				self.assertEqual(calls[0][0], "get_document")
-				self.assertEqual(calls[1][0], "toggle_service_completion")
-				self.assertEqual(calls[1][1]["service_row_ids"], ["ROW-1", "ROW-2"])
-				self.assertEqual(calls[2][0], "update_job_status")
-				self.assertEqual(calls[2][1]["action"], "complete")
-				self.assertEqual(calls[2][1]["odometer_out"], 48500)
-			finally:
-				srv.shutdown()
-				srv.server_close()
-
-	def test_bracket_step_ref_indexing_unit_and_stage_server_batch(self) -> None:
-		# 1) Unit: @step0.data.services[0].name, $step0..., bare step0..., @prev..., and @last.services[0].name
-		import http.client
-		import threading
-		from tools.cli_commands import resolve_at_last_value, resolve_step_tokens
+	def test_bracket_step_ref_indexing_unit(self) -> None:
+		from tools.cli_commands import resolve_step_tokens
 		from tools.cli_validation import _contains_step_ref
-		from tools.stage_server import StageHTTPServer, StageRequestHandler
-		from tools.stage_store import load_stage_record
 
 		self.assertTrue(_contains_step_ref("@step0.data.services[0].name"))
 		self.assertTrue(_contains_step_ref("$step0.data.services[0].name"))
@@ -1879,95 +1608,9 @@ class TestCli(unittest.TestCase):
 		self.assertEqual(resolve_step_tokens("step0.data.services[0].name", 1, prior), "SVC-ROW-0")
 		self.assertEqual(resolve_step_tokens("@prev.data.services[1].name", 1, prior), "SVC-ROW-1")
 
-		with tempfile.TemporaryDirectory() as tmp:
-			(Path(tmp) / "latest.json").write_text(
-				json.dumps({"primary_id": "RO-2026-00500", "data": {"services": [{"name": "SVC-ROW-0"}]}}),
-				encoding="utf-8",
-			)
-			self.assertEqual(resolve_at_last_value("@last.services[0].name", staged_dir=tmp), "SVC-ROW-0")
-
-			# 2) Live StageHTTPServer batch submission resolving @step0.data.services[0].name
-			srv = StageHTTPServer(("127.0.0.1", 0), StageRequestHandler, staged_dir=tmp)
-			port = int(srv.server_address[1])
-			th = threading.Thread(target=srv.serve_forever, daemon=True)
-			th.start()
-			try:
-				with patch("tools.cli.resolve_staged_dir", return_value=Path(tmp)), \
-					patch("tools.cli.ensure_server_running", return_value={"port": port}), \
-					patch("sys.stdout", new_callable=io.StringIO) as out:
-					rc = cli.main([
-						"--json",
-						"--stage",
-						"batch",
-						"--cmd",
-						"quote --customer 'Liam Chen' --vehicle '5YJ3E1EB8PF210100' --odometer-in 48200 --service 'Front Lower Control Arm (LH)::2.0'",
-						"--cmd",
-						"duplicate-side --repair-order @step0.data.name --service-row @step0.data.services[0].name",
-					])
-				self.assertEqual(rc, 0)
-				staged_res = json.loads(out.getvalue())
-				self.assertTrue(staged_res["ready"])
-				rec = load_stage_record(staged_res["stage_id"], staged_dir=tmp)
-				steps = rec["form_spec"]["steps"]
-
-				calls: list[tuple[str, dict]] = []
-
-				class _MockStageClient:
-					def __init__(self, *_a, **_kw) -> None:
-						pass
-
-					def __enter__(self):
-						return self
-
-					def __exit__(self, *_a) -> None:
-						return None
-
-					def create_quote(self, **kwargs):
-						calls.append(("create_quote", kwargs))
-						return {
-							"success": True,
-							"data": {"name": "RO-2026-00501", "services": [{"name": "SVC-ROW-LH"}]},
-						}
-
-					def duplicate_service_for_opposite_side(self, **kwargs):
-						calls.append(("duplicate_service_for_opposite_side", kwargs))
-						return {"success": True, "data": {"repair_order": kwargs["repair_order"], "created_row": "SVC-ROW-RH"}}
-
-				submit_body = json.dumps({
-					"steps": [
-						{"values": steps[0]["values"]},
-						{"values": steps[1]["values"]},
-					]
-				})
-				with patch("tools.stage_server.IsmAgentClient", _MockStageClient):
-					conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-					conn.request(
-						"POST",
-						f"/api/stage/{rec['stage_id']}/submit",
-						body=submit_body,
-						headers={
-							"Host": f"127.0.0.1:{port}",
-							"Origin": f"http://127.0.0.1:{port}",
-							"X-Stage-Token": rec["nonce"],
-							"Content-Type": "application/json",
-						},
-					)
-					resp = conn.getresponse()
-					resp_data = json.loads(resp.read().decode("utf-8"))
-					conn.close()
-
-				self.assertEqual(resp.status, 200)
-				self.assertTrue(resp_data["success"])
-				self.assertEqual(calls[1][0], "duplicate_service_for_opposite_side")
-				self.assertEqual(calls[1][1]["repair_order"], "RO-2026-00501")
-				self.assertEqual(calls[1][1]["service_row_id"], "SVC-ROW-LH")
-			finally:
-				srv.shutdown()
-				srv.server_close()
-
 	def test_cli_generation_and_manufactured_month_flags(self) -> None:
 		from tools.cli import main as cli_main
-		from tools.cli_validation import READ_ONLY_COMMANDS, STAGE_FIELD_HINTS, WRITE_COMMAND_META
+		from tools.cli_validation import READ_ONLY_COMMANDS, WRITE_COMMAND_META
 
 		fake_client = MagicMock()
 		fake_client.__enter__.return_value = fake_client
@@ -2010,11 +1653,10 @@ class TestCli(unittest.TestCase):
 			client.get_vehicle_generation_catalog(model="Model Y")
 		mock_call.assert_called_once_with("ism.api.tesla.get_vehicle_generation_catalog", {"model": "Model Y"})
 
-		# Read-only classification & dry-run / staged form schema include generation
+		# Read-only classification & dry-run schema include generation
 		self.assertIn("tesla-generations", READ_ONLY_COMMANDS)
 		self.assertIn("generation", WRITE_COMMAND_META["import-tesla"]["fields"])
 		self.assertIn("generation", WRITE_COMMAND_META["ingest-tesla"]["fields"])
-		self.assertIn("generation", STAGE_FIELD_HINTS)
 
 		from contextlib import redirect_stdout
 
@@ -2141,22 +1783,6 @@ class VehicleDetailsPassThroughTests(unittest.TestCase):
 		self.assertEqual(mock_client.create_ro_from_appointment.call_args.kwargs["license_plate"], "EV-999")
 		self.assertEqual(mock_client.record_check_in_inspection.call_args.kwargs["vehicle_color"], "Red Multi-Coat")
 		self.assertEqual(mock_client.record_check_in_inspection.call_args.kwargs["license_plate"], "CHK-123")
-
-	def test_cockpit_ui_renders_progressive_vehicle_info(self) -> None:
-		html_path = Path(__file__).resolve().parents[1] / "tools" / "cockpit_ui.html"
-		html = html_path.read_text(encoding="utf-8")
-		for token in (
-			"renderVehicleHtml",
-			"veh-vin",
-			"veh-gen",
-			"veh-year",
-			"veh-plate",
-			"veh-color",
-			"veh-model",
-			"vehicle_info",
-			"vehicle_generation",
-		):
-			self.assertIn(token, html)
 
 
 if __name__ == "__main__":

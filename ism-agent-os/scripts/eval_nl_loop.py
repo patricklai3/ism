@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Blinded natural-language CLI evaluation loop: 40 scenarios across SimManifest worlds, --stage submitter, and KPI scoring."""
+"""Blinded natural-language CLI evaluation loop: 40 scenarios across SimManifest worlds and KPI scoring."""
 
 from __future__ import annotations
 
@@ -54,7 +54,6 @@ _PI_PATTERN = re.compile(r"\b(?:ACC-)?PINV-\d{4}-\d+\b")
 _PE_PATTERN = re.compile(r"\b(?:ACC-PAY-\d{4}-\d+|PE-(?:SIM|MC)-\d+(?:-\d+)?)\b")
 _SI_PATTERN = re.compile(r"\b(?:ACC-)?SINV-\d{4}-\d+\b")
 _URL_PATTERN = re.compile(r"https?://[^\s\)\]>\"']+")
-_STAGE_URL_PATTERN = re.compile(r"http://127\.0\.0\.1:\d+/\?id=[A-Za-z0-9_-]+&token=[A-Za-z0-9_-]+")
 
 
 @dataclass(frozen=True)
@@ -74,7 +73,6 @@ class NLScenario:
 	persona: str = "dispatcher"
 	wave: int = 1
 	tier: str = "full"
-	allowed_staged_calls: int = 0
 
 
 def _render_prompt_dates(template: str, *, relative_dates: bool) -> str:
@@ -248,11 +246,10 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["intake-slots"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			persona="advisor",
 			wave=2,
 			tier="core",
-			notes="Composite intake-slots (--stage or --dry-run -> live) with zero follow-up slots.",
+			notes="Composite intake-slots (--dry-run -> live) with zero follow-up slots.",
 		),
 		NLScenario(
 			id="S13_quote_amend_approval",
@@ -264,11 +261,10 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["quote", "amend-quote", "send-approval"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			persona="advisor",
 			wave=2,
 			tier="core",
-			notes="Preferred: 1 --stage batch ($step0.data.name / $prev.data.name); legacy: quote + batch(amend-quote + send-approval).",
+			notes="Single batch ($step0.data.name / $prev.data.name) or quote + batch(amend-quote + send-approval).",
 		),
 		NLScenario(
 			id="S14_multi_service_quote_estimate",
@@ -280,11 +276,10 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["quote", "estimate"],
 			optimal_cli_calls=2,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			persona="advisor",
 			wave=2,
 			tier="core",
-			notes="Quote (--stage or live) followed by estimate (using @last.repair_order or RO ID).",
+			notes="Quote followed by estimate using the created RO ID.",
 		),
 		NLScenario(
 			id="S15_symmetrical_lh_rh_quote",
@@ -296,11 +291,10 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["quote", "duplicate-side"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			persona="advisor",
 			wave=2,
 			tier="full",
-			notes="Symmetrical LH/RH package expansion + duplicate-side (supports --stage batch or live sequence).",
+			notes="Symmetrical LH/RH package expansion + duplicate-side (batch or live sequence).",
 		),
 		NLScenario(
 			id="S16_household_deferred_attach",
@@ -312,7 +306,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["deferred", "quote", "add-deferred"],
 			optimal_cli_calls=2,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			persona="advisor",
 			wave=2,
 			tier="full",
@@ -328,11 +321,10 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["quote", "apply-inspection"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			persona="advisor",
 			wave=2,
 			tier="full",
-			notes="Quote + apply-inspection (supports 1 --stage batch with $step0.data.name).",
+			notes="Quote + apply-inspection (supports 1 batch with $step0.data.name).",
 		),
 		NLScenario(
 			id="S18_quote_and_deposit",
@@ -344,7 +336,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["quote", "deposit"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			persona="advisor",
 			wave=2,
 			tier="full",
@@ -358,11 +349,10 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["book"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			persona="dispatcher",
 			wave=2,
 			tier="core",
-			notes="Direct book (--stage or --dry-run -> live) with ISO date & 13:00:00.",
+			notes="Direct book (--dry-run -> live) with ISO date & 13:00:00.",
 		),
 		NLScenario(
 			id="S20_conflict_and_recovery",
@@ -371,7 +361,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["book"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			is_conflict_scenario=True,
 			allows_server_feedback_retry=True,
 			persona="dispatcher",
@@ -389,7 +378,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["book"],
 			optimal_cli_calls=2,
 			allowed_dry_runs=1,
-			allowed_staged_calls=2,
 			is_conflict_scenario=True,
 			allows_server_feedback_retry=True,
 			persona="dispatcher",
@@ -404,7 +392,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["book"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			is_conflict_scenario=True,
 			allows_server_feedback_retry=True,
 			persona="dispatcher",
@@ -419,7 +406,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["reschedule", "appointment-status"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			persona="dispatcher",
 			wave=2,
 			tier="full",
@@ -435,7 +421,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["book", "create-ro-from-entry"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			persona="dispatcher",
 			wave=2,
 			tier="full",
@@ -449,7 +434,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["quote"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			persona="advisor",
 			wave=2,
 			tier="core",
@@ -465,7 +449,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["quote"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			persona="technician",
 			wave=2,
 			tier="full",
@@ -482,7 +465,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["procure"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			persona="parts",
 			wave=2,
 			tier="core",
@@ -498,7 +480,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["purchase-invoice"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			persona="parts",
 			wave=2,
 			tier="core",
@@ -526,7 +507,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["procure", "purchase-invoice", "receive-po"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			persona="parts",
 			wave=2,
 			tier="full",
@@ -584,7 +564,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["check-stock", "procure"],
 			optimal_cli_calls=2,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			profile="swarm_crunch_day",
 			persona="parts",
 			wave=2,
@@ -598,7 +577,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["add-supplement"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			profile="swarm_crunch_day",
 			persona="technician",
 			wave=2,
@@ -612,7 +590,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["send-approval", "resolve-action"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			profile="swarm_crunch_day",
 			persona="executive",
 			wave=2,
@@ -626,7 +603,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["job-status", "check-stock", "create-action"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			profile="swarm_crunch_day",
 			persona="technician",
 			wave=2,
@@ -640,7 +616,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["get-doc", "toggle-service", "job-status"],
 			optimal_cli_calls=2,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			profile="swarm_crunch_day",
 			persona="technician",
 			wave=2,
@@ -654,7 +629,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["get-doc", "toggle-service", "checkout"],
 			optimal_cli_calls=2,
 			allowed_dry_runs=2,
-			allowed_staged_calls=1,
 			profile="swarm_crunch_day",
 			persona="technician",
 			wave=2,
@@ -671,7 +645,6 @@ def _scenario_templates() -> list[NLScenario]:
 			expected_commands=["get-doc"],
 			optimal_cli_calls=1,
 			allowed_dry_runs=1,
-			allowed_staged_calls=1,
 			is_conflict_scenario=True,
 			allows_server_feedback_retry=True,
 			profile="swarm_crunch_day",
@@ -752,7 +725,6 @@ def get_scenarios(
 				persona=sc.persona,
 				wave=sc.wave,
 				tier=sc.tier,
-				allowed_staged_calls=sc.allowed_staged_calls,
 			)
 		)
 	return scenarios
@@ -790,7 +762,6 @@ def _extract_claimed_ids(entry: dict[str, Any]) -> dict[str, list[str]]:
 		"payment_entries": list(dict.fromkeys(_PE_PATTERN.findall(blob))),
 		"sales_invoices": list(dict.fromkeys(_SI_PATTERN.findall(blob))),
 		"urls": list(dict.fromkeys(_URL_PATTERN.findall(blob))),
-		"stage_urls": list(dict.fromkeys(_STAGE_URL_PATTERN.findall(blob))),
 	}
 
 
@@ -1483,9 +1454,6 @@ def _unwrap_batch_argv(
 	argv: list[str],
 	cli_parser: argparse.ArgumentParser,
 	parsed_args: Optional[argparse.Namespace],
-	*,
-	relaxed_parser: Optional[argparse.ArgumentParser] = None,
-	is_stage: bool = False,
 ) -> list[dict[str, Any]]:
 	"""Unwrap batch --cmd / --file items using _batch_item_to_argv into inner command records."""
 	raw_items: list[Any] = []
@@ -1503,7 +1471,6 @@ def _unwrap_batch_argv(
 			else:
 				i += 1
 
-	active_parser = relaxed_parser if (is_stage and relaxed_parser is not None) else cli_parser
 	inner: list[dict[str, Any]] = []
 	for raw_item in raw_items:
 		try:
@@ -1512,32 +1479,27 @@ def _unwrap_batch_argv(
 			continue
 		sub_cmd: Optional[str] = None
 		sub_dry = ("--dry-run" in sub_argv) or ("--preview" in sub_argv)
-		sub_stage = ("--stage" in sub_argv) or is_stage
 		err_buf = io.StringIO()
 		try:
 			with contextlib.redirect_stderr(err_buf):
-				sub_ns = active_parser.parse_args(sub_argv)
+				sub_ns = cli_parser.parse_args(sub_argv)
 			sub_cmd = getattr(sub_ns, "command", None)
 			sub_dry = bool(getattr(sub_ns, "dry_run", sub_dry))
-			sub_stage = bool(getattr(sub_ns, "stage", sub_stage))
 		except SystemExit:
 			for tok in sub_argv:
 				if not tok.startswith("-"):
 					sub_cmd = tok
 					break
-		inner.append({"subcommand": sub_cmd, "argv": sub_argv, "dry_run": sub_dry, "stage": sub_stage})
+		inner.append({"subcommand": sub_cmd, "argv": sub_argv, "dry_run": sub_dry})
 	return inner
 
 
 def _parse_cli_invocations(
 	cmd_str: str,
 	cli_parser: argparse.ArgumentParser,
-	*,
-	relaxed_parser: Optional[argparse.ArgumentParser] = None,
 ) -> list[dict[str, Any]]:
 	"""Parse one shell command string into structured CLI invocation descriptors."""
 	invocations: list[dict[str, Any]] = []
-	rel_parser = relaxed_parser or _build_cli_parser(relax_required=True)
 	for seg in _split_shell_segments(cmd_str):
 		tokens = _tokenize_segment(seg)
 		argv = _extract_cli_argv_from_tokens(tokens)
@@ -1546,18 +1508,15 @@ def _parse_cli_invocations(
 		is_help = ("--help" in argv) or ("-h" in argv)
 		outer_cmd: Optional[str] = None
 		is_dry_run = ("--dry-run" in argv) or ("--preview" in argv)
-		is_stage = "--stage" in argv
 		parsed_args: Optional[argparse.Namespace] = None
 
-		active_parser = rel_parser if is_stage else cli_parser
 		if not is_help:
 			err_buf = io.StringIO()
 			try:
 				with contextlib.redirect_stderr(err_buf):
-					parsed_args = active_parser.parse_args(argv)
+					parsed_args = cli_parser.parse_args(argv)
 				outer_cmd = getattr(parsed_args, "command", None)
 				is_dry_run = bool(getattr(parsed_args, "dry_run", is_dry_run))
-				is_stage = bool(getattr(parsed_args, "stage", is_stage))
 			except SystemExit:
 				j = 0
 				while j < len(argv) and argv[j].startswith("-"):
@@ -1577,19 +1536,16 @@ def _parse_cli_invocations(
 				argv,
 				cli_parser,
 				parsed_args,
-				relaxed_parser=rel_parser,
-				is_stage=is_stage,
 			)
 			if inner_calls and all(ic.get("dry_run") for ic in inner_calls):
 				is_dry_run = True
 		elif outer_cmd and not is_help:
-			inner_calls = [{"subcommand": outer_cmd, "argv": argv, "dry_run": is_dry_run, "stage": is_stage}]
+			inner_calls = [{"subcommand": outer_cmd, "argv": argv, "dry_run": is_dry_run}]
 
 		invocations.append({
 			"outer_command": outer_cmd,
 			"is_help": is_help,
 			"is_dry_run": is_dry_run,
-			"is_stage": is_stage,
 			"inner_calls": inner_calls,
 			"argv": argv,
 		})
@@ -1597,25 +1553,19 @@ def _parse_cli_invocations(
 
 
 def _analyze_commands(scenario: NLScenario, entry: dict[str, Any]) -> dict[str, Any]:
-	"""Analyze CLI commands with batch unwrapping, --stage awareness, and dry-run separation."""
+	"""Analyze CLI commands with batch unwrapping and dry-run separation."""
 	commands_run = entry.get("commands_run") or []
-	cli_parser = _build_cli_parser(relax_required=False)
-	relaxed_parser = _build_cli_parser(relax_required=True)
+	cli_parser = _build_cli_parser()
 
 	live_outer_subcommands: list[str] = []
 	live_inner_subcommands: list[str] = []
 	dry_run_subcommands: list[str] = []
-	staged_subcommands: list[str] = []
-	staged_inner_subcommands: list[str] = []
 	cli_calls_count = 0
 	dry_run_calls = 0
-	staged_calls = 0
 	live_cli_calls = 0
 	redundant_calls = 0
 	duplicate_dry_runs = 0
-	duplicate_stage_runs = 0
 	readonly_dry_runs = 0
-	readonly_stage_runs = 0
 	help_calls = 0
 	unexpected_errors = 0
 	self_corrections = 0
@@ -1625,7 +1575,7 @@ def _analyze_commands(scenario: NLScenario, entry: dict[str, Any]) -> dict[str, 
 		cmd_str = str(item.get("cmd") or "").strip()
 		if not _is_cli_command(cmd_str):
 			continue
-		parsed_list = _parse_cli_invocations(cmd_str, cli_parser, relaxed_parser=relaxed_parser)
+		parsed_list = _parse_cli_invocations(cmd_str, cli_parser)
 		if not parsed_list:
 			continue
 
@@ -1641,7 +1591,6 @@ def _analyze_commands(scenario: NLScenario, entry: dict[str, Any]) -> dict[str, 
 			outer = inv["outer_command"]
 			is_help = inv["is_help"]
 			is_dry = inv["is_dry_run"]
-			is_stage = inv["is_stage"]
 			inner_calls = inv["inner_calls"]
 
 			if is_help:
@@ -1657,24 +1606,6 @@ def _analyze_commands(scenario: NLScenario, entry: dict[str, Any]) -> dict[str, 
 				elif any(ic.get("subcommand") in READ_ONLY_COMMANDS for ic in inner_calls):
 					readonly_dry_runs += 1
 					redundant_calls += 1
-				continue
-
-			if is_stage:
-				staged_calls += 1
-				if outer:
-					staged_subcommands.append(outer)
-				for ic in inner_calls:
-					sub = ic.get("subcommand")
-					if sub:
-						staged_inner_subcommands.append(sub)
-				if is_duplicate_cmd:
-					duplicate_stage_runs += 1
-				elif inner_calls and all(ic.get("subcommand") in READ_ONLY_COMMANDS for ic in inner_calls):
-					readonly_stage_runs += 1
-					redundant_calls += 1
-				if rc != 0:
-					unexpected_errors += 1
-					self_corrections += 1
 				continue
 
 			live_cli_calls += 1
@@ -1701,16 +1632,12 @@ def _analyze_commands(scenario: NLScenario, entry: dict[str, Any]) -> dict[str, 
 	excess_dry_runs = max(0, dry_run_calls - duplicate_dry_runs - readonly_dry_runs - scenario.allowed_dry_runs)
 	redundant_calls += excess_dry_runs
 
-	if staged_calls > 0:
-		excess_stage_runs = max(0, staged_calls - duplicate_stage_runs - readonly_stage_runs - max(1, scenario.allowed_staged_calls))
-		redundant_calls += excess_stage_runs
-
-	effective_inner = live_inner_subcommands + staged_inner_subcommands
-	effective_outer = live_outer_subcommands + staged_subcommands
-	domain_cli_calls = live_cli_calls + staged_calls
+	effective_inner = live_inner_subcommands
+	effective_outer = live_outer_subcommands
+	domain_cli_calls = live_cli_calls
 	sid = scenario.id
 
-	# Scenario-specific anti-redundancy checks across read, staged, and live paths
+	# Scenario-specific anti-redundancy checks across read and live paths
 	if sid in ("S19_direct_book_human_names", "S20_conflict_and_recovery", "S22_leave_and_lunch_trap"):
 		pre_checks = [
 			s for s in effective_inner
@@ -1749,9 +1676,8 @@ def _analyze_commands(scenario: NLScenario, entry: dict[str, Any]) -> dict[str, 
 			1 for s in effective_inner
 			if s in ("amend-quote", "status", "get-doc", "list-docs", "slots", "tech-overview", "search-vehicles", "vehicle-info")
 		)
-		non_receipt = [s for s in effective_inner if s != "stage-receipt"]
-		if len(non_receipt) > 2:
-			redundant_calls += len(non_receipt) - 2
+		if len(effective_inner) > 2:
+			redundant_calls += len(effective_inner) - 2
 	elif sid in ("S25_missing_field_write_gate", "S27_standalone_procure_advance_pay", "C05_floor_supplement_over_tolerance"):
 		if len(effective_inner) > 1:
 			redundant_calls += len(effective_inner) - 1
@@ -1813,10 +1739,8 @@ def _analyze_commands(scenario: NLScenario, entry: dict[str, Any]) -> dict[str, 
 		"subcommands": effective_outer,
 		"inner_subcommands": effective_inner,
 		"dry_run_subcommands": dry_run_subcommands,
-		"staged_subcommands": staged_subcommands,
 		"total_cli_calls": cli_calls_count,
 		"dry_run_calls": dry_run_calls,
-		"staged_calls": staged_calls,
 		"live_cli_calls": live_cli_calls,
 		"domain_cli_calls": domain_cli_calls,
 		"help_calls": help_calls,
@@ -1893,15 +1817,12 @@ def score_round(
 			"expected_commands": scenario.expected_commands,
 			"optimal_cli_calls": scenario.optimal_cli_calls,
 			"allowed_dry_runs": scenario.allowed_dry_runs,
-			"allowed_staged_calls": scenario.allowed_staged_calls,
 			"commands_run": entry.get("commands_run") or [],
 			"subcommands_executed": cmd_metrics["subcommands"],
 			"inner_subcommands_executed": cmd_metrics["inner_subcommands"],
 			"dry_run_subcommands": cmd_metrics["dry_run_subcommands"],
-			"staged_subcommands": cmd_metrics["staged_subcommands"],
 			"total_cli_calls": cmd_metrics["total_cli_calls"],
 			"dry_run_calls": cmd_metrics["dry_run_calls"],
-			"staged_calls": cmd_metrics["staged_calls"],
 			"live_cli_calls": cmd_metrics["live_cli_calls"],
 			"domain_cli_calls": cmd_metrics["domain_cli_calls"],
 			"help_calls": cmd_metrics["help_calls"],
@@ -1931,7 +1852,6 @@ def score_round(
 		"first_try_success": round(sum(1 for r in scored_results if r["first_try_success"]) / n, 4) if n else 0.0,
 		"avg_cli_calls": round(total_cli_calls / n, 2) if n else 0.0,
 		"avg_live_cli_calls": round(sum(r["live_cli_calls"] for r in scored_results) / n, 2) if n else 0.0,
-		"avg_staged_calls": round(sum(r["staged_calls"] for r in scored_results) / n, 2) if n else 0.0,
 		"avg_domain_cli_calls": round(sum(r["domain_cli_calls"] for r in scored_results) / n, 2) if n else 0.0,
 		"avg_dry_run_calls": round(sum(r["dry_run_calls"] for r in scored_results) / n, 2) if n else 0.0,
 		"avg_help_calls": round(sum(r["help_calls"] for r in scored_results) / n, 2) if n else 0.0,
@@ -1946,140 +1866,6 @@ def score_round(
 		"total_wall_clock_ms": round(sum(r["wall_clock_ms"] for r in scored_results), 1),
 	}
 	return {"kpis": kpis, "results": scored_results}
-
-
-def _parse_set_assignments(items: list[str]) -> tuple[dict[str, Any], dict[int, dict[str, Any]]]:
-	"""Parse `key=val` or `stepN.key=val` CLI overrides into global and per-step maps."""
-	global_vals: dict[str, Any] = {}
-	step_vals: dict[int, dict[str, Any]] = {}
-	for raw in items:
-		if "=" not in raw:
-			raise ValueError(f"Expected key=value assignment for --set, got '{raw}'")
-		key, val = raw.split("=", 1)
-		key = key.strip()
-		step_match = re.match(r"^(?:step)?(\d+)\.([A-Za-z0-9_]+)$", key)
-		if step_match:
-			s_idx = int(step_match.group(1))
-			f_name = step_match.group(2)
-			step_vals.setdefault(s_idx, {})[f_name] = val
-		else:
-			global_vals[key] = val
-	return global_vals, step_vals
-
-
-def _http_local_json(
-	url: str,
-	*,
-	method: str = "GET",
-	body: Optional[dict[str, Any]] = None,
-	headers: Optional[dict[str, str]] = None,
-	timeout: float = 30.0,
-) -> tuple[int, dict[str, Any]]:
-	opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-	req_headers = dict(headers or {})
-	data_bytes: Optional[bytes] = None
-	if body is not None:
-		data_bytes = json.dumps(body).encode("utf-8")
-		req_headers["Content-Type"] = "application/json"
-	req = urllib.request.Request(url, data=data_bytes, headers=req_headers, method=method)
-	try:
-		with opener.open(req, timeout=timeout) as resp:
-			raw = resp.read().decode("utf-8", errors="replace")
-			return int(resp.status), (json.loads(raw) if raw.strip() else {})
-	except urllib.error.HTTPError as exc:
-		raw = exc.read().decode("utf-8", errors="replace")
-		try:
-			payload = json.loads(raw) if raw.strip() else {"success": False, "error": str(exc)}
-		except json.JSONDecodeError:
-			payload = {"success": False, "error": raw or str(exc)}
-		return int(exc.code), payload
-
-
-def submit_staged_url(
-	url: str,
-	*,
-	set_items: Optional[list[str]] = None,
-	expect_missing: Optional[list[str]] = None,
-	timeout: float = 30.0,
-) -> dict[str, Any]:
-	"""Simulate an operator inspecting and submitting a --stage 127.0.0.1 URL."""
-	parsed = urllib.parse.urlsplit(url)
-	if parsed.hostname not in ("127.0.0.1", "localhost"):
-		raise ValueError(f"Refusing non-localhost stage URL '{url}'")
-	query = urllib.parse.parse_qs(parsed.query)
-	stage_id = (query.get("id") or [""])[0].strip()
-	token = (query.get("token") or [""])[0].strip()
-	if not stage_id or not token:
-		raise ValueError(f"Stage URL missing id or token query parameters: '{url}'")
-
-	origin = f"{parsed.scheme}://{parsed.netloc}"
-	get_url = f"{origin}/api/stage/{urllib.parse.quote(stage_id)}?token={urllib.parse.quote(token)}"
-	get_status, stage_state = _http_local_json(get_url, method="GET", timeout=timeout)
-	if get_status != 200:
-		return {
-			"success": False,
-			"stage_id": stage_id,
-			"http_status": get_status,
-			"missing_check_passed": False,
-			"error": stage_state.get("error") or f"GET stage failed ({get_status})",
-			"response": stage_state,
-		}
-
-	missing_required = list(stage_state.get("missing_required") or [])
-	expected_list = [m.strip() for m in (expect_missing or []) if m.strip()]
-	missing_check_passed = all(
-		any(exp in str(actual) for actual in missing_required)
-		for exp in expected_list
-	)
-	if expected_list and not missing_check_passed:
-		return {
-			"success": False,
-			"stage_id": stage_id,
-			"http_status": 400,
-			"missing_check_passed": False,
-			"expected_missing": expected_list,
-			"actual_missing": missing_required,
-			"error": f"Expected missing_required {expected_list}, got {missing_required}",
-		}
-
-	global_vals, step_vals = _parse_set_assignments(set_items or [])
-	commands = stage_state.get("commands") or []
-	mode = str(stage_state.get("mode") or ("batch" if len(commands) > 1 else "single"))
-	post_body: dict[str, Any] = {}
-	if mode == "batch" or len(commands) > 1 or step_vals:
-		steps_payload: list[dict[str, Any]] = []
-		for idx, step in enumerate(commands):
-			field_names = {f.get("name") for f in (step.get("fields") or []) if isinstance(f, dict)}
-			merged: dict[str, Any] = {}
-			for k, v in global_vals.items():
-				if k in field_names:
-					merged[k] = v
-			for k, v in step_vals.get(idx, {}).items():
-				merged[k] = v
-			steps_payload.append({"values": merged})
-		post_body["steps"] = steps_payload
-	elif global_vals:
-		post_body["values"] = global_vals
-
-	submit_url = f"{origin}/api/stage/{urllib.parse.quote(stage_id)}/submit"
-	post_status, submit_resp = _http_local_json(
-		submit_url,
-		method="POST",
-		body=post_body,
-		headers={"Origin": origin, "X-Stage-Token": token},
-		timeout=timeout,
-	)
-	return {
-		"success": post_status == 200 and bool(submit_resp.get("success")),
-		"stage_id": stage_id,
-		"http_status": post_status,
-		"missing_check_passed": missing_check_passed,
-		"initial_missing_required": missing_required,
-		"receipt": submit_resp.get("receipt"),
-		"conflict": submit_resp.get("conflict"),
-		"alternatives": submit_resp.get("alternatives") or [],
-		"response": submit_resp,
-	}
 
 
 def bootstrap_slot(
@@ -2181,11 +1967,6 @@ def _build_parser() -> argparse.ArgumentParser:
 	p_boot.add_argument("--manifest-out", help="Path to write SimManifest JSON")
 	p_boot.add_argument("--activate-dotenv", action="store_true", help="Back up .env and write slot credentials into ism-agent-os/.env")
 
-	p_sub = sub.add_parser("submit-stage", help="Simulate operator submission against a --stage 127.0.0.1 URL")
-	p_sub.add_argument("--url", required=True, help="127.0.0.1 stage URL returned by --stage CLI")
-	p_sub.add_argument("--set", action="append", dest="set_items", help="Field override key=value or stepN.key=value")
-	p_sub.add_argument("--expect-missing", action="append", help="Assert field appeared in missing_required before filling")
-
 	p_td = sub.add_parser("teardown-slot", help="Stop bench slot HTTP server and optionally restore .env")
 	p_td.add_argument("--slot", type=int, required=True, help="Bench slot number (1..5)")
 	p_td.add_argument("--restore-dotenv", action="store_true", help="Restore ism-agent-os/.env from backup")
@@ -2210,7 +1991,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _normalize_argv(argv: Optional[list[str]]) -> list[str]:
 	tokens = list(sys.argv[1:] if argv is None else argv)
-	subcommands = {"scenarios", "seed", "bootstrap-slot", "submit-stage", "teardown-slot", "verify-db", "score"}
+	subcommands = {"scenarios", "seed", "bootstrap-slot", "teardown-slot", "verify-db", "score"}
 	if not tokens:
 		return tokens
 	has_sub = any(tok in subcommands for tok in tokens)
@@ -2246,15 +2027,6 @@ def main(argv: Optional[list[str]] = None) -> int:
 		)
 		print(json.dumps(res, indent=2))
 		return 0
-
-	if args.command == "submit-stage":
-		res = submit_staged_url(
-			args.url,
-			set_items=list(args.set_items or []),
-			expect_missing=list(args.expect_missing or []),
-		)
-		print(json.dumps(res, indent=2))
-		return 0 if res.get("success") else 1
 
 	if args.command == "teardown-slot":
 		res = teardown_slot(args.slot, restore_dotenv=bool(args.restore_dotenv))
