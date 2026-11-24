@@ -56,6 +56,20 @@ class TestSupplierCatalogSanitizer(unittest.TestCase):
 			SupplierCatalogSanitizer().ingest(mock_client, raw, supplier="Tesla")
 		mock_client.import_supplier_catalog.assert_not_called()
 
+	def test_preserves_bin_location_aliases_in_csv_and_dict_rows(self) -> None:
+		sanitizer = SupplierCatalogSanitizer()
+		csv_raw = "Part#,Description,Rate,Bin Location\nP1,Brake Pad,$45.00,A2-03\n"
+		parsed = sanitizer.parse_rows(csv_raw)
+		self.assertEqual(parsed[0].get("default_bin_location"), "A2-03")
+
+		dict_rows = [
+			{"part_number": "P2", "description": "Filter", "rate": 25.0, "storage_bin": "B1-02"},
+			{"part_number": "P3", "description": "Clip", "rate": 5.0, "shelf": "C3-01"},
+		]
+		normalized = sanitizer.normalize_items(dict_rows)
+		self.assertEqual(normalized[0].get("default_bin_location"), "B1-02")
+		self.assertEqual(normalized[1].get("default_bin_location"), "C3-01")
+
 
 class TestTeslaManualParser(unittest.TestCase):
 	def test_parse_url_metadata(self) -> None:

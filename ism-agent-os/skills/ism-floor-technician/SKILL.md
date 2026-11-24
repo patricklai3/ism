@@ -21,7 +21,8 @@ description: >-
 | List or apply inspection template | `python -m tools.cli --json inspection-templates [--template <NAME>]` / `python -m tools.cli --json apply-inspection --repair-order <RO> [--template <NAME>]` |
 | Add mid-job supplement for approval | `python -m tools.cli --json add-supplement --repair-order <RO> --title <TITLE> --hours <HRS> [--parts-json <@file\|JSON>] [--notes <TEXT>]` |
 | Duplicate symmetrical LH/RH service row | `python -m tools.cli --json duplicate-side --repair-order <RO> --service-row <ROW>` |
-| Check stock for parts hold | `python -m tools.cli --json check-stock --repair-order <RO>` |
+| Check stock for parts hold (or by bin) | `python -m tools.cli --json check-stock --repair-order <RO> [--bin-location <BIN>]` |
+| Look up Storage Bins & bin stock | `python -m tools.cli --json bins [--zone <ZONE>] [--query <TEXT>] [--include-stock]` |
 | Log floor discrepancy / escalation | `python -m tools.cli --json create-action --title <TITLE> [--ref-doctype "Repair Order" --ref-name <RO>] [--details <TEXT>]` |
 | Read Shop Board action card(s) + RO transcript | `python -m tools.cli --json action-cards [--action-item <ACT-1> [<ACT-2> ...]] [--repair-order <RO>] [--status Open]` |
 | Post direct floor message on active RO thread | `python -m tools.cli --json board-post --repair-order <RO> --text <TEXT> [--intent <TAG>] [--run-ai]` |

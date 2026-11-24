@@ -436,6 +436,29 @@ class TestStageServer(unittest.TestCase):
 		self.assertEqual(info["port"], self.port)
 		self.assertTrue(info["ok"])
 
+	def test_stage_spec_for_bin_commands_and_receive_po(self) -> None:
+		from tools.cli_parsers import _build_parser
+		from tools.cli_validation import build_stage_form_spec
+
+		parser = _build_parser(relax_required=True)
+		items = [
+			parser.parse_args(["receive-po", "--purchase-order", "PO-1", "--bin-location", "A2-03"]),
+			parser.parse_args(["move-stock", "--from-bin", "RCV-01", "--to-bin", "A2-03", "--item-code", "P1", "--qty", "2"]),
+			parser.parse_args(["create-bin", "--bin-code", "B1-01", "--bin-type", "Overflow"]),
+			parser.parse_args(["adjust-stock", "--purpose", "receipt", "--items-json", '[{"item_code":"P1","qty":1}]']),
+		]
+		spec = build_stage_form_spec(items, parser=parser)
+		steps = {s["command"]: {f["name"]: f for f in s["fields"]} for s in spec["steps"]}
+
+		self.assertEqual(steps["receive-po"]["bin_location"]["type"], "text")
+		self.assertEqual(steps["receive-po"]["bin_allocations_json"]["type"], "json")
+		self.assertEqual(steps["move-stock"]["from_bin"]["type"], "text")
+		self.assertEqual(steps["move-stock"]["to_bin"]["type"], "text")
+		self.assertEqual(steps["create-bin"]["bin_type"]["type"], "select")
+		self.assertIn("Overflow", steps["create-bin"]["bin_type"]["choices"])
+		self.assertEqual(steps["adjust-stock"]["purpose"]["type"], "select")
+		self.assertEqual(steps["adjust-stock"]["purpose"]["choices"], ["receipt", "issue"])
+
 
 if __name__ == "__main__":
 	unittest.main()

@@ -68,6 +68,13 @@ _HEADER_ALIASES = {
 	"oem_price": "tesla_oem_price",
 	"tesla_msrp": "tesla_oem_price",
 	"tesla_retail": "tesla_oem_price",
+	"bin": "default_bin_location",
+	"bin_location": "default_bin_location",
+	"default_bin": "default_bin_location",
+	"default_bin_location": "default_bin_location",
+	"storage_bin": "default_bin_location",
+	"location": "default_bin_location",
+	"shelf": "default_bin_location",
 }
 
 _CANONICAL_PIPE_HEADER = "Part# | Description | Source | Condition | Rate | Cost | Qty | Revision | OEM#"
@@ -281,7 +288,7 @@ def _build_structured_item(
 	}
 	if pricing_meta is not None:
 		item["_pricing"] = pricing_meta
-	for extra in ("brand", "warranty_period", "stock_uom", "supplier", "supplier_part_no", "service_package"):
+	for extra in ("brand", "warranty_period", "stock_uom", "supplier", "supplier_part_no", "service_package", "default_bin_location"):
 		val = mapped.get(extra)
 		if val is not None and str(val).strip():
 			item[extra] = str(val).strip()
@@ -421,6 +428,7 @@ def _extract_row(
 		"revision": get("revision", ""),
 		"oem_num": get("oem_num", ""),
 		"tesla_oem_price": _clean_number(get("tesla_oem_price", ""), default=""),
+		"default_bin_location": get("default_bin_location", ""),
 	}
 
 

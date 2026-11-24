@@ -19,6 +19,7 @@ READ_ONLY_COMMANDS = frozenset({
 	"estimate",
 	"unscheduled",
 	"check-stock",
+	"bins",
 	"alternates",
 	"fetch-tesla",
 	"tesla-generations",
@@ -69,6 +70,7 @@ _AT_FILE_JSON_ATTRS = (
 	"payments",
 	"operations_json",
 	"args_json",
+	"bin_allocations_json",
 )
 
 
@@ -284,6 +286,62 @@ def _validate_board_target(
 		missing.append("--thread-key/--repair-order (mutually exclusive)")
 
 
+def _validate_move_stock(
+	args: argparse.Namespace,
+	missing: list[str],
+	*,
+	allow_step_refs: bool = False,
+) -> None:
+	from_bin = getattr(args, "from_bin", None)
+	to_bin = getattr(args, "to_bin", None)
+	if (
+		_has_value(from_bin)
+		and _has_value(to_bin)
+		and not (allow_step_refs and (_contains_step_ref(from_bin) or _contains_step_ref(to_bin)))
+	):
+		if str(from_bin).strip().upper() == str(to_bin).strip().upper():
+			missing.append("--to-bin (must differ from --from-bin)")
+
+	has_items_json = _has_value(getattr(args, "items_json", None))
+	if has_items_json:
+		return
+
+	item_code = getattr(args, "item_code", None)
+	qty = getattr(args, "qty", None)
+	has_item = _has_value(item_code)
+	has_qty = _has_value(qty)
+	if not has_item and not has_qty:
+		missing.append("--items-json or (--item-code and --qty)")
+		return
+	if not has_item:
+		missing.append("--item-code (required with --qty)")
+	if not has_qty:
+		missing.append("--qty (required with --item-code)")
+		return
+	if allow_step_refs and _contains_step_ref(qty):
+		return
+	if isinstance(qty, bool):
+		missing.append("--qty (must be > 0)")
+		return
+	try:
+		if float(qty) <= 0:
+			missing.append("--qty (must be > 0)")
+	except (TypeError, ValueError):
+		missing.append("--qty (must be > 0)")
+
+
+def _validate_adjust_stock(
+	args: argparse.Namespace,
+	missing: list[str],
+	*,
+	allow_step_refs: bool = False,
+) -> None:
+	purpose = getattr(args, "purpose", None)
+	if _has_value(purpose) and not (allow_step_refs and _contains_step_ref(purpose)):
+		if str(purpose).strip().lower() not in ("receipt", "issue", "material receipt", "material issue"):
+			missing.append("--purpose (must be receipt or issue)")
+
+
 WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	"quote": {
 		"target": "ism.api.agent.create_quote -> Repair Order (Draft Estimate)",
@@ -437,7 +495,7 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	},
 	"receive-po": {
 		"target": "ism.api.agent.receive_purchase_order -> Purchase Receipt",
-		"fields": ("purchase_order", "purchase_invoice", "submit_po"),
+		"fields": ("purchase_order", "purchase_invoice", "submit_po", "bin_location", "bin_allocations_json"),
 		"any_of": ((("purchase_order", "purchase_invoice"), "--purchase-order or --purchase-invoice"),),
 	},
 	"pay-purchase": {
@@ -448,8 +506,30 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	},
 	"purchase-invoice": {
 		"target": "ism.api.agent.create_purchase_invoice -> Purchase Invoice",
-		"fields": ("purchase_order", "supplier", "parts_json", "update_stock", "bill_no", "bill_date", "company", "no_attach_advances"),
+		"fields": ("purchase_order", "supplier", "parts_json", "update_stock", "bill_no", "bill_date", "company", "no_attach_advances", "bin_location"),
 		"custom": _validate_purchase_invoice,
+	},
+	"create-bin": {
+		"target": "ism.api.agent.create_bin_location -> Storage Bin",
+		"fields": ("bin_code", "warehouse", "zone", "aisle", "rack", "shelf", "bin_type", "description"),
+		"required": (("bin_code", "--bin-code"),),
+	},
+	"assign-bin": {
+		"target": "ism.api.agent.set_item_default_bin -> Item",
+		"fields": ("item_code", "bin_location"),
+		"required": (("item_code", "--item-code"),),
+	},
+	"move-stock": {
+		"target": "ism.api.agent.transfer_bin_stock -> Stock Entry (Material Transfer)",
+		"fields": ("from_bin", "to_bin", "item_code", "qty", "items_json", "warehouse", "notes"),
+		"required": (("from_bin", "--from-bin"), ("to_bin", "--to-bin")),
+		"custom": _validate_move_stock,
+	},
+	"adjust-stock": {
+		"target": "ism.api.agent.adjust_bin_stock -> Stock Entry (Material Receipt / Issue)",
+		"fields": ("purpose", "items_json", "bin_location", "warehouse", "reason"),
+		"required": (("purpose", "--purpose"), ("items_json", "--items-json")),
+		"custom": _validate_adjust_stock,
 	},
 	"ingest-parts": {
 		"target": "SupplierCatalogSanitizer + import_supplier_catalog -> Item",
@@ -796,6 +876,21 @@ STAGE_FIELD_HINTS: dict[str, dict[str, Any]] = {
 	"intent": {"type": "text", "label": "Intent Tag", "placeholder": "Optional quick-intent tag"},
 	"idempotency_key": {"type": "text", "label": "Idempotency Key"},
 	"run_ai": {"type": "bool", "label": "Run Site Board AI"},
+	"bin_code": {"type": "text", "label": "Bin Code", "placeholder": "e.g. A2-03"},
+	"bin_location": {"type": "text", "label": "Bin Location", "placeholder": "e.g. A2-03"},
+	"from_bin": {"type": "text", "label": "From Bin", "placeholder": "e.g. RCV-01"},
+	"to_bin": {"type": "text", "label": "To Bin", "placeholder": "e.g. A2-03"},
+	"bin_type": {"type": "select", "label": "Bin Type", "choices": ["Standard", "Overflow", "Receiving", "Bulk", "Hazmat"]},
+	"bin_allocations_json": {"type": "json", "label": "Bin Allocations JSON", "placeholder": '{"ITEM-CODE": "A2-03"}'},
+	"purpose": {"type": "select", "label": "Adjustment Purpose", "choices": ["receipt", "issue"]},
+	"zone": {"type": "text", "label": "Zone", "placeholder": "e.g. A"},
+	"aisle": {"type": "text", "label": "Aisle", "placeholder": "e.g. 2"},
+	"rack": {"type": "text", "label": "Rack", "placeholder": "e.g. R1"},
+	"shelf": {"type": "text", "label": "Shelf", "placeholder": "e.g. 03"},
+	"reason": {"type": "textarea", "label": "Reason", "placeholder": "Cycle count or stock adjustment reason"},
+	"warehouse": {"type": "text", "label": "Warehouse", "placeholder": "Shop Store - ISM"},
+	"qty": {"type": "float", "label": "Quantity", "min": 0},
+	"description": {"type": "textarea", "label": "Description"},
 }
 
 _STAGE_CMD_FIELD_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {

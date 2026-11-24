@@ -34,7 +34,7 @@ description: >-
 
 ## 3. Resolve Deficits and Procure Parts (RO-Linked or Standalone Inventory)
 
-1. For Repair Order jobs, run `python -m tools.cli --json check-stock --repair-order <RO>` to list required parts, available warehouse stock, and `deficit_count` in `data`. For general inventory checks, omit `--repair-order` and pass `--items-json`.
+1. For Repair Order jobs, run `python -m tools.cli --json check-stock --repair-order <RO> [--bin-location <BIN>]` to list required parts, available warehouse/bin stock, and `deficit_count` in `data`. For general inventory checks, omit `--repair-order` and pass `--items-json`.
 2. To find compatible OEM, aftermarket, or used replacements with stock quantities, run `python -m tools.cli --json alternates` (`--service-package`, `--component-slot`, `--slot-number`, `--oem`, or `--item-code`). If also checking templates or another read in the same turn, combine them in one `batch` call (`python -m tools.cli --json batch --cmd "alternates --service-package '<PKG>' --slot-number 2" --cmd "inspection-templates"`).
 3. A `Purchase Order` does **NOT** require a `Repair Order`. Standalone stock/inventory purchases omit `--repair-order`:
    - If ordering a part that does not exist in Frappe `Item` yet, ingest it via `ingest-parts <file> --service-package <PKG>` first (so it gets canonical `[Source]-[PartNumber]-[Condition]` coding and is nested under a `Service Package`), then procure it. **NEVER** create vehicle parts via raw `create-doc --doctype "Item"`.
@@ -51,19 +51,29 @@ Suppliers often require payment at order time before goods arrive, and the suppl
    - When recording payment later against an existing PO or unpaid PI: run `python -m tools.cli --json pay-purchase (--purchase-order <PO> | --purchase-invoice <PI>) --payment-method <METHOD> [--paid-amount <AMT>] [--reference-no <REF>] [--reference-date <YYYY-MM-DD>]`.
 2. **Scenario A — Invoice Arrives Immediately, Goods Arrive Later**:
    - First submit the Purchase Invoice with `update_stock=0`: run `python -m tools.cli --json purchase-invoice --purchase-order <PO> [--bill-no <NO>] [--bill-date <YYYY-MM-DD>]` (omit `--update-stock`). Any advance `Payment Entry` made against `<PO>` is attached automatically, reducing `outstanding_amount`.
-   - Later when the parts physically arrive, submit the Purchase Receipt: run `python -m tools.cli --json receive-po --purchase-order <PO>` (or `--purchase-invoice <PI>`). Stock increases on submit and triggers Repair Order readiness re-evaluation.
+   - Later when the parts physically arrive, submit the Purchase Receipt: run `python -m tools.cli --json receive-po --purchase-order <PO> [--bin-location <BIN>] [--bin-allocations-json <@file|JSON>]` (or `--purchase-invoice <PI>`). Stock increases on submit and triggers Repair Order readiness re-evaluation.
 3. **Scenario B — Invoice Arrives Physically With the Parts**:
-   - Check `update_stock` directly on the Purchase Invoice: run `python -m tools.cli --json purchase-invoice --purchase-order <PO> --update-stock [--bill-no <NO>] [--bill-date <YYYY-MM-DD>]` (or standalone with `--supplier <SUP> --parts-json <@file|JSON> --update-stock`). Any advance `Payment Entry` made against `<PO>` is attached automatically, and stock updates immediately on submission (no separate `receive-po` needed).
+   - Check `update_stock` directly on the Purchase Invoice: run `python -m tools.cli --json purchase-invoice --purchase-order <PO> --update-stock [--bin-location <BIN>] [--bill-no <NO>] [--bill-date <YYYY-MM-DD>]` (or standalone with `--supplier <SUP> --parts-json <@file|JSON> --update-stock [--bin-location <BIN>]`). Any advance `Payment Entry` made against `<PO>` is attached automatically, and stock updates immediately on submission (no separate `receive-po` needed).
 4. **Standard Receipt Without Invoice Yet**:
-   - When parts arrive before any invoice, run `python -m tools.cli --json receive-po --purchase-order <PO>`.
+   - When parts arrive before any invoice, run `python -m tools.cli --json receive-po --purchase-order <PO> [--bin-location <BIN>] [--bin-allocations-json <@file|JSON>]`.
 5. **Supplier PO Lookup Guard (`purchase-invoice` / `receive-po`)**:
    - When a user asks to receive or invoice a PO for a specific supplier, look up that supplier's open PO via `python -m tools.cli --json list-docs --doctype "Purchase Order" --filter supplier=<SUP> --filter docstatus=1 --fields "name,supplier,status,per_received,per_billed,grand_total,advance_paid" --order-by "creation desc" --limit 5`. Run this single filtered `list-docs` call directly — do **NOT** omit `--filter docstatus=1` or `--fields`, do **NOT** run an unfiltered `list-docs` first, and do **NOT** run `--help`.
    - Then invoice/receive directly using the exact `purchase-invoice` flags (`python -m tools.cli --json purchase-invoice --purchase-order <PO> --update-stock --bill-no <NO> --bill-date <YYYY-MM-DD>`; omit `--update-stock` if goods arrive later, or use `python -m tools.cli --json receive-po --purchase-order <PO>` for receipt only) — do **NOT** run `--help`.
    - If `list-docs` returns no open PO for that supplier, **STOP** and report that no open Purchase Order was found for that supplier — **NEVER** substitute or fall back to another supplier's Purchase Order.
 
+## 5. Storage Bins, Putaway, Transfers & Cycle-Count Adjustments
+
+Use curated bin commands (never raw `create-doc --doctype "Stock Entry"`) so `validate_negative_stock` and bin balances remain exact:
+
+1. **Inspect bins & live bin stock**: `python -m tools.cli --json bins [--warehouse <WH>] [--zone <ZONE>] [--query <TEXT>] [--include-stock]`
+2. **Create a Storage Bin**: `python -m tools.cli --json create-bin --bin-code <CODE> [--warehouse <WH>] [--zone <Z>] [--aisle <A>] [--rack <R>] [--shelf <S>] [--bin-type <Standard|Overflow|Receiving|Bulk|Hazmat>] [--description <TEXT>]`
+3. **Assign or clear an Item's Home Bin**: `python -m tools.cli --json assign-bin --item-code <ITEM> [--bin-location <BIN>]` (omit `--bin-location` to clear)
+4. **Bin-to-bin stock transfer (putaway / overflow)**: `python -m tools.cli --json move-stock --from-bin <BIN> --to-bin <BIN> (--item-code <ITEM> --qty <N> | --items-json <@file|JSON>) [--warehouse <WH>] [--notes <TEXT>]`
+5. **Bin stock receipt / issue adjustment**: `python -m tools.cli --json adjust-stock --purpose <receipt|issue> --items-json <@file|JSON> [--bin-location <BIN>] [--warehouse <WH>] [--reason <TEXT>]`
+
 ## Required Fields, `--stage` & Pre-Dispatch Callback
 
-- **`procure` / `pay-purchase` / `purchase-invoice` / `receive-po` / `ingest-parts` / `import-tesla` / `ingest-tesla`**:
+- **`procure` / `pay-purchase` / `purchase-invoice` / `receive-po` / `create-bin` / `assign-bin` / `move-stock` / `adjust-stock` / `ingest-parts` / `import-tesla` / `ingest-tesla`**:
   - **Preferred (`--stage`)**: Stage procurement or parts writes via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch --cmd "procure ..." --cmd "receive-po --purchase-order @step0.data.purchase_orders.0"` — `stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings), present the returned `127.0.0.1` URL so the operator can fill any missing fields (`--payment-method`, `--service-package`, `--bill-no`) and submit locally, and use `python -m tools.cli --json stage-receipt` or `@last` (`@last.purchase_order`) on follow-up turns.
   - **Legacy (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), output `### ISM Pre-Dispatch Summary` via `--dry-run` before dispatching live writes.
 - Do **NOT** require `--repair-order` on `procure`.

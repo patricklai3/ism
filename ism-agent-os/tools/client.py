@@ -457,6 +457,7 @@ class IsmAgentClient:
 		include_summary: bool = False,
 		repair_order: Optional[str] = None,
 		items: Optional[list[Any] | str] = None,
+		bin_location: Optional[str] = None,
 	) -> dict[str, Any]:
 		return self._call_agent(
 			"check_parts_stock",
@@ -464,6 +465,7 @@ class IsmAgentClient:
 			repair_order=repair_order or ro_name,
 			items=items,
 			company=company or self.config.company or None,
+			bin_location=bin_location,
 		)
 
 	def check_parts_stock(
@@ -471,6 +473,7 @@ class IsmAgentClient:
 		repair_order: Optional[str] = None,
 		items: Optional[list[Any] | str] = None,
 		company: Optional[str] = None,
+		bin_location: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Check live warehouse stock and deficits for a Repair Order or items list."""
@@ -479,6 +482,115 @@ class IsmAgentClient:
 			include_summary=include_summary,
 			repair_order=repair_order,
 			items=items,
+			bin_location=bin_location,
+		)
+
+	def list_bin_locations(
+		self,
+		warehouse: Optional[str] = None,
+		zone: Optional[str] = None,
+		query: Optional[str] = None,
+		include_stock: bool = False,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""List Storage Bin locations with optional warehouse, zone, query, and stock filters."""
+		return self._call_agent(
+			"list_bin_locations",
+			include_summary=include_summary,
+			warehouse=warehouse,
+			zone=zone,
+			query=query,
+			include_stock=bool(include_stock),
+		)
+
+	def create_bin_location(
+		self,
+		bin_code: str,
+		warehouse: Optional[str] = None,
+		zone: Optional[str] = None,
+		aisle: Optional[str] = None,
+		rack: Optional[str] = None,
+		shelf: Optional[str] = None,
+		bin_type: str = "Standard",
+		description: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Create a new Storage Bin master record."""
+		return self._call_agent(
+			"create_bin_location",
+			include_summary=include_summary,
+			bin_code=bin_code,
+			warehouse=warehouse,
+			zone=zone,
+			aisle=aisle,
+			rack=rack,
+			shelf=shelf,
+			bin_type=bin_type,
+			description=description,
+		)
+
+	def set_item_default_bin(
+		self,
+		item_code: str,
+		bin_location: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Set or clear Item.default_bin_location (Home Bin) for a part."""
+		return self._call_agent(
+			"set_item_default_bin",
+			include_summary=include_summary,
+			item_code=item_code,
+			bin_location=bin_location if bin_location is not None else "",
+		)
+
+	def transfer_bin_stock(
+		self,
+		from_bin: str,
+		to_bin: str,
+		items: Optional[list[Any] | str] = None,
+		item_code: Optional[str] = None,
+		qty: Optional[float] = None,
+		warehouse: Optional[str] = None,
+		notes: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Transfer stock between two Storage Bins in the same warehouse."""
+		return self._call_agent(
+			"transfer_bin_stock",
+			include_summary=include_summary,
+			from_bin=from_bin,
+			to_bin=to_bin,
+			items=items,
+			item_code=item_code,
+			qty=qty,
+			warehouse=warehouse,
+			notes=notes,
+		)
+
+	def adjust_bin_stock(
+		self,
+		purpose: str,
+		items: list[Any] | str,
+		bin_location: Optional[str] = None,
+		warehouse: Optional[str] = None,
+		reason: Optional[str] = None,
+		include_summary: bool = False,
+	) -> dict[str, Any]:
+		"""Post a bin-attributed Material Receipt or Material Issue Stock Entry."""
+		purpose_norm = {
+			"receipt": "Material Receipt",
+			"material receipt": "Material Receipt",
+			"issue": "Material Issue",
+			"material issue": "Material Issue",
+		}.get(str(purpose or "").strip().lower(), purpose)
+		return self._call_agent(
+			"adjust_bin_stock",
+			include_summary=include_summary,
+			purpose=purpose_norm,
+			items=items,
+			bin_location=bin_location,
+			warehouse=warehouse,
+			reason=reason,
 		)
 
 	def submit_procurement_orders(
@@ -715,6 +827,8 @@ class IsmAgentClient:
 		purchase_order: Optional[str] = None,
 		submit_po: bool = True,
 		purchase_invoice: Optional[str] = None,
+		bin_location: Optional[str] = None,
+		bin_allocations: Optional[dict[str, str] | list[Any] | str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Submit PO (if still Draft) and receive items via Purchase Receipt."""
@@ -724,6 +838,8 @@ class IsmAgentClient:
 			purchase_order=purchase_order,
 			purchase_invoice=purchase_invoice,
 			submit_po=bool(submit_po),
+			bin_location=bin_location,
+			bin_allocations=bin_allocations,
 		)
 
 	def create_purchase_payment(
@@ -758,6 +874,7 @@ class IsmAgentClient:
 		bill_no: Optional[str] = None,
 		bill_date: Optional[str] = None,
 		attach_advances: bool = True,
+		bin_location: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Submit a Purchase Invoice (PO-linked or standalone) with optional stock update and advance attachment."""
@@ -772,6 +889,7 @@ class IsmAgentClient:
 			bill_no=bill_no,
 			bill_date=bill_date,
 			attach_advances=bool(attach_advances),
+			bin_location=bin_location,
 		)
 
 	def record_ro_deposit(
