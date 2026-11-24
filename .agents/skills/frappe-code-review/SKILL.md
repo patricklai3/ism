@@ -248,16 +248,6 @@ perceive ~100ms).
 - **Tests must be deterministic and independent.** No `random` (flaky); no
   reliance on state left by other tests (order-dependence); use `freeze_time`
   for time-dependent logic.
-- **Clean up test data in teardown.** Do not rely solely on database rollback.
-  ERPNext hooks, naming series, or workflows often commit mid-test. Tests must
-  track created documents and delete them in `tearDown()`. Cancel submitted
-  documents before deletion. Use a dedicated test prefix for test record names.
-  When tests invoke methods that generate background transactions (e.g. Sales
-  Invoices, Payment Entries), verify that teardown cancels and deletes those
-  downstream transactions in reverse dependency order before cancelling parent
-  records or deleting parties. Never delete parties while linked ledger entries
-  require reversal. Residual purge routines must query transactions by party or
-  asset rather than relying on document name prefixes.
 
 ## 8. Error messages, logging & observability
 
