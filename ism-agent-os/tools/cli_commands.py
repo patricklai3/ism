@@ -957,6 +957,7 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 	"fetch-tesla": lambda a, c, s: c.fetch_tesla_procedure(
 		url=a.url, repair_order=a.repair_order, vehicle=a.vehicle, include_summary=s
 	),
+	"tesla-generations": lambda a, c, _s: c.get_vehicle_generation_catalog(model=a.model),
 	"import-tesla": lambda a, c, s: c.import_tesla_procedure(
 		procedure_title=a.title,
 		correction_code=a.code,

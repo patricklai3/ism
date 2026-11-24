@@ -28,7 +28,8 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 7. **Delegate labor & tax math to Frappe; price parts via `ism-agent-os`**: Never calculate labor totals, Fenton-Wilkinson durations, or 13% Ontario HST manually. Calculate customer part selling prices exclusively in `ism-agent-os` via `python -m tools.cli --json price-part` or `ingest-parts` (per `rules/PARTS_PRICING.md` and `rules/parts_pricing.json`), and keep Tesla OEM comparison details out of customer-facing quote/invoice text.
 8. **Submit submittable documents after confirmation**: Quotes (`Repair Order`) start in `Draft Estimate` until customer approval, whereas all Frappe submittable documents (`Purchase Order`, `Request for Quotation`, `Purchase Receipt`, `Purchase Invoice`, `Payment Entry`, `Sales Invoice`) are submitted immediately upon live execution after `### ISM Pre-Dispatch Summary` confirmation. Never leave submittable documents in Draft or ask the user whether to keep them in Draft vs Submit unless they explicitly ask for `--draft`. Never run `checkout --confirm` without `--payment-method`, `--odometer-out`, and explicit human confirmation.
 9. **Use curated CLI wrappers first & show deep links**: Prefer curated CLI subcommands over generic REST calls. Include Desk, Calendar, Print, or Approval links from `urls` in replies. Pass `--summary` only when explicitly requested.
-10. **Addressing Shop Board Action Cards**:
+10. **Addressing Shop Board Action Cards (Exception-Only Board)**:
+   - `/board` (`board-threads`, `board-thread`, `action-cards`) is **exception-only**: routine system events (portal approvals, PIN updates, Square payments, self-serve bookings/reschedules, and parts-ready notices) live in `/cockpit` and `action-items`, not on `/board` timelines.
    1. Fetch 1 or N cards plus RO summary, capture transcript, media links, and clearing conditions in one call: `python -m tools.cli --json action-cards --action-item <ACT-1> [<ACT-2> ...]` (or `--repair-order <RO>`).
    2. Execute or stage the required ERP domain writes via `--stage batch`.
    3. Append `resolve-action --action-item <ACT-ID> --notes "<summary>"` in the `--stage batch` or run `resolve-action` directly after resolution completes (no extra confirmation click needed; safe/idempotent if Frappe clearing conditions already auto-cleared the card).
@@ -65,11 +66,13 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `receive-po (--purchase-order <PO> | --purchase-invoice <PI>)`
 - `deposit --repair-order <RO> --amount <CAD> --payment-method <METHOD> [--reference-no <REF>]`
 - `checkout --repair-order <RO> --payment-method <METHOD> --odometer-out <KM> [--paid-amount <AMT>] --confirm`
-- `decode-vin --vin <VIN>`
+- `decode-vin --vin <VIN> [--manufactured-month <MM/YY>]`
+- `search-vehicles [--query <TERM>] [--customer <NAME>] [--model <MODEL>] [--generation <GEN>]`
+- `tesla-generations [--model <MODEL>]`
 - `vehicle-info --vehicle <VEH>`
 - `record-inspection --repair-order <RO> [--odometer-in <KM>] [--color <COLOR>] [--license-plate <PLATE>] [--concern <TEXT>] [--items-json <@file|JSON>]`
 - **Vehicle Display & Intake/Check-In Rules**:
-  - **Intake & check-in require vehicle color and license plate**: Pass `--color` (`--vehicle-color`) and `--license-plate` (`--plate`) on `quote`, `intake-slots`, `create-ro-from-entry`, and `record-inspection` whenever missing on the `Repair Vehicle`.
+  - **Intake & check-in require vehicle color and license plate**: Pass `--color` (`--vehicle-color`) and `--license-plate` (`--plate`) on `quote`, `intake-slots`, `create-ro-from-entry`, and `record-inspection` whenever missing on the `Repair Vehicle` (customer self-serve `/book` appointments may arrive without a license plate, so supply `--license-plate` on check-in / RO conversion).
   - **Human-facing vehicle references**: Refer to vehicles by **year, color, model, and license plate** (e.g., `2022 Pearl White Model 3 (EV-402)`) — never VIN-only. Under limited space, omit VIN first, then year and license plate (keeping color + model longest).
 - `--stage <subcmd ...>` (stage write command(s) for local browser form UI and return clickable `127.0.0.1` URL immediately)
 - `stage-receipt [--id <STAGE_ID>]` (read latest or specific submitted staged receipt; use `@last` / `@last.<field>` in follow-up commands)

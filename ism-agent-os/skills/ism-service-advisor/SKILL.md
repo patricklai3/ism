@@ -14,8 +14,9 @@ description: >-
 
 | User Intent | Direct Command |
 | :--- | :--- |
-| Decode 17-char Tesla VIN | `python -m tools.cli --json decode-vin --vin <VIN>` |
-| Search vehicles by VIN, plate, customer, or model | `python -m tools.cli --json search-vehicles [--query <TERM>] [--customer <NAME>] [--model <MODEL>]` |
+| Decode 17-char Tesla VIN (optional B-pillar date for mid-year gen split) | `python -m tools.cli --json decode-vin --vin <VIN> [--manufactured-month <MM/YY>]` |
+| List canonical Tesla generations & manual mappings | `python -m tools.cli --json tesla-generations [--model <MODEL>]` |
+| Search vehicles by VIN, plate, customer, model, or generation | `python -m tools.cli --json search-vehicles [--query <TERM>] [--customer <NAME>] [--model <MODEL>] [--generation <GEN>]` |
 | Full vehicle profile, owners, history, deferred work | `python -m tools.cli --json vehicle-info --vehicle <VEH>` |
 | Link co-owner or fleet contact to vehicle | `python -m tools.cli --json link-vehicle-customer --vehicle <VEH> --customer <CUST> [--primary] [--relationship <REL>]` |
 | Create Draft Estimate Repair Order | `python -m tools.cli --json quote --customer <NAME> --vehicle <VEH> [--color <COLOR>] [--license-plate <PLATE>] [--service "Title::0.5"] [--parts-json @parts.json] [--notes <TEXT>] [--phone <NUM>] [--email <ADDR>] [--odometer-in <KM>]` |

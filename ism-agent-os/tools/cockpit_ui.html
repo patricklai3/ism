@@ -467,17 +467,18 @@
   .job-sub { font-size: 0.64rem; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .veh-info { display: inline-flex; flex-wrap: nowrap; gap: 4px; align-items: baseline; max-width: 100%; overflow: hidden; }
   .veh-color, .veh-model { font-weight: 600; }
+  .veh-gen { font-size: 0.66rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 5px; white-space: nowrap; }
   .veh-plate { font-family: var(--mono); opacity: 0.9; }
   .veh-vin { font-family: var(--mono); color: var(--muted); }
   .action-card { container-type: inline-size; }
   @container (max-width: 240px) {
-    .veh-vin { display: none; }
+    .veh-vin, .veh-gen { display: none; }
   }
   @container (max-width: 150px) {
     .veh-year, .veh-plate { display: none; }
   }
   @media (max-width: 1200px) {
-    .veh-vin { display: none; }
+    .veh-vin, .veh-gen { display: none; }
   }
   @media (max-width: 720px) {
     .veh-year, .veh-plate { display: none; }
@@ -675,6 +676,7 @@
     if (vi.model_year) parts.push('<span class="veh-year">' + esc(vi.model_year) + '</span>');
     if (vi.color) parts.push('<span class="veh-color">' + esc(vi.color) + '</span>');
     if (vi.model) parts.push('<span class="veh-model">' + esc(vi.model) + '</span>');
+    if (vi.vehicle_generation) parts.push('<span class="veh-gen">' + esc(vi.vehicle_generation) + '</span>');
     if (vi.license_plate) parts.push('<span class="veh-plate">· ' + esc(vi.license_plate) + '</span>');
     if (vi.vin) parts.push('<span class="veh-vin">· ' + esc(vi.vin) + '</span>');
     if (!parts.length) {

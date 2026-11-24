@@ -21,6 +21,7 @@ READ_ONLY_COMMANDS = frozenset({
 	"check-stock",
 	"alternates",
 	"fetch-tesla",
+	"tesla-generations",
 	"price-part",
 	"decode-vin",
 	"search-vehicles",
@@ -457,12 +458,12 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	},
 	"import-tesla": {
 		"target": "ism.api.agent.import_tesla_procedure -> Service Package / Repair Order",
-		"fields": ("url", "data_json", "title", "code", "hours", "model", "parts_json", "repair_order", "on_conflict", "force", "side", "supplement", "notes"),
+		"fields": ("url", "data_json", "title", "code", "hours", "model", "generation", "parts_json", "repair_order", "on_conflict", "force", "side", "supplement", "notes"),
 		"custom": _validate_import_tesla,
 	},
 	"ingest-tesla": {
 		"target": "TeslaManualParser.ingest_from_url -> Service Package / Repair Order",
-		"fields": ("url", "model", "repair_order", "on_conflict", "force", "side"),
+		"fields": ("url", "model", "generation", "repair_order", "on_conflict", "force", "side"),
 		"required": (("url", "url"),),
 	},
 	"link-vehicle-customer": {
@@ -779,6 +780,7 @@ STAGE_FIELD_HINTS: dict[str, dict[str, Any]] = {
 	"data_json": {"type": "json", "label": "Data JSON", "placeholder": "{}"},
 	"code": {"type": "text", "label": "Correction Code"},
 	"model": {"type": "text", "label": "Vehicle Model"},
+	"generation": {"type": "text", "label": "Vehicle Generation", "placeholder": "e.g. Model 3 (2017-2023)"},
 	"on_conflict": {"type": "select", "label": "On Conflict", "choices": ["skip", "overwrite", "add", "error"]},
 	"force": {"type": "bool", "label": "Force"},
 	"side": {"type": "select", "label": "Side", "choices": ["", "LH", "RH", "Both"]},

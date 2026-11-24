@@ -1967,6 +1967,7 @@ class TestCli(unittest.TestCase):
 
 	def test_cli_generation_and_manufactured_month_flags(self) -> None:
 		from tools.cli import main as cli_main
+		from tools.cli_validation import READ_ONLY_COMMANDS, STAGE_FIELD_HINTS, WRITE_COMMAND_META
 
 		fake_client = MagicMock()
 		fake_client.__enter__.return_value = fake_client
@@ -1974,6 +1975,7 @@ class TestCli(unittest.TestCase):
 		fake_client.decode_vehicle_vin.return_value = {"success": True, "data": {}}
 		fake_client.search_vehicles.return_value = {"success": True, "data": {"vehicles": []}}
 		fake_client.import_tesla_procedure.return_value = {"success": True, "data": {}}
+		fake_client.get_vehicle_generation_catalog.return_value = {"Model 3": []}
 
 		with patch("tools.cli.IsmAgentClient", return_value=fake_client):
 			cli_main(["decode-vin", "--vin", "5YJSA1E50MF000123", "--manufactured-month", "01/21"])
@@ -1998,6 +2000,41 @@ class TestCli(unittest.TestCase):
 				fake_client.import_tesla_procedure.call_args.kwargs["applicable_generation"],
 				"Model 3 Jan 2024",
 			)
+
+			cli_main(["tesla-generations", "--model", "Model 3"])
+			self.assertEqual(fake_client.get_vehicle_generation_catalog.call_args.kwargs["model"], "Model 3")
+
+		# Client method routes to ism.api.tesla.get_vehicle_generation_catalog
+		client = IsmAgentClient(IsmConfig(url="http://localhost:8000", api_key="k", api_secret="s"))
+		with patch.object(client, "call_method", return_value={"Model Y": []}) as mock_call:
+			client.get_vehicle_generation_catalog(model="Model Y")
+		mock_call.assert_called_once_with("ism.api.tesla.get_vehicle_generation_catalog", {"model": "Model Y"})
+
+		# Read-only classification & dry-run / staged form schema include generation
+		self.assertIn("tesla-generations", READ_ONLY_COMMANDS)
+		self.assertIn("generation", WRITE_COMMAND_META["import-tesla"]["fields"])
+		self.assertIn("generation", WRITE_COMMAND_META["ingest-tesla"]["fields"])
+		self.assertIn("generation", STAGE_FIELD_HINTS)
+
+		from contextlib import redirect_stdout
+
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = cli_main([
+				"--json",
+				"--dry-run",
+				"import-tesla",
+				"--title",
+				"Cabin Air Filter",
+				"--model",
+				"Model 3",
+				"--generation",
+				"Model 3 Jan 2024",
+			])
+		self.assertEqual(rc, 0)
+		payload = json.loads(out.getvalue())
+		self.assertEqual(payload["commands"][0]["payload"]["generation"], "Model 3 Jan 2024")
+		self.assertIn("Model 3 Jan 2024", payload["summary_card"])
 
 
 
@@ -2108,7 +2145,17 @@ class VehicleDetailsPassThroughTests(unittest.TestCase):
 	def test_cockpit_ui_renders_progressive_vehicle_info(self) -> None:
 		html_path = Path(__file__).resolve().parents[1] / "tools" / "cockpit_ui.html"
 		html = html_path.read_text(encoding="utf-8")
-		for token in ("renderVehicleHtml", "veh-vin", "veh-year", "veh-plate", "veh-color", "veh-model", "vehicle_info"):
+		for token in (
+			"renderVehicleHtml",
+			"veh-vin",
+			"veh-gen",
+			"veh-year",
+			"veh-plate",
+			"veh-color",
+			"veh-model",
+			"vehicle_info",
+			"vehicle_generation",
+		):
 			self.assertIn(token, html)
 
 

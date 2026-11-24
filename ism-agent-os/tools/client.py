@@ -415,6 +415,13 @@ class IsmAgentClient:
 			advisor_notes=advisor_notes,
 		)
 
+	def get_vehicle_generation_catalog(self, model: Optional[str] = None) -> Any:
+		"""Return canonical Tesla generation metadata for a specific model or all models."""
+		return self.call_method(
+			"ism.api.tesla.get_vehicle_generation_catalog",
+			_drop_none({"model": model}),
+		)
+
 	def get_shop_floor_status(self, date: Optional[str] = None, include_summary: bool = False) -> dict[str, Any]:
 		"""Retrieve active bays, on-duty technicians, appointments, and ROs (optional date: ISO YYYY-MM-DD)."""
 		return self._call_agent(

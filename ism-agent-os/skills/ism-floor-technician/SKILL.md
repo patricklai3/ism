@@ -34,6 +34,7 @@ description: >-
 1. **Zero `--help` or redundant pre-checks**: Use the exact flags in the table above on turn 1. Run `job-status --action start` directly when asked to start an RO; do not run `--help`, `status`, `estimate`, or `get-doc` first (and never run `estimate` before `job-status --action complete` or `toggle-service`). The server enforces the authorization lock—if rejected because `approval_status` is not `Approved` or `Partially Approved`, stop immediately, notify the Service Advisor, and run `send-approval` only if instructed.
 2. **Batch multi-step floor updates**: Use `python -m tools.cli --json batch --cmd "..." --cmd "..."` (or `--file @cmds.json`) instead of PowerShell stdin pipes for chained actions (e.g., `job-status --action hold` + `check-stock`, or `toggle-service --repair-order <RO> --all` + `job-status --repair-order <RO> --action complete`). Pass `--all` on `toggle-service` to mark all active/approved rows complete without looking up row IDs first, or pass multiple rows to `toggle-service --service-row <R1> <R2>` in one call.
 3. **Human confirmation for checkout**: Never run `checkout --confirm` without explicit human confirmation.
+4. **Exception-only `/board` vs `/tech`**: Technicians work assigned jobs in `/tech`; use `board-post` only for floor exceptions or direct technician communication (routine state transitions are no longer echoed onto `/board`).
 
 ## Required Fields, `--stage` & Pre-Dispatch Callback
 

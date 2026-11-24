@@ -455,6 +455,9 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 	p_ft.add_argument("--repair-order")
 	p_ft.add_argument("--vehicle")
 
+	p_tg = sub.add_parser("tesla-generations", help="List canonical Tesla vehicle generations and service manual mappings")
+	p_tg.add_argument("--model", help="Optional Tesla model filter (e.g. 'Model 3', 'Model Y')")
+
 	p_imp_t = sub.add_parser("import-tesla", help="Create/update Service Package or import procedure onto Repair Order")
 	p_imp_t.add_argument("--title")
 	p_imp_t.add_argument("--code")

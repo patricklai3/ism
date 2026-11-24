@@ -28,8 +28,8 @@ description: >-
 
 ## 2. Ingest Tesla Service Manual Procedures
 
-1. When given a `https://service.tesla.com/...` link, run `python -m tools.cli --json fetch-tesla <url>` (add `--repair-order <RO>` or `--vehicle <VEH>` to check vehicle model/generation compatibility) or `python -m tools.cli --json ingest-tesla <url>` (supports `--repair-order`, `--on-conflict`, `--force`, `--side`) to fetch and import in one step.
-2. If you already have procedure details from scraped text or parsed JSON, run `python -m tools.cli --json import-tesla` with `--title`, `--code`, `--hours`, `--model`, `--parts-json` (or `--url` / `--data-json`), and optional `--repair-order`, `--on-conflict` (`skip`, `overwrite`, `add`, `error`), `--force`, and `--side` (`LH`, `RH`, `Both`).
+1. When given a `https://service.tesla.com/...` link, run `python -m tools.cli --json fetch-tesla <url>` (add `--repair-order <RO>` or `--vehicle <VEH>` to check vehicle model/generation compatibility) or `python -m tools.cli --json ingest-tesla <url>` (supports `--model`, `--generation`, `--repair-order`, `--on-conflict`, `--force`, `--side`) to fetch and import in one step. Run `python -m tools.cli --json tesla-generations [--model <MODEL>]` to inspect canonical Tesla generation names and manual mappings.
+2. If you already have procedure details from scraped text or parsed JSON, run `python -m tools.cli --json import-tesla` with `--title`, `--code`, `--hours`, `--model`, optional `--generation`, `--parts-json` (or `--url` / `--data-json`), and optional `--repair-order`, `--on-conflict` (`skip`, `overwrite`, `add`, `error`), `--force`, and `--side` (`LH`, `RH`, `Both`). `Service Package` records are scoped by `(model, generation)`, so the same package title can coexist across generations and `quote`/`amend-quote` auto-select the matching generation.
 3. Return the created `Service Package` or `Repair Order` link from `urls.desk`.
 
 ## 3. Resolve Deficits and Procure Parts (RO-Linked or Standalone Inventory)
