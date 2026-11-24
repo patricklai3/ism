@@ -1785,5 +1785,120 @@ class VehicleDetailsPassThroughTests(unittest.TestCase):
 		self.assertEqual(mock_client.record_check_in_inspection.call_args.kwargs["license_plate"], "CHK-123")
 
 
+class BinLocationClientAndCliTests(unittest.TestCase):
+	def test_client_bin_methods_and_extended_signatures(self) -> None:
+		client = IsmAgentClient(IsmConfig(url="http://localhost:8000", api_key="k", api_secret="s"))
+		calls: list[tuple[str, dict]] = []
+
+		def fake_call_agent(endpoint: str, include_summary: bool = False, **kwargs):
+			calls.append((endpoint, {"include_summary": include_summary, **kwargs}))
+			return {"success": True, "data": {}}
+
+		with patch.object(client, "_call_agent", side_effect=fake_call_agent):
+			client.list_bin_locations(warehouse="Shop Store - ISM", zone="A", query="A2", include_stock=True)
+			client.create_bin_location("A2-03", warehouse="Shop Store - ISM", zone="A", aisle="2", rack="R1", shelf="03", bin_type="Overflow", description="Upper rack")
+			client.set_item_default_bin("OEM-PART-1", "A2-03")
+			client.set_item_default_bin("OEM-PART-1", None)
+			client.transfer_bin_stock("RCV-01", "A2-03", item_code="OEM-PART-1", qty=2.0, notes="Putaway")
+			client.adjust_bin_stock("receipt", [{"item_code": "OEM-PART-1", "qty": 3}], bin_location="A2-03", reason="Initial count")
+			client.adjust_bin_stock("issue", [{"item_code": "OEM-PART-1", "qty": 1}], bin_location="A2-03", reason="Damaged")
+			client.check_parts_stock(repair_order="RO-1", bin_location="A2-03")
+			client.receive_purchase_order(purchase_order="PO-1", bin_location="RCV-01", bin_allocations={"OEM-PART-1": "A2-03"})
+			client.create_purchase_invoice(purchase_order="PO-1", update_stock=True, bin_location="A2-03")
+
+		self.assertEqual([c[0] for c in calls], [
+			"list_bin_locations",
+			"create_bin_location",
+			"set_item_default_bin",
+			"set_item_default_bin",
+			"transfer_bin_stock",
+			"adjust_bin_stock",
+			"adjust_bin_stock",
+			"check_parts_stock",
+			"receive_purchase_order",
+			"create_purchase_invoice",
+		])
+		self.assertTrue(calls[0][1]["include_stock"])
+		self.assertEqual(calls[1][1]["bin_type"], "Overflow")
+		self.assertEqual(calls[2][1]["bin_location"], "A2-03")
+		self.assertEqual(calls[3][1]["bin_location"], "")
+		self.assertEqual(calls[4][1]["from_bin"], "RCV-01")
+		self.assertEqual(calls[4][1]["to_bin"], "A2-03")
+		self.assertEqual(calls[5][1]["purpose"], "Material Receipt")
+		self.assertEqual(calls[6][1]["purpose"], "Material Issue")
+		self.assertEqual(calls[7][1]["bin_location"], "A2-03")
+		self.assertEqual(calls[8][1]["bin_allocations"], {"OEM-PART-1": "A2-03"})
+		self.assertEqual(calls[9][1]["bin_location"], "A2-03")
+
+	def test_cli_bin_commands_dispatch_and_validation(self) -> None:
+		import argparse
+		from tools.cli_validation import READ_ONLY_COMMANDS, validate_write_command_args
+
+		self.assertIn("bins", READ_ONLY_COMMANDS)
+		parser = cli._build_parser()
+
+		# move-stock: rejects same bin
+		ns_same = parser.parse_args(["move-stock", "--from-bin", "a2-03", "--to-bin", "A2-03", "--item-code", "P1", "--qty", "1"])
+		errs_same = validate_write_command_args(ns_same)
+		self.assertTrue(any("must differ" in e for e in errs_same), errs_same)
+
+		# move-stock: rejects missing items
+		ns_no_items = parser.parse_args(["move-stock", "--from-bin", "RCV-01", "--to-bin", "A2-03"])
+		errs_no_items = validate_write_command_args(ns_no_items)
+		self.assertTrue(any("--items-json" in e for e in errs_no_items), errs_no_items)
+
+		# move-stock: rejects non-positive qty
+		ns_bad_qty = parser.parse_args(["move-stock", "--from-bin", "RCV-01", "--to-bin", "A2-03", "--item-code", "P1", "--qty", "0"])
+		errs_bad_qty = validate_write_command_args(ns_bad_qty)
+		self.assertTrue(any("--qty" in e for e in errs_bad_qty), errs_bad_qty)
+
+		# adjust-stock: requires purpose and items-json
+		ns_adj_missing = argparse.Namespace(
+			command="adjust-stock",
+			purpose=None,
+			items_json=None,
+			bin_location=None,
+			warehouse=None,
+			reason=None,
+		)
+		errs_adj = validate_write_command_args(ns_adj_missing)
+		self.assertIn("--purpose", errs_adj)
+		self.assertIn("--items-json", errs_adj)
+
+		mock_client = MagicMock()
+		for method in (
+			"list_bin_locations",
+			"create_bin_location",
+			"set_item_default_bin",
+			"transfer_bin_stock",
+			"adjust_bin_stock",
+			"check_parts_stock",
+			"receive_purchase_order",
+			"create_purchase_invoice",
+		):
+			getattr(mock_client, method).return_value = {"success": True, "data": {}}
+		mock_client.__enter__.return_value = mock_client
+		mock_client.__exit__.return_value = None
+
+		with patch("tools.cli.IsmAgentClient", return_value=mock_client):
+			self.assertEqual(cli.main(["--json", "bins", "--zone", "A", "--include-stock"]), 0)
+			self.assertEqual(cli.main(["--json", "create-bin", "--bin-code", "A2-03", "--bin-type", "Standard"]), 0)
+			self.assertEqual(cli.main(["--json", "assign-bin", "--item-code", "P1", "--bin-location", "A2-03"]), 0)
+			self.assertEqual(cli.main(["--json", "move-stock", "--from-bin", "RCV-01", "--to-bin", "A2-03", "--item-code", "P1", "--qty", "2"]), 0)
+			self.assertEqual(cli.main(["--json", "adjust-stock", "--purpose", "receipt", "--items-json", '[{"item_code":"P1","qty":1}]', "--bin-location", "A2-03"]), 0)
+			self.assertEqual(cli.main(["--json", "check-stock", "--repair-order", "RO-1", "--bin-location", "A2-03"]), 0)
+			self.assertEqual(cli.main(["--json", "receive-po", "--purchase-order", "PO-1", "--bin-location", "RCV-01", "--bin-allocations-json", '{"P1":"A2-03"}']), 0)
+			self.assertEqual(cli.main(["--json", "purchase-invoice", "--purchase-order", "PO-1", "--update-stock", "--bin-location", "A2-03"]), 0)
+
+		self.assertTrue(mock_client.list_bin_locations.call_args.kwargs["include_stock"])
+		self.assertEqual(mock_client.create_bin_location.call_args.kwargs["bin_code"], "A2-03")
+		self.assertEqual(mock_client.set_item_default_bin.call_args.kwargs["bin_location"], "A2-03")
+		self.assertEqual(mock_client.transfer_bin_stock.call_args.kwargs["qty"], 2.0)
+		self.assertEqual(mock_client.adjust_bin_stock.call_args.kwargs["purpose"], "receipt")
+		self.assertEqual(mock_client.check_parts_stock.call_args.kwargs["bin_location"], "A2-03")
+		self.assertEqual(mock_client.receive_purchase_order.call_args.kwargs["bin_allocations"], {"P1": "A2-03"})
+		self.assertEqual(mock_client.create_purchase_invoice.call_args.kwargs["bin_location"], "A2-03")
+
+
 if __name__ == "__main__":
 	unittest.main()

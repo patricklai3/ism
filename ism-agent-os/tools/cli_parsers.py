@@ -363,6 +363,53 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 	p_stk.add_argument("--repair-order")
 	p_stk.add_argument("--items-json", help="JSON array of item dicts/codes (or @file.json)")
 	p_stk.add_argument("--company")
+	p_stk.add_argument("--bin-location", help="Filter or annotate stock for a specific Storage Bin")
+
+	p_bins = sub.add_parser("bins", help="List Storage Bin locations and optional live stock balances")
+	p_bins.add_argument("--warehouse", help="Filter by Warehouse")
+	p_bins.add_argument("--zone", help="Filter by bin zone")
+	p_bins.add_argument("--query", help="Search bin code, zone, or description")
+	p_bins.add_argument("--include-stock", action="store_true", help="Include live per-bin stock summary")
+
+	p_cbin = sub.add_parser("create-bin", help="Create a new Storage Bin master record")
+	p_cbin.add_argument("--bin-code", required=True, help="Unique Storage Bin code (e.g. A2-03)")
+	p_cbin.add_argument("--warehouse", help="Target Warehouse (defaults to shop default warehouse)")
+	p_cbin.add_argument("--zone", help="Optional zone label")
+	p_cbin.add_argument("--aisle", help="Optional aisle label")
+	p_cbin.add_argument("--rack", help="Optional rack label")
+	p_cbin.add_argument("--shelf", help="Optional shelf label")
+	p_cbin.add_argument(
+		"--bin-type",
+		default="Standard",
+		choices=("Standard", "Overflow", "Receiving", "Bulk", "Hazmat"),
+		help="Storage Bin classification",
+	)
+	p_cbin.add_argument("--description", help="Optional bin description")
+
+	p_abin = sub.add_parser("assign-bin", help="Set or clear an Item's default Home Bin location")
+	p_abin.add_argument("--item-code", required=True, help="Item code to update")
+	p_abin.add_argument("--bin-location", help="Target Storage Bin code (omit or pass empty string to clear)")
+
+	p_mbin = sub.add_parser("move-stock", help="Transfer stock between two Storage Bins in the same warehouse")
+	p_mbin.add_argument("--from-bin", required=True, help="Source Storage Bin code")
+	p_mbin.add_argument("--to-bin", required=True, help="Destination Storage Bin code")
+	p_mbin.add_argument("--item-code", help="Single Item code to transfer")
+	p_mbin.add_argument("--qty", type=float, help="Quantity to transfer (when using --item-code)")
+	p_mbin.add_argument("--items-json", help='JSON array [{"item_code":"...","qty":1}] (or @file.json)')
+	p_mbin.add_argument("--warehouse", help="Target Warehouse (defaults to shop default warehouse)")
+	p_mbin.add_argument("--notes", help="Optional transfer notes")
+
+	p_adj = sub.add_parser("adjust-stock", help="Post a bin-attributed Material Receipt or Material Issue Stock Entry")
+	p_adj.add_argument(
+		"--purpose",
+		required=True,
+		choices=("receipt", "issue", "Material Receipt", "Material Issue"),
+		help="Adjustment purpose: receipt (Material Receipt) or issue (Material Issue)",
+	)
+	p_adj.add_argument("--items-json", required=True, help='JSON array [{"item_code":"...","qty":1}] (or @file.json)')
+	p_adj.add_argument("--bin-location", help="Default Storage Bin for items in --items-json")
+	p_adj.add_argument("--warehouse", help="Target Warehouse (defaults to shop default warehouse)")
+	p_adj.add_argument("--reason", help="Reason / remarks for the stock adjustment")
 
 	p_po = sub.add_parser("procure", help="Create and submit POs/RFQs (standalone inventory or linked to an RO)")
 	p_po.add_argument("--repair-order")
@@ -379,6 +426,8 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 	p_rcv.add_argument("--purchase-order")
 	p_rcv.add_argument("--purchase-invoice")
 	p_rcv.add_argument("--submit-po", action="store_true", help="Deprecated no-op alias (submitting is now the default)")
+	p_rcv.add_argument("--bin-location", help="Target Storage Bin for all received items")
+	p_rcv.add_argument("--bin-allocations-json", help="JSON mapping {item_code: bin_location} or list of allocations (or @file.json)")
 
 	p_pay = sub.add_parser("pay-purchase", help="Submit a supplier Payment Entry against a Purchase Order or Purchase Invoice")
 	p_pay.add_argument("--purchase-order")
@@ -397,6 +446,7 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 	p_pinv.add_argument("--bill-date")
 	p_pinv.add_argument("--company")
 	p_pinv.add_argument("--no-attach-advances", action="store_true", help="Do not pull advance payments from linked Purchase Order")
+	p_pinv.add_argument("--bin-location", help="Target Storage Bin when --update-stock is set")
 
 	p_parts = sub.add_parser("ingest-parts", help="Sanitize and import supplier catalog file as structured JSON")
 	p_parts.add_argument("file")

@@ -7,12 +7,12 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `skills/ism-service-advisor/SKILL.md` — intake, `quote`, `amend-quote`, `estimate`, `send-approval`, `decode-vin`, `vehicle-info`
 - `skills/ism-shop-dispatcher/SKILL.md` — `status`, `tech-overview`, `slots`, `intake-slots`, `book`, `reschedule`, `unscheduled`
 - `skills/ism-floor-technician/SKILL.md` — `job-status`, `toggle-service`, inspections, `add-supplement`, `checkout`, `action-cards`, `board-post`
-- `skills/ism-parts-specialist/SKILL.md` — `check-stock`, `alternates`, `price-part`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, Tesla & catalog ingestion
+- `skills/ism-parts-specialist/SKILL.md` — `check-stock`, `bins`, `create-bin`, `assign-bin`, `move-stock`, `adjust-stock`, `alternates`, `price-part`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, Tesla & catalog ingestion
 - `skills/ism-shop-executive/SKILL.md` — `cockpit`, `pnl-digest`, `publish-score`, `sync-action`, `list-docs`, `action-items`, `action-cards`, `board-threads`
 
 ## Operational Invariants
 
-1. **Pre-Dispatch Summary (`--dry-run`) for ALL domain writes**: Before ANY domain write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `deposit`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `sync-action`, `publish-score`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `board-post`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing domain writes):
+1. **Pre-Dispatch Summary (`--dry-run`) for ALL domain writes**: Before ANY domain write CLI command (`quote`, `intake-slots`, `create-ro-from-entry`, `amend-quote`, `send-approval`, `book`, `reschedule`, `appointment-status`, `job-status`, `deposit`, `checkout`, `toggle-service`, `add-supplement`, `duplicate-side`, `add-deferred`, `create-action`, `sync-action`, `publish-score`, `apply-inspection`, `record-inspection`, `procure`, `pay-purchase`, `purchase-invoice`, `receive-po`, `create-bin`, `assign-bin`, `move-stock`, `adjust-stock`, `ingest-parts`, `import-tesla`, `ingest-tesla`, `link-vehicle-customer`, `board-post`, `create-doc`, `update-doc`, `call-method`, or any `batch` containing domain writes):
    - NEVER fabricate, guess, or substitute missing required fields (e.g. never invent `odometer_in=10000` or default `payment_method`).
    - **Direct housekeeping (`resolve-action`)**: `resolve-action --action-item <ACT-ID> [--notes <TEXT>]` is directly executable without a separate human confirmation click (still validates `--action-item`) and is safe/idempotent if Frappe clearing conditions already cleared the card.
    - **Required Pre-Dispatch Callback (`--dry-run`)**: Run `python -m tools.cli --dry-run <subcmd ...>` (or `--dry-run batch --cmd "..." --cmd "..."`), output `### ISM Pre-Dispatch Summary` (marking any missing required fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing the live write command.
@@ -26,7 +26,7 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 6. **Enforce the authorization lock**: Never run `job-status --action start` unless `approval_status` is `Approved` or `Partially Approved`. Never run `job-status --action complete` without `--odometer-out`.
 7. **Delegate labor & tax math to Frappe; price parts via `ism-agent-os`**: Never calculate labor totals, Fenton-Wilkinson durations, or 13% Ontario HST manually. Calculate customer part selling prices exclusively in `ism-agent-os` via `python -m tools.cli --json price-part` or `ingest-parts` (per `rules/PARTS_PRICING.md` and `rules/parts_pricing.json`), and keep Tesla OEM comparison details out of customer-facing quote/invoice text.
 8. **Submit submittable documents after confirmation**: Quotes (`Repair Order`) start in `Draft Estimate` until customer approval, whereas all Frappe submittable documents (`Purchase Order`, `Request for Quotation`, `Purchase Receipt`, `Purchase Invoice`, `Payment Entry`, `Sales Invoice`) are submitted immediately upon live execution after `### ISM Pre-Dispatch Summary` confirmation. Never leave submittable documents in Draft or ask the user whether to keep them in Draft vs Submit unless they explicitly ask for `--draft`. Never run `checkout --confirm` without `--payment-method`, `--odometer-out`, and explicit human confirmation.
-9. **Use curated CLI wrappers first & show deep links**: Prefer curated CLI subcommands over generic REST calls. Include Desk, Calendar, Print, or Approval links from `urls` in replies. Pass `--summary` only when explicitly requested.
+9. **Use curated CLI wrappers first & show deep links**: Prefer curated CLI subcommands over generic REST calls (use `move-stock` / `adjust-stock` instead of raw `create-doc --doctype "Stock Entry"`). Include Desk, Calendar, Print, or Approval links from `urls` in replies. Pass `--summary` only when explicitly requested.
 10. **Addressing Shop Board Action Cards (Exception-Only Board)**:
    - `/board` (`board-threads`, `board-thread`, `action-cards`) is **exception-only**: routine system events (portal approvals, PIN updates, Square payments, self-serve bookings/reschedules, and parts-ready notices) live in `/cockpit` and `action-items`, not on `/board` timelines.
    1. Fetch 1 or N cards plus RO summary, capture transcript, media links, and clearing conditions in one call: `python -m tools.cli --json action-cards --action-item <ACT-1> [<ACT-2> ...]` (or `--repair-order <RO>`).
@@ -57,12 +57,18 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `amend-quote --repair-order <RO> [--add-service "Title::0.3"] [--remove-indices-json @indices.json] [--notes <TEXT>]`
 - `send-approval --repair-order <RO> [--medium sms|email|link] [--phone <NUM>] [--recipient <ADDR>]`
 - `job-status --repair-order <RO> --action <start|hold|park|complete> [--odometer-out <KM>] [--notes <TEXT>]`
+- `check-stock [--repair-order <RO>] [--items-json <@file|JSON>] [--company <CO>] [--bin-location <BIN>]`
+- `bins [--warehouse <WH>] [--zone <ZONE>] [--query <TEXT>] [--include-stock]`
+- `create-bin --bin-code <CODE> [--warehouse <WH>] [--zone <Z>] [--aisle <A>] [--rack <R>] [--shelf <S>] [--bin-type <Standard|Overflow|Receiving|Bulk|Hazmat>] [--description <TEXT>]`
+- `assign-bin --item-code <ITEM> [--bin-location <BIN>]`
+- `move-stock --from-bin <BIN> --to-bin <BIN> (--item-code <ITEM> --qty <N> | --items-json <@file|JSON>) [--warehouse <WH>] [--notes <TEXT>]`
+- `adjust-stock --purpose <receipt|issue> --items-json <@file|JSON> [--bin-location <BIN>] [--warehouse <WH>] [--reason <TEXT>]`
 - `procure [--repair-order <RO>] --parts-json <@file|JSON> [--company <CO>] [--payment-method <METHOD>] [--paid-amount <AMT>] [--reference-no <REF>] [--reference-date <YYYY-MM-DD>] [--draft]`
 - `ingest-parts <file> --service-package <PKG> [--supplier <SUP>] [--source <OEM|Aftermarket>] [--condition <New|Used|Reconditioned>] [--tesla-price <CAD>] [--preserve-rate] [--sync-rates]`
 - `price-part [--tesla-price <CAD>] [--cost <CAD>] [--source <OEM|Aftermarket>] [--condition <New|Used|Reconditioned>] [--part-number <NO>] [--part-name <NAME>] [--override-rate <CAD>]`
 - `pay-purchase (--purchase-order <PO> | --purchase-invoice <PI>) --payment-method <METHOD> [--paid-amount <AMT>] [--reference-no <REF>] [--reference-date <YYYY-MM-DD>]`
-- `purchase-invoice (--purchase-order <PO> | --supplier <SUP> --parts-json <@file|JSON>) [--update-stock] [--bill-no <NO>] [--bill-date <YYYY-MM-DD>]`
-- `receive-po (--purchase-order <PO> | --purchase-invoice <PI>)`
+- `purchase-invoice (--purchase-order <PO> | --supplier <SUP> --parts-json <@file|JSON>) [--update-stock] [--bin-location <BIN>] [--bill-no <NO>] [--bill-date <YYYY-MM-DD>]`
+- `receive-po (--purchase-order <PO> | --purchase-invoice <PI>) [--bin-location <BIN>] [--bin-allocations-json <@file|JSON>]`
 - `deposit --repair-order <RO> --amount <CAD> --payment-method <METHOD> [--reference-no <REF>]`
 - `checkout --repair-order <RO> --payment-method <METHOD> --odometer-out <KM> [--paid-amount <AMT>] --confirm`
 - `decode-vin --vin <VIN> [--manufactured-month <MM/YY>]`
