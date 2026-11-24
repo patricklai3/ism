@@ -58,6 +58,8 @@ def _build_intake_kwargs(a: argparse.Namespace) -> dict[str, Any]:
 		"customer_email": a.email,
 		"company": a.company,
 		"odometer_in": a.odometer_in,
+		"vehicle_color": getattr(a, "vehicle_color", None),
+		"license_plate": getattr(a, "license_plate", None),
 	}
 
 
@@ -772,6 +774,8 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 	"create-ro-from-entry": lambda a, c, s: c.create_ro_from_appointment(
 		schedule_entry=a.schedule_entry,
 		odometer_in=a.odometer_in,
+		vehicle_color=getattr(a, "vehicle_color", None),
+		license_plate=getattr(a, "license_plate", None),
 		include_summary=s,
 	),
 	"estimate": lambda a, c, s: c.estimate_duration(
@@ -1007,6 +1011,8 @@ _COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace, IsmAgentClient, bool]
 		customer_concern=a.concern,
 		template_name=a.template,
 		auto_apply_template=bool(a.auto_apply),
+		vehicle_color=getattr(a, "vehicle_color", None),
+		license_plate=getattr(a, "license_plate", None),
 		include_summary=s,
 	),
 	"list-docs": lambda a, c, _s: c.list_documents(

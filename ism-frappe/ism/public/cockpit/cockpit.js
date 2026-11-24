@@ -490,6 +490,20 @@ function renderActionCard(it) {
     ? "cockpit-action-card cockpit-action-card--suppressed"
     : `cockpit-action-card cockpit-action-card--${esc(it.priority || "Medium")}`;
 
+  const vehHtml =
+    it.vehicle_info && window.ISMVehicleDisplay
+      ? window.ISMVehicleDisplay.renderHtml(it.vehicle_info, {
+          showVin: true,
+          fallback: "",
+        })
+      : "";
+  const vehText =
+    it.vehicle_info && window.ISMVehicleDisplay
+      ? window.ISMVehicleDisplay.formatText(it.vehicle_info, { fallback: "" })
+      : "";
+  const showSubtitle =
+    Boolean(it.subtitle) && (!vehText || String(it.subtitle).trim() !== vehText);
+
   return (
     `<article class="${cardClass}">` +
     `<div class="cockpit-card-top">` +
@@ -497,7 +511,8 @@ function renderActionCard(it) {
     `<span class="cockpit-card-age">${esc(it.age_display || "")}</span>` +
     `</div>` +
     `<div class="cockpit-card-title">${esc(it.title || it.dedup_key || "Action Item")}</div>` +
-    (it.subtitle ? `<div class="cockpit-card-sub">${esc(it.subtitle)}</div>` : "") +
+    (vehHtml ? `<div class="cockpit-card-vehicle">${vehHtml}</div>` : "") +
+    (showSubtitle ? `<div class="cockpit-card-sub">${esc(it.subtitle)}</div>` : "") +
     (clearingHint ? `<div class="cockpit-card-sub">Auto-clears: ${esc(clearingHint)}</div>` : "") +
     (boardBadges ? `<div class="cockpit-card-board-meta">${boardBadges}</div>` : "") +
     `<div class="cockpit-card-foot">` +
@@ -678,9 +693,25 @@ function renderLaneBlocksHtml(blocks, swim) {
           ? `<span class="cockpit-job-badge">${actionCount} Action${actionCount > 1 ? "s" : ""}</span>`
           : "";
 
-      const tooltip = `${b.label || ""} — ${b.sublabel || ""} [${b.status || ""}]${
-        b.start_clock ? ` · Internal T: ${b.start_clock}–${b.end_clock || ""}` : ""
-      }`;
+      const vehTooltip =
+        b.vehicle_info && window.ISMVehicleDisplay
+          ? window.ISMVehicleDisplay.formatTooltip(b.vehicle_info)
+          : "";
+      const tooltipParts = [
+        b.label || "",
+        vehTooltip || b.sublabel || "",
+        b.status ? `[${b.status}]` : "",
+        b.start_clock ? `Internal T: ${b.start_clock}–${b.end_clock || ""}` : "",
+      ].filter(Boolean);
+      const tooltip = tooltipParts.join(" · ");
+
+      const blockVehHtml =
+        b.vehicle_info && window.ISMVehicleDisplay
+          ? window.ISMVehicleDisplay.renderHtml(b.vehicle_info, {
+              showVin: false,
+              fallback: "",
+            })
+          : "";
 
       return (
         `<${tag}${attrs} class="${blockClasses}" ` +
@@ -690,7 +721,7 @@ function renderLaneBlocksHtml(blocks, swim) {
         `<span class="cockpit-job-title">${esc(b.label || b.name || "Job")}</span>` +
         badgeHtml +
         `</div>` +
-        `<div class="cockpit-job-sub">${esc(b.sublabel || "")}</div>` +
+        `<div class="cockpit-job-sub">${blockVehHtml || esc(b.sublabel || "")}</div>` +
         `</${tag}>`
       );
     })
@@ -820,7 +851,10 @@ function renderSwimlane(view) {
               r.board_url || r.desk_url || ""
             );
             const cls = r.is_dead_lift ? "cockpit-pill--red" : "cockpit-pill--amber";
-            const label = `${r.name || "RO"} (${r.status || ""})`;
+            const vehText = r.vehicle_compact_display || r.vehicle_display || "";
+            const label = vehText
+              ? `${r.name || "RO"} · ${vehText} (${r.status || ""})`
+              : `${r.name || "RO"} (${r.status || ""})`;
             return href
               ? `<a class="cockpit-pill ${cls}" href="${esc(href)}">${esc(label)} &rarr;</a>`
               : `<span class="cockpit-pill ${cls}">${esc(label)}</span>`;
@@ -851,12 +885,18 @@ function renderSwimlane(view) {
     const pills = [
       ...fromQueue.map((it) => {
         const roId = it.reference_name || it.id;
+        const vehText = it.vehicle_compact_display || it.vehicle_display || "";
+        const pillText = vehText ? `${roId} · ${vehText}` : roId;
         const href = buildBoardThreadHref(it.thread_key || (roId ? `RO:${roId}` : null), it.board_url);
-        return `<a class="cockpit-pill cockpit-pill--sky" href="${esc(href)}">${esc(roId)} &rarr;</a>`;
+        return `<a class="cockpit-pill cockpit-pill--sky" href="${esc(href)}">${esc(pillText)} &rarr;</a>`;
       }),
       ...extraRos.map((r) => {
+        const vehText = r.vehicle_compact_display || r.vehicle_display || "";
+        const pillText = vehText
+          ? `${r.name} · ${vehText} (${Number(r.unscheduled_approved_services)} svc)`
+          : `${r.name} (${Number(r.unscheduled_approved_services)} svc)`;
         const href = buildBoardThreadHref(r.thread_key || `RO:${r.name}`, r.board_url);
-        return `<a class="cockpit-pill cockpit-pill--sky" href="${esc(href)}">${esc(r.name)} (${Number(r.unscheduled_approved_services)} svc) &rarr;</a>`;
+        return `<a class="cockpit-pill cockpit-pill--sky" href="${esc(href)}">${esc(pillText)} &rarr;</a>`;
       }),
     ];
 

@@ -1966,5 +1966,116 @@ class TestCli(unittest.TestCase):
 				srv.server_close()
 
 
+class VehicleDetailsPassThroughTests(unittest.TestCase):
+	def setUp(self) -> None:
+		self.client = IsmAgentClient(IsmConfig(url="http://localhost:8000", api_key="k", api_secret="s"))
+
+	def test_client_forwards_color_and_plate_when_provided(self) -> None:
+		with patch.object(self.client, "_call_agent", return_value={"success": True}) as mock_call:
+			self.client.create_quote(
+				customer_name="Jane",
+				vehicle_identifier="VEH-1",
+				services=["Brake Check::0.5"],
+				odometer_in=42000,
+				vehicle_color="Pearl White",
+				license_plate="EV-402",
+			)
+			self.client.intake_and_find_slots(
+				customer_name="Jane",
+				vehicle_identifier="VEH-1",
+				services=["Brake Check::0.5"],
+				odometer_in=42000,
+				vehicle_color="Deep Blue",
+				license_plate="TESLA-9",
+			)
+			self.client.create_ro_from_appointment(
+				schedule_entry="SE-0001",
+				odometer_in=42100,
+				vehicle_color="Midnight Silver",
+				license_plate="EV-999",
+			)
+			self.client.record_check_in_inspection(
+				repair_order="RO-0001",
+				odometer_in=42150,
+				vehicle_color="Red Multi-Coat",
+				license_plate="CHK-123",
+			)
+
+		self.assertEqual(mock_call.call_count, 4)
+		calls = [c for c in mock_call.call_args_list]
+		self.assertEqual(calls[0].args[0], "create_quote")
+		self.assertEqual(calls[0].kwargs["vehicle_color"], "Pearl White")
+		self.assertEqual(calls[0].kwargs["license_plate"], "EV-402")
+		self.assertEqual(calls[1].args[0], "intake_and_find_slots")
+		self.assertEqual(calls[1].kwargs["vehicle_color"], "Deep Blue")
+		self.assertEqual(calls[1].kwargs["license_plate"], "TESLA-9")
+		self.assertEqual(calls[2].args[0], "create_ro_from_appointment")
+		self.assertEqual(calls[2].kwargs["vehicle_color"], "Midnight Silver")
+		self.assertEqual(calls[2].kwargs["license_plate"], "EV-999")
+		self.assertEqual(calls[3].args[0], "record_check_in_inspection")
+		self.assertEqual(calls[3].kwargs["vehicle_color"], "Red Multi-Coat")
+		self.assertEqual(calls[3].kwargs["license_plate"], "CHK-123")
+
+	def test_cli_passes_color_and_plate_flags_across_intake_and_checkin(self) -> None:
+		mock_client = MagicMock()
+		mock_client.__enter__.return_value = mock_client
+		mock_client.__exit__.return_value = None
+		mock_client.create_quote.return_value = {"success": True}
+		mock_client.intake_and_find_slots.return_value = {"success": True}
+		mock_client.create_ro_from_appointment.return_value = {"success": True}
+		mock_client.record_check_in_inspection.return_value = {"success": True}
+
+		with patch("tools.cli.IsmAgentClient", return_value=mock_client):
+			rc_q = cli.main([
+				"--json", "quote",
+				"--customer", "Jane",
+				"--vehicle", "VEH-1",
+				"--odometer-in", "42000",
+				"--color", "Pearl White",
+				"--license-plate", "EV-402",
+				"--service", "Tire Rotation::0.5",
+			])
+			rc_is = cli.main([
+				"--json", "intake-slots",
+				"--customer", "Jane",
+				"--vehicle", "VEH-1",
+				"--odometer-in", "42000",
+				"--vehicle-color", "Solid Black",
+				"--plate", "EV-777",
+				"--notes", "Alignment check",
+			])
+			rc_cro = cli.main([
+				"--json", "create-ro-from-entry",
+				"--schedule-entry", "SE-0001",
+				"--odometer-in", "42100",
+				"--color", "Midnight Silver",
+				"--license-plate", "EV-999",
+			])
+			rc_ri = cli.main([
+				"--json", "record-inspection",
+				"--repair-order", "RO-0001",
+				"--odometer-in", "42150",
+				"--vehicle-color", "Red Multi-Coat",
+				"--plate", "CHK-123",
+				"--concern", "Rattle",
+			])
+
+		self.assertEqual((rc_q, rc_is, rc_cro, rc_ri), (0, 0, 0, 0))
+		self.assertEqual(mock_client.create_quote.call_args.kwargs["vehicle_color"], "Pearl White")
+		self.assertEqual(mock_client.create_quote.call_args.kwargs["license_plate"], "EV-402")
+		self.assertEqual(mock_client.intake_and_find_slots.call_args.kwargs["vehicle_color"], "Solid Black")
+		self.assertEqual(mock_client.intake_and_find_slots.call_args.kwargs["license_plate"], "EV-777")
+		self.assertEqual(mock_client.create_ro_from_appointment.call_args.kwargs["vehicle_color"], "Midnight Silver")
+		self.assertEqual(mock_client.create_ro_from_appointment.call_args.kwargs["license_plate"], "EV-999")
+		self.assertEqual(mock_client.record_check_in_inspection.call_args.kwargs["vehicle_color"], "Red Multi-Coat")
+		self.assertEqual(mock_client.record_check_in_inspection.call_args.kwargs["license_plate"], "CHK-123")
+
+	def test_cockpit_ui_renders_progressive_vehicle_info(self) -> None:
+		html_path = Path(__file__).resolve().parents[1] / "tools" / "cockpit_ui.html"
+		html = html_path.read_text(encoding="utf-8")
+		for token in ("renderVehicleHtml", "veh-vin", "veh-year", "veh-plate", "veh-color", "veh-model", "vehicle_info"):
+			self.assertIn(token, html)
+
+
 if __name__ == "__main__":
 	unittest.main()

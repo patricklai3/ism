@@ -51,9 +51,9 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `book --date <YYYY-MM-DD> --time <HH:MM[:SS]> [--repair-order <RO>] [--bay <BAY>] [--tech <TECH>] [--duration <MIN>] [--entry-type <Diagnostic|Repair>] [--provisional-customer <NAME>] [--provisional-vehicle <INFO>] [--notes <TEXT>]`
 - `unscheduled --repair-order <RO>`
 - `estimate --repair-order <RO>`
-- `quote --customer <NAME> --vehicle <VEH> --odometer-in <KM> (--service "Title::0.5" | --notes <TEXT>) [--parts-json @parts.json]`
-- `intake-slots --customer <NAME> --vehicle <VEH> --odometer-in <KM> (--service "Title::0.5" | --notes <TEXT>) [--date <YYYY-MM-DD>] [--days N] [--duration <MIN>] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>]`
-- `create-ro-from-entry --schedule-entry <SE> --odometer-in <KM>`
+- `quote --customer <NAME> --vehicle <VEH> --odometer-in <KM> [--color <COLOR>] [--license-plate <PLATE>] (--service "Title::0.5" | --notes <TEXT>) [--parts-json @parts.json]`
+- `intake-slots --customer <NAME> --vehicle <VEH> --odometer-in <KM> [--color <COLOR>] [--license-plate <PLATE>] (--service "Title::0.5" | --notes <TEXT>) [--date <YYYY-MM-DD>] [--days N] [--duration <MIN>] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>]`
+- `create-ro-from-entry --schedule-entry <SE> --odometer-in <KM> [--color <COLOR>] [--license-plate <PLATE>]`
 - `amend-quote --repair-order <RO> [--add-service "Title::0.3"] [--remove-indices-json @indices.json] [--notes <TEXT>]`
 - `send-approval --repair-order <RO> [--medium sms|email|link] [--phone <NUM>] [--recipient <ADDR>]`
 - `job-status --repair-order <RO> --action <start|hold|park|complete> [--odometer-out <KM>] [--notes <TEXT>]`
@@ -67,6 +67,10 @@ This workspace operates an automotive repair facility on Frappe with ISM via Ski
 - `checkout --repair-order <RO> --payment-method <METHOD> --odometer-out <KM> [--paid-amount <AMT>] --confirm`
 - `decode-vin --vin <VIN>`
 - `vehicle-info --vehicle <VEH>`
+- `record-inspection --repair-order <RO> [--odometer-in <KM>] [--color <COLOR>] [--license-plate <PLATE>] [--concern <TEXT>] [--items-json <@file|JSON>]`
+- **Vehicle Display & Intake/Check-In Rules**:
+  - **Intake & check-in require vehicle color and license plate**: Pass `--color` (`--vehicle-color`) and `--license-plate` (`--plate`) on `quote`, `intake-slots`, `create-ro-from-entry`, and `record-inspection` whenever missing on the `Repair Vehicle`.
+  - **Human-facing vehicle references**: Refer to vehicles by **year, color, model, and license plate** (e.g., `2022 Pearl White Model 3 (EV-402)`) — never VIN-only. Under limited space, omit VIN first, then year and license plate (keeping color + model longest).
 - `--stage <subcmd ...>` (stage write command(s) for local browser form UI and return clickable `127.0.0.1` URL immediately)
 - `stage-receipt [--id <STAGE_ID>]` (read latest or specific submitted staged receipt; use `@last` / `@last.<field>` in follow-up commands)
 - `--dry-run <subcmd ...>` (preview `ISM Pre-Dispatch Summary` and check required fields without writing)
