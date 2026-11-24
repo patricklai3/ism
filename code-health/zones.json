@@ -119,10 +119,10 @@
         "ism-frappe/ism/ism/doctype/portal_otp_challenge"
       ],
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_portal_auth_and_sessions,ism.tests.test_booking_funnel_and_abuse,ism.tests.test_portal_visit_hub_and_features,ism.tests.test_portal_invoices",
-      "last_audited_at": null,
-      "last_audited_run": null,
-      "last_audited_commit": null,
-      "audit_count": 0
+      "last_audited_at": "2026-11-24T12:28:15Z",
+      "last_audited_run": "run-001",
+      "last_audited_commit": "58ee4ac28ce335ed4a3d6fbc81b95a6aa41539a8",
+      "audit_count": 1
     },
     {
       "id": "frappe-payments-comms",
@@ -143,10 +143,10 @@
         "ism-frappe/ism/ism/doctype/sms_opt_out"
       ],
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_payments_api_e2e,ism.tests.test_comms_telnyx_and_webhooks,ism.tests.test_billing_and_deposits,ism.tests.test_tesla_integration",
-      "last_audited_at": null,
-      "last_audited_run": null,
-      "last_audited_commit": null,
-      "audit_count": 0
+      "last_audited_at": "2026-11-24T12:28:14Z",
+      "last_audited_run": "run-001",
+      "last_audited_commit": "58ee4ac28ce335ed4a3d6fbc81b95a6aa41539a8",
+      "audit_count": 1
     },
     {
       "id": "frappe-agent-facade",
@@ -170,10 +170,10 @@
         "ism-frappe/ism/utils"
       ],
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_agent_facade,ism.tests.test_mcp_protocol,ism.tests.test_auth_and_roles,ism.tests.test_tech_execution_and_isolation,ism.tests.test_monitoring_cockpit",
-      "last_audited_at": null,
-      "last_audited_run": null,
-      "last_audited_commit": null,
-      "audit_count": 0
+      "last_audited_at": "2026-11-24T12:28:14Z",
+      "last_audited_run": "run-001",
+      "last_audited_commit": "58ee4ac28ce335ed4a3d6fbc81b95a6aa41539a8",
+      "audit_count": 1
     },
     {
       "id": "frappe-frontend-spas",
