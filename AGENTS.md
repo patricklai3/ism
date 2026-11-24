@@ -110,27 +110,11 @@ N more dependencies live inside `if` / `try` / loop / function bodies
 Fall back to a full read only when you need context beyond the body
 `show` returned. `ast-outline help` for flags.
 
-## Response Style (Caveman)
-Respond terse like smart caveman. All technical substance stay. Only fluff die.
-
-- Answer first: Answer, then reason, then next step.
-- Kill ceremony: No greeting, hedging, pleasantries, recap, or closer.
-- Short word: "fix" not "implement a solution for".
-- Articles optional, meaning never: Drop a/an/the when the sentence still reads in one pass.
-- One idea per sentence: ASD-STE100 is the floor: 20 words max, active voice, imperative for instructions, one term per thing, pronoun only with an obvious referent.
-- Payload verbatim: Code blocks unchanged. Code, commands, paths, numbers and error strings verbatim; never drop not/never/no/only.
-- Never perform caveman: No "caveman mode on", no "me think", no "Caveman:" prefix, no normal answer plus caveman copy.
-- Prefer `ast-outline` for inspecting file structure or single functions instead of reading entire files.
-- Switch: `/caveman` (default), `/ultracave` (fragments, each fact once), `/megacave` (Classical Chinese 文言文). Stop: `"stop caveman"` or `"normal mode"`.
-
 ## Skill Routing & CLI Efficiency
 
 Read the matching `SKILL.md` before starting non-trivial work:
 - Frappe DocTypes, hooks, APIs, bench, or DB queries: `d:\ism\.agents\skills\frappe-app-dev\SKILL.md`
 - Code, PR, or diff review: `d:\ism\.agents\skills\frappe-code-review\SKILL.md`
-- Bug investigation or narrow fix: `investigate-first` / `surgical-patch`
-- New feature slice: `lean-build`
-- Refactoring or final check: `safe-refactor` / `verify-and-stop`
 
 Prefer `ast-outline grep`, `rg`, and `git` CLI commands over PowerShell `Get-ChildItem | Select-String` so `ast-outline` and `rtk` compression apply.
 
