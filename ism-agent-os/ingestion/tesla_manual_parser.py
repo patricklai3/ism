@@ -43,6 +43,28 @@ _MODEL_MAP = {
 	"cybertruck": "Cybertruck",
 }
 
+_FALLBACK_GENERATION_MAP = {
+	"Model S": (
+		("/Palladium/", ["Model S Feb 2021 - May 2025", "Model S June 2025"]),
+		(None, ["Model S Feb 2012 - Mar 2016", "Model S Apr 2016 - Jan 2021"]),
+	),
+	"Model 3": (
+		("/2024/", ["Model 3 Jan 2024"]),
+		(None, ["Model 3 Jun 2017 - Dec 2023"]),
+	),
+	"Model X": (
+		("/Palladium/", ["Model X Mar 2021 - May 2025", "Model X June 2025"]),
+		(None, ["Model X Sep 2015 - Feb 2021"]),
+	),
+	"Model Y": (
+		("/2025/", ["Model Y Feb 2025"]),
+		(None, ["Model Y Jan 2020 - Jan 2025"]),
+	),
+	"Cybertruck": (
+		(None, ["Cybertruck Nov 2023 - Present"]),
+	),
+}
+
 _OEM_PART_RE = re.compile(r"\b(\d{7}-\d{2}-[A-Z])\b")
 
 
@@ -56,6 +78,7 @@ class TeslaManualParser:
 		self,
 		url: str,
 		model_override: Optional[str] = None,
+		generation_override: Optional[str] = None,
 		parts: Optional[list[dict[str, Any]]] = None,
 		repair_order: Optional[str] = None,
 		on_conflict: str = "skip",
@@ -77,6 +100,7 @@ class TeslaManualParser:
 		code = normalized.get("correction_code") or None
 		frt = float(normalized["frt"]) if normalized.get("frt") is not None else 0.0
 		model = model_override or normalized.get("applicable_model") or "Model 3"
+		generation = generation_override or normalized.get("applicable_generation") or None
 		resolved_parts = parts if parts is not None else (normalized.get("parts") or None)
 
 		return self.client.import_tesla_procedure(
@@ -84,6 +108,7 @@ class TeslaManualParser:
 			correction_code=code,
 			labor_hours=frt,
 			model=model,
+			applicable_generation=generation,
 			parts=resolved_parts,
 			repair_order=repair_order,
 			url=url if repair_order else None,
@@ -96,19 +121,23 @@ class TeslaManualParser:
 			include_summary=include_summary,
 		)
 
-	def parse_url_metadata(self, url: str) -> dict[str, str]:
-		"""Extract model, generation hint, and GUID from a service.tesla.com URL."""
+	def parse_url_metadata(self, url: str) -> dict[str, Any]:
+		"""Extract model, generation metadata, and GUID from a service.tesla.com URL."""
 		parsed = urlparse(url)
 		parts = [p for p in parsed.path.split("/") if p]
 		year_hint = ""
 		doc_guid = ""
 		model = "Model 3"
 		applicable_generation = ""
+		generations: list[str] = []
+		generation_entries: list[dict[str, Any]] = []
 
 		if _shared_parse_manual_url is not None:
 			shared = _shared_parse_manual_url(url)
 			model = shared.get("applicable_model") or model
-			applicable_generation = shared.get("matched_generation") or ""
+			applicable_generation = shared.get("applicable_generation") or shared.get("matched_generation") or ""
+			generations = shared.get("generations") or []
+			generation_entries = shared.get("generation_entries") or []
 			doc_guid = shared.get("doc_guid") or ""
 			year_hint = shared.get("year_hint") or ""
 		else:
@@ -121,11 +150,19 @@ class TeslaManualParser:
 				elif seg.upper().startswith("GUID-") and not doc_guid:
 					doc_guid = re.sub(r"\.html?$", "", seg, flags=re.IGNORECASE).upper()
 
+			for match_token, gens in _FALLBACK_GENERATION_MAP.get(model, ()):
+				if match_token is None or match_token.lower() in url.lower():
+					generations = list(gens)
+					applicable_generation = ", ".join(generations)
+					break
+
 		return {
 			"model": model,
 			"applicable_model": model,
 			"generation": year_hint or applicable_generation,
 			"applicable_generation": applicable_generation or year_hint,
+			"generations": generations,
+			"generation_entries": generation_entries,
 			"doc_guid": doc_guid,
 		}
 
@@ -246,6 +283,8 @@ class TeslaManualParser:
 			"applicable_model": model,
 			"generation": url_meta.get("generation") or generation,
 			"applicable_generation": generation,
+			"generations": norm.get("generations") or url_meta.get("generations") or [],
+			"generation_entries": norm.get("generation_entries") or url_meta.get("generation_entries") or [],
 			"doc_guid": str(norm.get("doc_guid") or url_meta.get("doc_guid") or ""),
 			"tesla_manual_url": str(norm.get("tesla_manual_url") or url or ""),
 			"parts": parts,

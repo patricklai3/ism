@@ -338,12 +338,15 @@ def _register_floor_and_action_parsers(sub: argparse._SubParsersAction) -> None:
 
 
 def _register_vehicle_and_inspection_parsers(sub: argparse._SubParsersAction) -> None:
-	sub.add_parser("decode-vin", help="Decode a 17-character Tesla VIN").add_argument("--vin", required=True)
+	p_dv = sub.add_parser("decode-vin", help="Decode a 17-character Tesla VIN")
+	p_dv.add_argument("--vin", required=True)
+	p_dv.add_argument("--manufactured-month", help="Optional B-pillar date (e.g. 03/21)")
 
-	p_sv = sub.add_parser("search-vehicles", help="Search Repair Vehicles by VIN, plate, customer, or model")
+	p_sv = sub.add_parser("search-vehicles", help="Search Repair Vehicles by VIN, plate, customer, model, or generation")
 	p_sv.add_argument("--query")
 	p_sv.add_argument("--customer")
 	p_sv.add_argument("--model")
+	p_sv.add_argument("--generation")
 	p_sv.add_argument("--limit", type=int, default=20)
 
 	p_vi = sub.add_parser("vehicle-info", help="Fetch vehicle VIN decode, owners, history, and deferred work")
@@ -457,6 +460,7 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 	p_imp_t.add_argument("--code")
 	p_imp_t.add_argument("--hours", type=float, default=1.0)
 	p_imp_t.add_argument("--model", default="Model 3")
+	p_imp_t.add_argument("--generation", help="Canonical Tesla vehicle generation")
 	p_imp_t.add_argument("--parts-json")
 	p_imp_t.add_argument("--repair-order")
 	p_imp_t.add_argument("--url")
@@ -470,6 +474,7 @@ def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:
 	p_tesla = sub.add_parser("ingest-tesla", help="Fetch and import a Tesla service manual URL")
 	p_tesla.add_argument("url")
 	p_tesla.add_argument("--model")
+	p_tesla.add_argument("--generation", help="Override canonical Tesla vehicle generation")
 	p_tesla.add_argument("--repair-order")
 	p_tesla.add_argument("--on-conflict", default="skip", choices=("skip", "overwrite", "add", "error"))
 	p_tesla.add_argument("--force", action="store_true")

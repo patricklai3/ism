@@ -183,6 +183,36 @@ class TestTeslaManualParser(unittest.TestCase):
 		self.assertEqual(items[0]["part_condition"], "New")
 		self.assertEqual(items[0]["unit_rate"], 99.5)
 
+	def test_generation_metadata_and_generation_override_forwarding(self) -> None:
+		mock_client = MagicMock()
+		mock_client.fetch_tesla_procedure.return_value = {
+			"success": True,
+			"data": {
+				"title": "High Voltage Battery Pack",
+				"correction_code": "16010100",
+				"frt": 3.5,
+				"applicable_model": "Model X",
+				"parts": [],
+			},
+		}
+		mock_client.import_tesla_procedure.return_value = {"success": True}
+		parser = TeslaManualParser(client=mock_client)
+		meta = parser.parse_url_metadata(
+			"https://service.tesla.com/docs/ModelS/ServiceManual/Palladium/en-us/GUID-TEST-MS.html"
+		)
+		self.assertEqual(meta["applicable_model"], "Model S")
+		self.assertIn("Model S Feb 2021 - May 2025", meta["applicable_generation"])
+
+		parser.ingest_from_url(
+			"https://service.tesla.com/docs/ModelX/ServiceManual/Palladium/en-us/GUID-TEST-MX.html",
+			generation_override="Model X Mar 2021 - May 2025",
+		)
+		self.assertEqual(
+			mock_client.import_tesla_procedure.call_args.kwargs["applicable_generation"],
+			"Model X Mar 2021 - May 2025",
+		)
+
+
 
 if __name__ == "__main__":
 	unittest.main()
