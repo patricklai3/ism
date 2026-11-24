@@ -17,7 +17,7 @@ description: >-
 | Start, hold, park, or complete an RO | `python -m tools.cli --json job-status --repair-order <RO> --action <start\|hold\|park\|complete> [--odometer-out <KM>] [--notes <TEXT>]` |
 | Check off (or reopen) completed service rows | `python -m tools.cli --json toggle-service --repair-order <RO> (--service-row <ROW1> [<ROW2> ...] \| --all) [--reopen]` |
 | Read check-in walkaround inspection | `python -m tools.cli --json get-inspection --repair-order <RO>` |
-| Record inspection findings, odometer, concern | `python -m tools.cli --json record-inspection --repair-order <RO> --items-json <@file\|JSON> [--odometer-in <KM>] [--concern <TEXT>] [--template <NAME>] [--auto-apply]` |
+| Record inspection findings, odometer, concern | `python -m tools.cli --json record-inspection --repair-order <RO> --items-json <@file\|JSON> [--odometer-in <KM>] [--color <COLOR>] [--license-plate <PLATE>] [--concern <TEXT>] [--template <NAME>] [--auto-apply]` |
 | List or apply inspection template | `python -m tools.cli --json inspection-templates [--template <NAME>]` / `python -m tools.cli --json apply-inspection --repair-order <RO> [--template <NAME>]` |
 | Add mid-job supplement for approval | `python -m tools.cli --json add-supplement --repair-order <RO> --title <TITLE> --hours <HRS> [--parts-json <@file\|JSON>] [--notes <TEXT>]` |
 | Duplicate symmetrical LH/RH service row | `python -m tools.cli --json duplicate-side --repair-order <RO> --service-row <ROW>` |
@@ -37,6 +37,8 @@ description: >-
 
 ## Required Fields, `--stage` & Pre-Dispatch Callback
 
+- **`record-inspection` check-in requirements**: Vehicle **color** (`--color` / `--vehicle-color`) and **license plate** (`--license-plate` / `--plate`) are required on check-in if not already recorded on the `Repair Vehicle`.
+- **Human-facing vehicle references**: Refer to vehicles by **year, color, model, and license plate** (not VIN-only). Under tight space, drop VIN first, then year and plate (keep color + model).
 - **`job-status --action complete` required fields**: `--repair-order`, `--action complete`, and `--odometer-out` (`>= odometer_in`).
 - **`checkout` required fields**: `--repair-order`, `--payment-method` (no silent default), `--odometer-out` (`>= odometer_in`), and `--confirm`.
 - **Preferred Turn-1 Staged Form (`--stage`)**: Stage floor writes (`job-status`, `toggle-service`, `record-inspection`, `add-supplement`, `duplicate-side`, `checkout`) via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch` with PowerShell-safe `@stepN.<field>` / `@prev.<field>`; `stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings), present the returned `127.0.0.1` URL for the technician/advisor to fill missing fields (like `--odometer-out` or `--payment-method` + `--confirm`) and submit locally, and recall submitted results with `python -m tools.cli --json stage-receipt` or `@last`.

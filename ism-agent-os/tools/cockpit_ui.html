@@ -447,6 +447,7 @@
     border: 1px solid rgba(255, 255, 255, 0.16);
     color: var(--text);
     z-index: 2;
+    container-type: inline-size;
   }
   .job-block.active { background: rgba(34, 197, 94, 0.25); border-color: rgba(34, 197, 94, 0.7); }
   .job-block.scheduled { background: rgba(56, 189, 248, 0.2); border-color: rgba(56, 189, 248, 0.65); }
@@ -464,6 +465,23 @@
   }
   .job-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .job-sub { font-size: 0.64rem; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .veh-info { display: inline-flex; flex-wrap: nowrap; gap: 4px; align-items: baseline; max-width: 100%; overflow: hidden; }
+  .veh-color, .veh-model { font-weight: 600; }
+  .veh-plate { font-family: var(--mono); opacity: 0.9; }
+  .veh-vin { font-family: var(--mono); color: var(--muted); }
+  .action-card { container-type: inline-size; }
+  @container (max-width: 240px) {
+    .veh-vin { display: none; }
+  }
+  @container (max-width: 150px) {
+    .veh-year, .veh-plate { display: none; }
+  }
+  @media (max-width: 1200px) {
+    .veh-vin { display: none; }
+  }
+  @media (max-width: 720px) {
+    .veh-year, .veh-plate { display: none; }
+  }
   .unslotted-bar {
     padding: 8px 14px;
     border-top: 1px solid var(--border);
@@ -628,6 +646,7 @@
       const snoozeBtn = it.can_snooze
         ? '<button type="button" class="subtle js-sync-btn" data-action="snooze" data-key="' + esc(it.dedup_key) + '" data-title="' + esc(it.title) + '" data-dt="' + esc(it.reference_doctype || "") + '" data-dn="' + esc(it.reference_name || "") + '">Snooze 1h</button>'
         : '';
+      const vehHtml = it.vehicle_info ? '<div class="card-sub">' + renderVehicleHtml(it.vehicle_info) + '</div>' : '';
 
       return (
         '<div class="action-card ' + esc(it.priority) + '">' +
@@ -639,6 +658,7 @@
             '<span style="font-family:var(--mono);font-size:0.7rem;color:var(--muted);">' + esc(it.age_display || "") + '</span>' +
           '</div>' +
           '<div class="card-title">' + esc(it.title) + '</div>' +
+          vehHtml +
           '<div class="card-sub">' + esc(it.subtitle) + '</div>' +
           '<div class="card-foot">' +
             linkHtml +
@@ -647,6 +667,21 @@
         '</div>'
       );
     }).join("");
+  }
+
+  function renderVehicleHtml(vi) {
+    if (!vi || typeof vi !== "object") return "";
+    const parts = [];
+    if (vi.model_year) parts.push('<span class="veh-year">' + esc(vi.model_year) + '</span>');
+    if (vi.color) parts.push('<span class="veh-color">' + esc(vi.color) + '</span>');
+    if (vi.model) parts.push('<span class="veh-model">' + esc(vi.model) + '</span>');
+    if (vi.license_plate) parts.push('<span class="veh-plate">· ' + esc(vi.license_plate) + '</span>');
+    if (vi.vin) parts.push('<span class="veh-vin">· ' + esc(vi.vin) + '</span>');
+    if (!parts.length) {
+      const fallback = vi.display || vi.compact_display || "";
+      return fallback ? '<span class="veh-info"><span class="veh-model">' + esc(fallback) + '</span></span>' : "";
+    }
+    return '<span class="veh-info">' + parts.join("") + '</span>';
   }
 
   function renderGauges(view) {
@@ -695,12 +730,14 @@
       const href = safeHref(b.deep_link);
       const tag = href ? "a" : "div";
       const attrs = href ? ' href="' + esc(href) + '" target="_blank" rel="noopener noreferrer"' : "";
+      const vehSub = b.vehicle_info ? renderVehicleHtml(b.vehicle_info) : esc(b.sublabel);
+      const tipVeh = (b.vehicle_info && (b.vehicle_info.display || b.vehicle_info.compact_display)) || b.sublabel || "";
       return (
         '<' + tag + attrs + ' class="job-block ' + esc(b.state || "scheduled") + '" ' +
           'style="left:' + Number(b.left_pct || 0) + '%;width:' + Number(b.width_pct || 4) + '%;" ' +
-          'title="' + esc((b.label || "") + " — " + (b.sublabel || "") + " [" + (b.status || "") + "]") + '">' +
+          'title="' + esc((b.label || "") + " — " + tipVeh + " [" + (b.status || "") + "]") + '">' +
           '<div class="job-title">' + esc(b.label) + '</div>' +
-          '<div class="job-sub">' + esc(b.sublabel) + '</div>' +
+          '<div class="job-sub">' + vehSub + '</div>' +
         '</' + tag + '>'
       );
     }).join("");

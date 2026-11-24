@@ -53,6 +53,8 @@ class IsmAgentClient:
 		customer_email: Optional[str] = None,
 		company: Optional[str] = None,
 		odometer_in: Optional[int] = None,
+		vehicle_color: Optional[str] = None,
+		license_plate: Optional[str] = None,
 		include_summary: bool = False,
 		customer: Optional[str] = None,
 		vehicle: Optional[str] = None,
@@ -74,6 +76,8 @@ class IsmAgentClient:
 			customer_phone=customer_phone,
 			customer_email=customer_email,
 			odometer_in=odometer_in,
+			vehicle_color=vehicle_color,
+			license_plate=license_plate,
 		)
 
 	def amend_quote(
@@ -147,6 +151,8 @@ class IsmAgentClient:
 		customer_email: Optional[str] = None,
 		company: Optional[str] = None,
 		odometer_in: Optional[int] = None,
+		vehicle_color: Optional[str] = None,
+		license_plate: Optional[str] = None,
 		start_date: Optional[str] = None,
 		days_ahead: int = 3,
 		duration_minutes: Optional[int] = None,
@@ -179,6 +185,8 @@ class IsmAgentClient:
 			customer_phone=customer_phone,
 			customer_email=customer_email,
 			odometer_in=odometer_in,
+			vehicle_color=vehicle_color,
+			license_plate=license_plate,
 			start_date=start_date,
 			target_date=target_date,
 			days_ahead=days_ahead,
@@ -236,6 +244,8 @@ class IsmAgentClient:
 		self,
 		schedule_entry: str,
 		odometer_in: int,
+		vehicle_color: Optional[str] = None,
+		license_plate: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Create a Checked In Repair Order from a pre-intake Schedule Entry."""
@@ -244,6 +254,8 @@ class IsmAgentClient:
 			include_summary=include_summary,
 			schedule_entry=schedule_entry,
 			odometer_in=odometer_in,
+			vehicle_color=vehicle_color,
+			license_plate=license_plate,
 		)
 
 	def estimate_duration(
@@ -636,6 +648,8 @@ class IsmAgentClient:
 		customer_concern: Optional[str] = None,
 		template_name: Optional[str] = None,
 		auto_apply_template: bool = False,
+		vehicle_color: Optional[str] = None,
+		license_plate: Optional[str] = None,
 		include_summary: bool = False,
 	) -> dict[str, Any]:
 		"""Record check-in walkaround item results, odometer reading, and customer concern."""
@@ -649,6 +663,8 @@ class IsmAgentClient:
 			customer_concern=customer_concern,
 			template_name=template_name,
 			auto_apply_template=True if auto_apply_template else None,
+			vehicle_color=vehicle_color,
+			license_plate=license_plate,
 		)
 
 	def get_daily_tech_overview(

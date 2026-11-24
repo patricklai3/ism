@@ -18,8 +18,8 @@ description: >-
 | Search vehicles by VIN, plate, customer, or model | `python -m tools.cli --json search-vehicles [--query <TERM>] [--customer <NAME>] [--model <MODEL>]` |
 | Full vehicle profile, owners, history, deferred work | `python -m tools.cli --json vehicle-info --vehicle <VEH>` |
 | Link co-owner or fleet contact to vehicle | `python -m tools.cli --json link-vehicle-customer --vehicle <VEH> --customer <CUST> [--primary] [--relationship <REL>]` |
-| Create Draft Estimate Repair Order | `python -m tools.cli --json quote --customer <NAME> --vehicle <VEH> [--service "Title::0.5"] [--parts-json @parts.json] [--notes <TEXT>] [--phone <NUM>] [--email <ADDR>] [--odometer-in <KM>]` |
-| Create Draft Quote + return filtered slots in one call | `python -m tools.cli --json intake-slots --customer <NAME> --vehicle <VEH> [--service "Title::0.5"] [--date <YYYY-MM-DD>] [--days N] [--duration <MIN>] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>]` |
+| Create Draft Estimate Repair Order | `python -m tools.cli --json quote --customer <NAME> --vehicle <VEH> [--color <COLOR>] [--license-plate <PLATE>] [--service "Title::0.5"] [--parts-json @parts.json] [--notes <TEXT>] [--phone <NUM>] [--email <ADDR>] [--odometer-in <KM>]` |
+| Create Draft Quote + return filtered slots in one call | `python -m tools.cli --json intake-slots --customer <NAME> --vehicle <VEH> [--color <COLOR>] [--license-plate <PLATE>] [--service "Title::0.5"] [--date <YYYY-MM-DD>] [--days N] [--duration <MIN>] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>]` |
 | Amend draft quote lines or notes | `python -m tools.cli --json amend-quote --repair-order <RO> [--add-service "Title::0.3"] [--remove-indices-json @indices.json] [--notes <TEXT>]` (combine with `send-approval` via `batch` if sending right after) |
 | Probabilistic P80/P50 job duration estimate for an RO | `python -m tools.cli --json estimate --repair-order <RO>` |
 | Duplicate symmetrical LH/RH service row | `python -m tools.cli --json duplicate-side --repair-order <RO> --service-row <ROW>` |
@@ -44,7 +44,8 @@ description: >-
 
 ## Required Fields, `--stage` & Pre-Dispatch Callback
 
-- **`quote` / `intake-slots` required fields**: `--customer`, `--vehicle`, `--odometer-in` (`>= 0`; NEVER guess or default), and at least one `--service`/`--services-json`/`--notes`.
+- **`quote` / `intake-slots` required fields**: `--customer`, `--vehicle`, `--odometer-in` (`>= 0`; NEVER guess or default), vehicle **color** (`--color` / `--vehicle-color`) and **license plate** (`--license-plate` / `--plate`) if not already on the `Repair Vehicle`, and at least one `--service`/`--services-json`/`--notes`.
+- **Human-facing vehicle references**: Always refer to vehicles by **year, color, model, and license plate** (not VIN-only). Under tight space, drop VIN first, then year and plate (keep color + model).
 - **Preferred Turn-1 Staged Form (`--stage`)**: Stage single writes (`python -m tools.cli --json --stage quote ...`) or chained pipelines (`python -m tools.cli --json --stage batch --cmd "quote ..." --cmd "amend-quote --repair-order @step0.data.name ..." --cmd "send-approval --repair-order @prev.data.name --medium link"` or `quote` + `deposit --repair-order @step0.data.name --amount <CAD> --payment-method <METHOD>`), even when `--odometer-in` or optional fields need user input. Use PowerShell-safe `@stepN.<field>` / `@prev.<field>` (`stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings). Present the returned `127.0.0.1` URL and end the turn. On follow-up turns, read created IDs via `python -m tools.cli --json stage-receipt` or pass `@last` / `@last.<field>`.
 - **Legacy Callback (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), run `--dry-run`, output `### ISM Pre-Dispatch Summary` (marking missing fields `[MISSING — REQUIRED]`), and wait for explicit user confirmation before executing live writes.
 

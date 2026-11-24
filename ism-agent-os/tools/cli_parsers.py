@@ -5,9 +5,15 @@ from __future__ import annotations
 import argparse
 
 
+def _add_vehicle_detail_args(parser: argparse.ArgumentParser) -> None:
+	parser.add_argument("--color", "--vehicle-color", dest="vehicle_color", help="Vehicle exterior color")
+	parser.add_argument("--license-plate", "--plate", dest="license_plate", help="Vehicle license plate")
+
+
 def _add_intake_args(parser: argparse.ArgumentParser) -> None:
 	parser.add_argument("--customer", required=True, help="Customer name or ID")
 	parser.add_argument("--vehicle", required=True, help="Vehicle ID, VIN, or license plate")
+	_add_vehicle_detail_args(parser)
 	parser.add_argument(
 		"--service",
 		action="append",
@@ -167,6 +173,7 @@ def _register_advisor_and_dispatch_parsers(sub: argparse._SubParsersAction) -> N
 	p_cro = sub.add_parser("create-ro-from-entry", help="Create Repair Order from pre-intake Schedule Entry")
 	p_cro.add_argument("--schedule-entry", required=True)
 	p_cro.add_argument("--odometer-in", type=int, help="Confirmed intake odometer reading")
+	_add_vehicle_detail_args(p_cro)
 
 	p_est = sub.add_parser("estimate", help="Estimate probabilistic job duration")
 	p_est.add_argument("--repair-order")
@@ -369,6 +376,7 @@ def _register_vehicle_and_inspection_parsers(sub: argparse._SubParsersAction) ->
 	p_ri.add_argument("--concern")
 	p_ri.add_argument("--template")
 	p_ri.add_argument("--auto-apply", action="store_true")
+	_add_vehicle_detail_args(p_ri)
 
 
 def _register_parts_and_rest_parsers(sub: argparse._SubParsersAction) -> None:

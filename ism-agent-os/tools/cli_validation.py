@@ -286,21 +286,21 @@ def _validate_board_target(
 WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	"quote": {
 		"target": "ism.api.agent.create_quote -> Repair Order (Draft Estimate)",
-		"fields": ("customer", "vehicle", "odometer_in", "service", "services_json", "parts_json", "notes", "phone", "email", "company"),
+		"fields": ("customer", "vehicle", "odometer_in", "vehicle_color", "license_plate", "service", "services_json", "parts_json", "notes", "phone", "email", "company"),
 		"required": (("customer", "--customer"), ("vehicle", "--vehicle")),
 		"non_neg_ints": (("odometer_in", "--odometer-in"),),
 		"any_of": ((("service", "services_json", "notes"), "--service/--services-json/--notes (at least one required)"),),
 	},
 	"intake-slots": {
 		"target": "ism.api.agent.intake_and_find_slots -> Repair Order (Draft Estimate) + Slots",
-		"fields": ("customer", "vehicle", "odometer_in", "service", "services_json", "parts_json", "notes", "phone", "email", "date", "days", "duration", "tags", "bay", "technician"),
+		"fields": ("customer", "vehicle", "odometer_in", "vehicle_color", "license_plate", "service", "services_json", "parts_json", "notes", "phone", "email", "date", "days", "duration", "tags", "bay", "technician"),
 		"required": (("customer", "--customer"), ("vehicle", "--vehicle")),
 		"non_neg_ints": (("odometer_in", "--odometer-in"),),
 		"any_of": ((("service", "services_json", "notes"), "--service/--services-json/--notes (at least one required)"),),
 	},
 	"create-ro-from-entry": {
 		"target": "ism.api.agent.create_ro_from_appointment -> Repair Order (Checked In)",
-		"fields": ("schedule_entry", "odometer_in"),
+		"fields": ("schedule_entry", "odometer_in", "vehicle_color", "license_plate"),
 		"required": (("schedule_entry", "--schedule-entry"),),
 		"non_neg_ints": (("odometer_in", "--odometer-in"),),
 	},
@@ -424,7 +424,7 @@ WRITE_COMMAND_META: dict[str, dict[str, Any]] = {
 	},
 	"record-inspection": {
 		"target": "ism.api.agent.record_check_in_inspection -> Repair Order Inspection",
-		"fields": ("repair_order", "odometer_in", "concern", "template", "auto_apply", "items_json"),
+		"fields": ("repair_order", "odometer_in", "vehicle_color", "license_plate", "concern", "template", "auto_apply", "items_json"),
 		"required": (("repair_order", "--repair-order"),),
 		"custom": _validate_record_inspection,
 	},
@@ -691,6 +691,8 @@ def build_pre_dispatch_summary(parsed_items: list[argparse.Namespace]) -> dict[s
 STAGE_FIELD_HINTS: dict[str, dict[str, Any]] = {
 	"customer": {"type": "text", "label": "Customer", "placeholder": "Customer name or ID"},
 	"vehicle": {"type": "text", "label": "Vehicle", "placeholder": "VIN, plate, or Repair Vehicle ID"},
+	"vehicle_color": {"type": "text", "label": "Vehicle Color", "placeholder": "e.g. Pearl White"},
+	"license_plate": {"type": "text", "label": "License Plate", "placeholder": "e.g. EV-402"},
 	"odometer_in": {"type": "int", "label": "Odometer In (km)", "min": 0, "placeholder": "e.g. 48250"},
 	"odometer_out": {"type": "int", "label": "Odometer Out (km)", "min": 0, "placeholder": "e.g. 48260"},
 	"service": {"type": "textarea", "label": "Services", "multi": True, "placeholder": "One per line, e.g. Brake Service::1.0"},

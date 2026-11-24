@@ -19,11 +19,11 @@ description: >-
 | Unscheduled operations waiting on an RO | `python -m tools.cli --json unscheduled --repair-order <RO>` |
 | Probabilistic P80/P50 job duration estimate | `python -m tools.cli --json estimate --repair-order <RO>` (or `--operations-json <JSON\|@file>`) |
 | Find open appointment slots | `python -m tools.cli --json slots [--repair-order <RO>] [--duration <MIN>] [--date <YYYY-MM-DD>] [--days N] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>] [--min-time <HH:MM[:SS]>] [--include-past] [--include-resources]` |
-| Create Draft Quote + return filtered slots in one call | `python -m tools.cli --json intake-slots --customer <NAME> --vehicle <VEH> [--service <TITLE_OR_PKG>] [--services-json <@file\|JSON>] [--date <YYYY-MM-DD>] [--days N] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>]` |
+| Create Draft Quote + return filtered slots in one call | `python -m tools.cli --json intake-slots --customer <NAME> --vehicle <VEH> [--color <COLOR>] [--license-plate <PLATE>] [--service <TITLE_OR_PKG>] [--services-json <@file\|JSON>] [--date <YYYY-MM-DD>] [--days N] [--tags <TAG>] [--bay <BAY>] [--technician <TECH>]` |
 | Book appointment (date/time known) | `python -m tools.cli --json book --date <YYYY-MM-DD> --time <HH:MM[:SS]> [--repair-order <RO>] [--bay <BAY>] [--tech <TECH>] [--duration <MIN>] [--entry-type <Diagnostic\|Repair>] [--provisional-customer <NAME>] [--provisional-vehicle <INFO>] [--notes <TEXT>]` |
 | Reschedule existing Schedule Entry | `python -m tools.cli --json reschedule --schedule-entry <SE> [--date <YYYY-MM-DD>] [--time <HH:MM[:SS]>] [--bay <BAY>] [--tech <TECH>] [--duration <MIN>]` |
 | Update appointment status (`Confirmed`, `No Show`, `Cancelled`, etc.) | `python -m tools.cli --json appointment-status --schedule-entry <SE> --status <STATUS> [--notes <TEXT>]` |
-| Convert walk-in / diagnostic entry to RO | `python -m tools.cli --json create-ro-from-entry --schedule-entry <SE>` |
+| Convert walk-in / diagnostic entry to RO | `python -m tools.cli --json create-ro-from-entry --schedule-entry <SE> --odometer-in <KM> [--color <COLOR>] [--license-plate <PLATE>]` |
 | Multi-step dispatch query/action in one process | `python -m tools.cli --json batch --cmd "status --date <YYYY-MM-DD>" --cmd "tech-overview --date <YYYY-MM-DD>"` (or `--file @cmds.json`; alias: `ism-agent-os batch`) |
 
 ## Shop Reference Values & Concrete Examples
@@ -43,7 +43,8 @@ description: >-
 
 ## Required Fields, `--stage` & Pre-Dispatch Callback
 
-- **`create-ro-from-entry` required fields**: `--schedule-entry` and `--odometer-in` (`>= 0`; NEVER guess or omit).
+- **`create-ro-from-entry` required fields**: `--schedule-entry`, `--odometer-in` (`>= 0`; NEVER guess or omit), and vehicle **color** (`--color` / `--vehicle-color`) and **license plate** (`--license-plate` / `--plate`) if not already on the `Repair Vehicle`.
+- **Human-facing vehicle references**: Refer to vehicles by **year, color, model, and license plate** (not VIN-only). Under tight space, drop VIN first, then year and plate (keep color + model).
 - **`book` / `reschedule` / `appointment-status` required fields**: `--date` & `--time` (`book` also needs `--repair-order` or `--provisional-customer`); `--schedule-entry` + >= 1 change (`reschedule`); `--schedule-entry` + `--status` (`appointment-status`).
 - **Preferred Turn-1 Staged Form (`--stage`)**: Stage `book`, `reschedule`, `appointment-status`, `create-ro-from-entry`, or `intake-slots` via `python -m tools.cli --json --stage <subcmd ...>` (or `--stage batch` with PowerShell-safe `@stepN.<field>` / `@prev.<field>`; `stepN.<field>` and `$stepN.<field>` also work, but NEVER put unescaped `$` like `$step0` or `$100` inside PowerShell `"..."` strings), present the returned `127.0.0.1` URL (conflict alternatives render as one-click **Select Slot & Retry** pills in the UI), and use `python -m tools.cli --json stage-receipt` or `@last` on follow-up turns.
 - **Legacy Callback (`--dry-run`)**: When not using `--stage` (and `ISM_STAGE_ONLY` is unset), run `slots` / `status` / `--dry-run` first, output `### ISM Pre-Dispatch Summary`, and wait for user confirmation before live writes.
