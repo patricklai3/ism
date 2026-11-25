@@ -67,6 +67,18 @@ frappe.ui.form.on("Service Package", {
 		frm.trigger("toggle_self_serve_guidance");
 		update_generation_helper_text(frm);
 
+		if (cint(frm.doc.drift_alert) === 1 && flt(frm.doc.frt_realization_ratio) > 0) {
+			const ratio = flt(frm.doc.frt_realization_ratio).toFixed(2);
+			const samples = flt(frm.doc.effective_sample_count).toFixed(1);
+			frm.dashboard.set_headline_alert(
+				__(
+					"Operational time averages {0}× FRT across {1} effective samples — review FRT if pricing adjustment is needed.",
+					[ratio, samples]
+				),
+				"orange"
+			);
+		}
+
 		frm.add_custom_button(__("Tesla Manual"), () => {
 			frm.trigger("open_tesla_manual");
 		});
@@ -301,7 +313,9 @@ frappe.ui.form.on("Service Package", {
 		frm.set_df_property(
 			"self_serve_duration_minutes",
 			"description",
-			__("Leave 0 to compute shop duration automatically from FRT.")
+			__(
+				"Leave 0 to compute shop duration automatically from calibrated operational time (when Active) or FRT."
+			)
 		);
 
 		const mode = frm.doc.customer_price_display_mode || "Exact Price";

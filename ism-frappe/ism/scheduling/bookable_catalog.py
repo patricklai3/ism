@@ -12,8 +12,15 @@ from frappe.utils import cint, flt
 
 from ism.scheduling.capacity import load_package_tags_map
 from ism.scheduling.estimation_light import estimate_total_duration
+from ism.time_calibration.contracts import (
+	apply_overlap_discounts_to_operations,
+	get_calibration_settings,
+	is_diagnostic_service,
+	resolve_package_calibrated_params,
+)
 from ism.utils.demo_mode import compute_demo_package_entry, is_demo_mode, is_demo_package_id
 from ism.utils.tesla_manual import (
+	detect_service_side,
 	is_in_generation_range,
 	parse_vehicle_year_month,
 	resolve_generation_entries,
@@ -68,6 +75,12 @@ _CATALOG_QUERY_FIELDS: List[str] = [
 	"hourly_rate",
 	"service_rate",
 	"self_serve_duration_minutes",
+	"calibrated_median_minutes",
+	"calibrated_sigma",
+	"overlap_group",
+	"correction_code",
+	"is_symmetrical",
+	"exclude_from_time_calibration",
 ]
 
 
@@ -551,12 +564,14 @@ def compute_packages_booking_requirements(
 	pkg_by_name = {row["name"]: row for row in rows}
 
 	settings = _get_catalog_settings()
+	cal_settings = get_calibration_settings()
 	subtotals = _get_default_items_subtotals(real_ids)
 	compat_map = _get_generation_compatibility_map(real_ids)
 	tags_map = load_package_tags_map(real_ids)
 
 	override_minutes = 0
 	frt_minutes_list: List[float] = []
+	calibrated_ops: List[Dict[str, Any]] = []
 	tags_set = set()
 	cards: List[Dict[str, Any]] = []
 	snapshot: List[Dict[str, Any]] = []
@@ -610,6 +625,40 @@ def compute_packages_booking_requirements(
 		override = cint(pkg.get("self_serve_duration_minutes") or 0)
 		if override > 0:
 			override_minutes += override
+		elif cal_settings.is_active:
+			diag = is_diagnostic_service(pkg, pkg)
+			frt_hours = flt(pkg.get("standard_labor_hours") or 0)
+			fallback_minutes = frt_hours * 60.0 if frt_hours > 0 else float(settings["default_diagnostic_duration"])
+			if not diag:
+				cal_params = resolve_package_calibrated_params(
+					pkg,
+					default_sigma=settings["estimation_sigma"],
+					settings=cal_settings,
+				)
+				op_minutes = cal_params["median_minutes"] if cal_params["is_calibrated"] else fallback_minutes
+				op_sigma = cal_params["sigma"] if cal_params["is_calibrated"] else settings["estimation_sigma"]
+				side = detect_service_side(
+					pkg.get("package_name") or pkg.get("customer_title") or "",
+					pkg.get("correction_code"),
+				)
+				calibrated_ops.append(
+					{
+						"flat_rate_minutes": float(op_minutes),
+						"sigma": float(op_sigma),
+						"service_package": pkg_id,
+						"overlap_group": cal_params["overlap_group"],
+						"correction_code": pkg.get("correction_code"),
+						"service_position": side if side in ("LH", "RH") else "None",
+					}
+				)
+			else:
+				calibrated_ops.append(
+					{
+						"flat_rate_minutes": float(fallback_minutes),
+						"sigma": float(settings["estimation_sigma"]),
+						"service_package": pkg_id,
+					}
+				)
 		else:
 			frt_hours = flt(pkg.get("standard_labor_hours") or 0)
 			if frt_hours > 0:
@@ -617,15 +666,27 @@ def compute_packages_booking_requirements(
 			else:
 				frt_minutes_list.append(float(settings["default_diagnostic_duration"]))
 
-	frt_duration = (
-		estimate_total_duration(
-			frt_minutes_list,
-			sigma=settings["estimation_sigma"],
-			percentile=settings["estimation_percentile"],
+	if cal_settings.is_active:
+		discounted_ops = apply_overlap_discounts_to_operations(calibrated_ops) if calibrated_ops else []
+		frt_duration = (
+			estimate_total_duration(
+				discounted_ops,
+				sigma=settings["estimation_sigma"],
+				percentile=settings["estimation_percentile"],
+			)
+			if discounted_ops
+			else 0
 		)
-		if frt_minutes_list
-		else 0
-	)
+	else:
+		frt_duration = (
+			estimate_total_duration(
+				frt_minutes_list,
+				sigma=settings["estimation_sigma"],
+				percentile=settings["estimation_percentile"],
+			)
+			if frt_minutes_list
+			else 0
+		)
 	total_duration = max(15, override_minutes + frt_duration + settings["buffer_padding_minutes"])
 
 	return {
