@@ -35,6 +35,7 @@ from ism.ism.doctype.repair_order.fulfillment import (
 	sync_ro_schedule_entries,
 	toggle_ro_service_completion,
 	update_parts_waiting_status,
+	validate_service_completion_bay_guard,
 )
 from ism.ism.doctype.repair_order.pricing import (
 	_get_default_labor_rate,
@@ -96,6 +97,7 @@ class RepairOrder(Document):
 		self._calculate_taxes_and_totals()
 		self._update_progress_and_job_timing()
 		self._validate_authorization_guards()
+		self._validate_service_completion_bay_guard()
 		self._update_required_equipment_tags()
 
 	def _update_required_equipment_tags(self):
@@ -253,6 +255,9 @@ class RepairOrder(Document):
 
 	def _validate_authorization_guards(self):
 		validate_authorization_guards(self)
+
+	def _validate_service_completion_bay_guard(self):
+		validate_service_completion_bay_guard(self)
 
 	@frappe.whitelist()
 	def pick_up_vehicle(self):

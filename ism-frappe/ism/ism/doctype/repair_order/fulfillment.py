@@ -15,6 +15,8 @@ from ism.api.parts import get_items_available_stock_batch
 from ism.api.sms import dispatch_sms
 from ism.utils.demo_mode import is_demo_mode
 
+IN_BAY_VEHICLE_LOCATION = "In Bay / Being Serviced"
+
 
 def link_ro_vehicle_to_customer(ro) -> None:
 	"""Link repair order customer to vehicle if not already associated."""
@@ -384,6 +386,55 @@ def park_ro_vehicle(ro, odometer_out=None, require_odometer=False, temporary=Fal
 	}
 
 
+def assert_ro_in_bay_for_service_completion(ro) -> None:
+	"""Ensure vehicle is physically in a repair bay before modifying service completion state."""
+	current_location = (getattr(ro, "vehicle_location", None) or "").strip()
+	if current_location != IN_BAY_VEHICLE_LOCATION:
+		frappe.throw(
+			_(
+				"Vehicle must be picked up into a repair bay before updating service completion "
+				"(current location: '{0}'). Please pick up the vehicle into a bay first."
+			).format(current_location or _("In Customer Lot")),
+			frappe.ValidationError,
+		)
+
+
+def validate_service_completion_bay_guard(ro) -> None:
+	"""Block any Repair Order save that changes service completion while the vehicle is out of a bay."""
+	if getattr(getattr(ro, "flags", None), "ignore_bay_completion_guard", False):
+		return
+	if (getattr(ro, "vehicle_location", None) or "").strip() == IN_BAY_VEHICLE_LOCATION:
+		return
+
+	services = getattr(ro, "services", None) or []
+	if ro.is_new():
+		if any(cint(getattr(s, "is_completed", 0)) for s in services):
+			assert_ro_in_bay_for_service_completion(ro)
+		return
+
+	prev_doc = ro.get_doc_before_save() if hasattr(ro, "get_doc_before_save") else None
+	if prev_doc is not None:
+		prev_map = {str(s.name): cint(getattr(s, "is_completed", 0)) for s in (getattr(prev_doc, "services", None) or []) if s.name}
+	elif getattr(ro, "name", None) and frappe.db.exists("Repair Order", ro.name):
+		db_rows = frappe.get_all(
+			"Repair Order Service",
+			filters={"parent": ro.name, "parenttype": "Repair Order"},
+			fields=["name", "is_completed"],
+		)
+		prev_map = {str(r.name): cint(r.is_completed) for r in db_rows if r.name}
+	else:
+		prev_map = {}
+
+	for s in services:
+		curr_val = cint(getattr(s, "is_completed", 0))
+		row_name = str(s.name) if getattr(s, "name", None) else ""
+		if row_name and row_name in prev_map:
+			if curr_val != prev_map[row_name]:
+				assert_ro_in_bay_for_service_completion(ro)
+		elif curr_val == 1:
+			assert_ro_in_bay_for_service_completion(ro)
+
+
 def toggle_ro_service_completion(ro, service_row_id=None, is_completed=None, **kwargs) -> Dict[str, Any]:
 	"""Toggle individual service completion with timestamping."""
 	ro.check_permission("write")
@@ -415,6 +466,8 @@ def toggle_ro_service_completion(ro, service_row_id=None, is_completed=None, **k
 				"Only Approved services can be completed by technicians."
 			).format(target_service.service_title, target_service.status)
 		)
+
+	assert_ro_in_bay_for_service_completion(ro)
 
 	target_service.is_completed = 1 if cint(is_completed) else 0
 	if target_service.is_completed:

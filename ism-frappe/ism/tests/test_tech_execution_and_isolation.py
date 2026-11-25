@@ -910,3 +910,93 @@ class TestTechExecutionAndIsolation(ISMTestCase):
 		self.assertEqual(parsed[1]["bin_status"], "UNASSIGNED")
 		self.assertEqual(parsed[1]["bin_display"], "No Bin")
 		self.assertEqual(_find_keys_recursive(parsed, FORBIDDEN_PRICING_KEYS | frozenset({"rate", "amount"})), [])
+
+	def test_bay_validation_blocks_service_completion_outside_bay(self):
+		"""Technicians cannot toggle service completion when car is in lot or parked, while intake inspection stays open."""
+		tech_user, tech_emp = self._create_user_with_roles("tech_bay_guard", ["ISM Technician"], link_employee=True)
+		customer = self.create_test_customer()
+		vehicle = self.create_test_vehicle(
+			customer=customer.name,
+			model_year=2024,
+			model="Model 3",
+			manufacturer="Tesla",
+			color="Pearl White",
+			license_plate=f"BG{frappe.generate_hash(length=4).upper()}",
+		)
+		ro = self.create_test_repair_order(
+			customer.name,
+			vehicle.name,
+			odometer_in=15000,
+			status="Authorized - In Progress",
+			approval_status="Approved",
+			services=[
+				{
+					"service_title": "Brake Fluid Flush",
+					"status": "Approved",
+					"labor_hours": 1.0,
+					"labor_rate": 150.0,
+					"labor_amount": 150.0,
+					"total_amount": 150.0,
+				},
+				{
+					"service_title": "Cabin Filter Replacement",
+					"status": "Approved",
+					"labor_hours": 0.5,
+					"labor_rate": 150.0,
+					"labor_amount": 75.0,
+					"total_amount": 75.0,
+				},
+			],
+		)
+		ro.append("inspection_items", {"inspection_description": "Front Left Tire", "status": "Attention"})
+		ro.save(ignore_permissions=True)
+		ro.reload()
+		self.create_test_schedule_entry(
+			repair_order=ro.name,
+			assigned_technician=tech_emp,
+			status="Confirmed",
+			entry_type="Repair",
+		)
+		svc1_id = ro.services[0].name
+		svc2_id = ro.services[1].name
+		insp_id = ro.inspection_items[0].name
+
+		frappe.set_user(tech_user)
+
+		# 1. Before pickup ("In Customer Lot"): completing a service MUST fail, inspection MUST succeed
+		with self.assertRaises(frappe.ValidationError):
+			tech_api.toggle_service_item(ro.name, svc1_id, is_completed=True)
+		ro.reload()
+		self.assertEqual(int(ro.services[0].is_completed), 0)
+
+		insp_res = tech_api.update_inspection_item(ro.name, insp_id, "Pass", notes="Checked in lot")
+		self.assertEqual(insp_res["repair_order"]["inspection_items"][0]["status"], "Pass")
+
+		# 2. Pick up into bay -> complete svc1 -> temporary park back in lot
+		picked = tech_api.pick_up_vehicle(ro.name)
+		self.assertEqual(picked["repair_order"]["vehicle_location"], "In Bay / Being Serviced")
+		toggled_1 = tech_api.toggle_service_item(ro.name, svc1_id, is_completed=True)
+		self.assertEqual(int(toggled_1["repair_order"]["services"][0]["is_completed"]), 1)
+
+		temp_parked = tech_api.drop_off_vehicle(ro.name, odometer_out=15002, temporary=True)
+		self.assertEqual(temp_parked["repair_order"]["vehicle_location"], "In Customer Lot")
+
+		# While temporarily parked in lot, BOTH 0->1 (svc2) and 1->0 (svc1) MUST be rejected
+		with self.assertRaises(frappe.ValidationError):
+			tech_api.toggle_service_item(ro.name, svc2_id, is_completed=True)
+		with self.assertRaises(frappe.ValidationError):
+			tech_api.toggle_service_item(ro.name, svc1_id, is_completed=False)
+
+		# 3. Re-pick up into bay -> unchecking svc1 and completing both services MUST succeed
+		tech_api.pick_up_vehicle(ro.name)
+		reopened = tech_api.toggle_service_item(ro.name, svc1_id, is_completed=False)
+		self.assertEqual(int(reopened["repair_order"]["services"][0]["is_completed"]), 0)
+		tech_api.toggle_service_item(ro.name, svc1_id, is_completed=True)
+		tech_api.toggle_service_item(ro.name, svc2_id, is_completed=True)
+
+		# 4. Final drop-off -> unchecking while "Completed / Parked in Lot" MUST be rejected
+		finished = tech_api.drop_off_vehicle(ro.name, odometer_out=15005, temporary=False)
+		self.assertEqual(finished["repair_order"]["vehicle_location"], "Completed / Parked in Lot")
+		with self.assertRaises(frappe.ValidationError):
+			tech_api.toggle_service_item(ro.name, svc1_id, is_completed=False)
+

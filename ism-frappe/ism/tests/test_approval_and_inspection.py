@@ -873,14 +873,10 @@ class TestApprovalAndInspection(ISMTestCase):
 			self.assertEqual(ro.status, "Work Completed")
 			mock_sms.assert_not_called()
 
-		# 2. Enabled in ISM Settings: SMS sent when transitioning into Work Completed
+		# 2. Enabled in ISM Settings: SMS sent when transitioning into Work Completed via bay -> park
+		ro.pick_up_vehicle()
+		ro.reload()
 		ro.toggle_service_completion(service_row_id=ro.services[0].name, is_completed=0)
-		frappe.db.set_value(
-			"Repair Order",
-			ro.name,
-			{"status": "Authorized - In Progress", "vehicle_location": "Completed / Parked in Lot"},
-			update_modified=False,
-		)
 		ro.reload()
 
 		orig_get_single = frappe.get_single
@@ -895,6 +891,7 @@ class TestApprovalAndInspection(ISMTestCase):
 			patch("ism.ism.doctype.repair_order.fulfillment.dispatch_sms", return_value={"success": True}) as mock_sms,
 		):
 			ro.toggle_service_completion(service_row_id=ro.services[0].name, is_completed=1)
+			ro.park_vehicle()
 			ro.reload()
 			self.assertEqual(ro.status, "Work Completed")
 			mock_sms.assert_called_once()

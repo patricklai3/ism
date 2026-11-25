@@ -29,6 +29,7 @@ from ism.api.agent_serializers import (
 )
 from ism.api.approval import send_approval_request
 from ism.api.estimation_service import estimate_repair_order
+from ism.ism.doctype.repair_order.fulfillment import assert_ro_in_bay_for_service_completion
 from ism.ism.doctype.repair_order.repair_order import (
 	_get_default_labor_rate,
 	build_service_package_row_fields,
@@ -1288,6 +1289,8 @@ def toggle_service_completion(
 			)
 		if found not in matched_rows:
 			matched_rows.append(found)
+
+	assert_ro_in_bay_for_service_completion(ro)
 
 	now_ts = now_datetime() if completed_flag else None
 	for target_service in matched_rows:

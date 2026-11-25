@@ -893,7 +893,9 @@ def seed_historical_telemetry(
 					"notes": f"Historical completed job ({pkg_name})",
 				}
 			],
-		}).insert(ignore_permissions=True)
+		})
+		ro.flags.ignore_bay_completion_guard = True
+		ro.insert(ignore_permissions=True)
 
 		m.register("ros", f"hist_{i + 1}", ro.name)
 		sim_ctx.track(ro)
