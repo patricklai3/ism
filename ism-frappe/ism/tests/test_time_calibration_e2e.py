@@ -115,6 +115,7 @@ class TestTimeCalibrationE2E(ISMTestCase):
 			vehicle=self.vehicle.name,
 			status=status,
 			approval_status="Approved",
+			vehicle_location="In Bay / Being Serviced",
 			manual_parts_hold=manual_parts_hold,
 			services=services,
 			time_logs=time_logs,
