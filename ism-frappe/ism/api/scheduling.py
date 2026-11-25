@@ -1,19 +1,23 @@
 # Copyright (c) 2026, patricklai3 and contributors
 # For license information, please see license.txt
 
+import json
 import re
 from datetime import date, datetime, time, timedelta
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 from urllib.parse import quote
 
 import frappe
 from frappe import _
 from frappe.utils import add_days, cint, get_url, getdate
 
+from ism.scheduling.assignment import plan_multi_service_split, select_technician_for_slot
 from ism.scheduling.capacity import (
 	INACTIVE_WORK_STATUSES,
+	NON_BLOCKING_ENTRY_STATUSES,
 	ShopCapacityWindow,
 	load_bay_tags_map,
+	load_package_tags_map,
 	parse_required_tags as _parse_required_tags,
 	resolve_candidate_bays,
 )
@@ -26,6 +30,13 @@ from ism.scheduling.entry_queries import (
 	find_conflicting_vehicle_entries,
 	intervals_overlap,
 	span_datetimes,
+)
+from ism.scheduling.skills import (
+	get_required_skills_for_repair_order,
+	get_required_skills_for_schedule_entry,
+	is_technician_qualified,
+	load_active_technician_profiles,
+	normalize_skill_requirements,
 )
 from ism.scheduling.slot_search import (
 	find_next_available_slot_batch,
@@ -40,6 +51,7 @@ from ism.scheduling.time_utils import (
 	normalize_time,
 	to_timedelta,
 )
+from ism.utils.demo_mode import is_demo_mode
 
 
 def _ensure_schedule_read_permission(include_bays: bool = False) -> None:
@@ -230,12 +242,13 @@ def get_available_bays(
 	]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET", "POST"])
 def auto_assign_bay(
 	date: str,
 	start_time: Union[str, time, timedelta],
 	duration_minutes: Union[int, float],
 	required_tags: Optional[Union[str, List[str]]] = None,
+	required_skills: Optional[Any] = None,
 ) -> str:
 	"""Auto-assign first available capable Service Bay using earliest-fit strategy.
 
@@ -249,7 +262,12 @@ def auto_assign_bay(
 		try:
 			from ism.api.technician_availability import get_technician_pool_availability
 
-			pool = get_technician_pool_availability(date, start_time, duration_minutes)
+			pool = get_technician_pool_availability(
+				date,
+				start_time,
+				duration_minutes,
+				required_skills=required_skills,
+			)
 			if not pool.get("is_available"):
 				frappe.throw(
 					_("Technician pool capacity exhausted for the selected time window on {0}.").format(date),
@@ -403,7 +421,7 @@ def resolve_technician_identifier(technician: Optional[str]) -> Optional[str]:
 	frappe.throw(_("Technician '{0}' does not exist.").format(cleaned), frappe.DoesNotExistError)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET", "POST"])
 def get_available_slots(
 	date: str,
 	duration_minutes: Union[int, float],
@@ -416,10 +434,11 @@ def get_available_slots(
 	repair_order: Optional[str] = None,
 	repair_vehicle: Optional[str] = None,
 	exclude_entry: Optional[str] = None,
+	required_skills: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
 	"""Return available slot dicts for date and duration across operating hours.
 
-	Supports multi-day working spans, technician filtering, vehicle overlap filtering, and include_all unavailable reasons.
+	Supports multi-day working spans, skill & technician filtering, vehicle overlap filtering, and include_all unavailable reasons.
 	"""
 	_ensure_schedule_read_permission(include_bays=True)
 	norm_date = normalize_date(date) or date
@@ -441,6 +460,12 @@ def get_available_slots(
 		else None
 	)
 
+	resolved_skills = (
+		normalize_skill_requirements(required_skills)
+		if required_skills is not None
+		else (get_required_skills_for_repair_order(clean_ro) if clean_ro else None)
+	)
+
 	return search_day_slots(
 		target_date=norm_date,
 		duration_minutes=duration_minutes,
@@ -451,6 +476,7 @@ def get_available_slots(
 		include_all=bool(cint(include_all)),
 		exclude_entry=clean_excl,
 		vehicle_identity=veh_identity,
+		required_skills=resolved_skills,
 	)
 
 
@@ -491,7 +517,7 @@ def get_calendar_events(*args, **kwargs):
 	return _get_events(*args, **kwargs)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET", "POST"])
 def find_next_available_slot(
 	from_date: Optional[str] = None,
 	duration_minutes: Union[int, float] = 60,
@@ -502,6 +528,7 @@ def find_next_available_slot(
 	repair_order: Optional[str] = None,
 	repair_vehicle: Optional[str] = None,
 	exclude_entry: Optional[str] = None,
+	required_skills: Optional[Any] = None,
 ) -> Optional[Dict[str, Any]]:
 	"""Search forward from from_date up to scheduling_horizon_days for the earliest date with available slots."""
 	_ensure_schedule_read_permission(include_bays=True)
@@ -524,6 +551,12 @@ def find_next_available_slot(
 		else None
 	)
 
+	resolved_skills = (
+		normalize_skill_requirements(required_skills)
+		if required_skills is not None
+		else (get_required_skills_for_repair_order(clean_ro) if clean_ro else None)
+	)
+
 	settings = get_shop_settings()
 	horizon = settings.get("scheduling_horizon_days") or 30
 	max_days = min(int(horizon), 30)
@@ -538,6 +571,7 @@ def find_next_available_slot(
 		technician=resolved_tech,
 		exclude_entry=clean_excl,
 		vehicle_identity=veh_identity,
+		required_skills=resolved_skills,
 	)
 
 
@@ -717,6 +751,7 @@ def _find_nearest_alternative_slots(
 	max_alternatives: int = 5,
 	vehicle_identity: Optional[Any] = None,
 	exclude_entry: Optional[str] = None,
+	required_skills: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
 	"""Find nearest open alternative slots on the requested date or subsequent days."""
 	try:
@@ -732,6 +767,7 @@ def _find_nearest_alternative_slots(
 		skip_holidays=True,
 		exclude_entry=exclude_entry,
 		vehicle_identity=vehicle_identity,
+		required_skills=required_skills,
 	)
 
 	alternatives: List[Dict[str, Any]] = []
@@ -774,6 +810,7 @@ def _find_nearest_alternative_slots(
 			max_alternatives=max_alternatives,
 			vehicle_identity=vehicle_identity,
 			exclude_entry=exclude_entry,
+			required_skills=required_skills,
 		)
 	return alternatives
 
@@ -790,6 +827,7 @@ def build_conflict_feedback(
 	schedule_entry_name: Optional[str] = None,
 	conflicting_entries: Optional[List[Dict[str, Any]]] = None,
 	vehicle_identity: Optional[Any] = None,
+	required_skills: Optional[Any] = None,
 ) -> Dict[str, Any]:
 	"""Build structured conflict response with deep links, resource IDs, and nearest alternatives."""
 	base_url = get_url()
@@ -824,6 +862,7 @@ def build_conflict_feedback(
 		technician=None if conflict_type in ("technician_conflict", "technician_on_leave") else technician,
 		vehicle_identity=alt_vehicle_identity,
 		exclude_entry=schedule_entry_name,
+		required_skills=required_skills,
 	)
 
 	return {
@@ -923,7 +962,202 @@ def _parse_selected_services(selected_services: Any) -> List[str]:
 	return result
 
 
-@frappe.whitelist()
+def _serialize_required_skills(reqs: Sequence[tuple[str, int]]) -> Optional[str]:
+	if not reqs:
+		return None
+	return json.dumps([[skill, int(diff)] for skill, diff in reqs])
+
+
+def _resolve_allocation_required_skills(
+	required_skills: Optional[Any],
+	repair_order: Optional[str],
+	selected_services: Sequence[str],
+	entry_type: str,
+) -> List[tuple[str, int]]:
+	if required_skills is not None:
+		return normalize_skill_requirements(required_skills)
+	if repair_order:
+		ro_reqs = get_required_skills_for_repair_order(
+			repair_order,
+			selected_service_names=selected_services or None,
+		)
+		if ro_reqs:
+			return ro_reqs
+	if entry_type:
+		return get_required_skills_for_schedule_entry({"entry_type": entry_type})
+	return []
+
+
+def _release_savepoint_safe(savepoint_name: str) -> None:
+	if hasattr(frappe.db, "release_savepoint"):
+		try:
+			frappe.db.release_savepoint(savepoint_name)
+		except Exception:
+			pass
+
+
+def _rollback_savepoint_safe(savepoint_name: str) -> None:
+	try:
+		frappe.db.rollback(save_point=savepoint_name)
+	except Exception:
+		pass
+
+
+def _acquire_canonical_allocation_locks(
+	schedule_entry_name: Optional[str],
+	settings: Dict[str, Any],
+) -> List[str]:
+	"""Acquire canonical ISM lock order: Schedule Entry -> Service Bay -> active technician Employee."""
+	if schedule_entry_name:
+		frappe.db.sql(
+			"""
+			SELECT `name`
+			FROM `tabSchedule Entry`
+			WHERE `name` = %s
+			ORDER BY `name` ASC
+			FOR UPDATE
+			""",
+			(schedule_entry_name,),
+		)
+
+	if frappe.db.exists("DocType", "Service Bay"):
+		sb = frappe.qb.DocType("Service Bay")
+		(
+			frappe.qb.from_(sb)
+			.select(sb.name)
+			.where(sb.is_active == 1)
+			.orderby(sb.name)
+			.for_update()
+			.run()
+		)
+
+	if frappe.db.exists("DocType", "Employee") and cint(settings.get("enable_technician_capacity")):
+		designation = (settings.get("technician_designation") or "Technician").strip()
+		emp = frappe.qb.DocType("Employee")
+		rows = (
+			frappe.qb.from_(emp)
+			.select(emp.name)
+			.where(emp.designation == designation)
+			.where(emp.status == "Active")
+			.orderby(emp.name)
+			.for_update()
+			.run(as_dict=True)
+		)
+		return [r["name"] for r in rows]
+	return []
+
+
+def _next_working_start_after_span(
+	span: Dict[str, Any],
+	settings: Dict[str, Any],
+	holiday_fn: Any,
+) -> tuple[str, str]:
+	"""Compute the next valid working (date, time) immediately after a completed span."""
+	op_start: timedelta = settings["operating_hours_start"]
+	op_end: timedelta = settings["operating_hours_end"]
+	bs_td: Optional[timedelta] = settings.get("break_start")
+	be_td: Optional[timedelta] = settings.get("break_end")
+
+	cur_dt = getdate(span["completion_date"])
+	cur_td = to_timedelta(span["completion_time"])
+
+	if bs_td and be_td and bs_td <= cur_td < be_td:
+		cur_td = be_td
+
+	if cur_td >= op_end or cur_td < op_start:
+		cur_dt = add_days(cur_dt, 1)
+		while holiday_fn(cur_dt):
+			cur_dt = add_days(cur_dt, 1)
+		cur_td = op_start
+
+	return str(cur_dt), format_timedelta(cur_td)
+
+
+def _get_tags_for_ro_services(repair_order: str, service_names: Sequence[str]) -> List[str]:
+	if not repair_order or not service_names or not frappe.db.exists("DocType", "Repair Order Service"):
+		return []
+	fields = ["name", "service_package"]
+	if frappe.db.has_column("Repair Order Service", "required_equipment_tags"):
+		fields.append("required_equipment_tags")
+	rows = frappe.get_all(
+		"Repair Order Service",
+		filters={"parent": repair_order, "parenttype": "Repair Order", "name": ["in", list(service_names)]},
+		fields=fields,
+		ignore_permissions=True,
+	)
+	tags_set: set[str] = set()
+	pkg_names: List[str] = []
+	for r in rows:
+		raw_tags = r.get("required_equipment_tags")
+		if raw_tags:
+			tags_set.update(_parse_required_tags(raw_tags))
+		elif r.get("service_package"):
+			pkg_names.append(str(r["service_package"]).strip())
+	if pkg_names:
+		pkg_tags = load_package_tags_map(pkg_names)
+		for pkg in pkg_names:
+			tags_set.update(pkg_tags.get(pkg, ()))
+	return sorted(tags_set)
+
+
+def _sync_allocated_ro_services(
+	repair_order: Optional[str],
+	schedule_entry_name: str,
+	service_names: Sequence[str],
+	assigned_technician: Optional[str],
+) -> None:
+	"""Link selected Repair Order Service rows to schedule_entry and sync assigned_technician."""
+	if not repair_order or not frappe.db.exists("DocType", "Repair Order Service"):
+		return
+	has_se_col = frappe.db.has_column("Repair Order Service", "schedule_entry")
+	if not has_se_col:
+		return
+
+	if service_names:
+		update_vals: Dict[str, Any] = {"schedule_entry": schedule_entry_name}
+		if assigned_technician is not None:
+			update_vals["assigned_technician"] = assigned_technician
+		frappe.db.set_value(
+			"Repair Order Service",
+			{"parent": repair_order, "parenttype": "Repair Order", "name": ["in", list(service_names)]},
+			update_vals,
+			update_modified=False,
+		)
+	elif assigned_technician is not None:
+		frappe.db.set_value(
+			"Repair Order Service",
+			{"parent": repair_order, "parenttype": "Repair Order", "schedule_entry": schedule_entry_name},
+			"assigned_technician",
+			assigned_technician,
+			update_modified=False,
+		)
+
+
+def _build_entry_result_dict(doc: Any, extra_warnings: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+	result: Dict[str, Any] = {
+		"name": doc.name,
+		"status": doc.status,
+		"scheduled_date": str(doc.scheduled_date),
+		"scheduled_time": str(doc.scheduled_time),
+		"completion_date": str(getattr(doc, "completion_date", None) or doc.scheduled_date),
+		"completion_time": str(getattr(doc, "completion_time", None) or doc.scheduled_time),
+		"service_bay": doc.service_bay,
+		"assigned_technician": doc.assigned_technician,
+		"assignment_mode": getattr(doc, "assignment_mode", None),
+		"assignment_locked": cint(getattr(doc, "assignment_locked", 0)),
+		"assignment_reason": getattr(doc, "assignment_reason", None),
+	}
+	warnings = list(getattr(doc.flags, "scheduling_warnings", None) or [])
+	if extra_warnings:
+		for w in extra_warnings:
+			if w not in warnings:
+				warnings.append(w)
+	if warnings:
+		result["warnings"] = warnings
+	return result
+
+
+@frappe.whitelist(methods=["POST"])
 def allocate_schedule_entry(
 	repair_order: Optional[str] = None,
 	entry_type: str = "Diagnostic",
@@ -939,8 +1173,10 @@ def allocate_schedule_entry(
 	provisional_vehicle_info: Optional[str] = None,
 	allow_technician_overlap: Union[int, bool] = 0,
 	clear_bay: Union[int, bool] = False,
+	auto_split_services: Union[int, bool] = 1,
+	required_skills: Optional[Any] = None,
 ) -> Dict[str, Any]:
-	"""Create or update a Schedule Entry and link allocated Repair Order services."""
+	"""Create or update a Schedule Entry, auto-assigning a qualified technician (or splitting multi-service ROs)."""
 	clean_entry_name = _validate_optional_str(schedule_entry_name, "Schedule Entry identifier")
 	clean_entry_name = clean_entry_name.strip() if clean_entry_name is not None else None
 	is_update = bool(clean_entry_name)
@@ -987,6 +1223,7 @@ def allocate_schedule_entry(
 	parsed_services = _parse_selected_services(selected_services)
 	allow_overlap = _is_truthy_flag(allow_technician_overlap)
 	clear_bay_flag = _is_truthy_flag(clear_bay)
+	auto_split_flag = _is_truthy_flag(auto_split_services)
 
 	if repair_order:
 		if not frappe.db.exists("Repair Order", repair_order):
@@ -995,8 +1232,16 @@ def allocate_schedule_entry(
 		if parsed_services:
 			frappe.has_permission("Repair Order", "write", doc=repair_order, throw=True)
 
+	effective_ro = repair_order or (doc.repair_order if is_update else None)
 	scheduled_date = normalize_date(scheduled_date) or scheduled_date
 	scheduled_time = normalize_time(scheduled_time) or scheduled_time
+	resolved_skills = _resolve_allocation_required_skills(
+		required_skills=required_skills,
+		repair_order=effective_ro,
+		selected_services=parsed_services,
+		entry_type=entry_type,
+	)
+	skills_json = _serialize_required_skills(resolved_skills)
 
 	explicit_clear_bay = clear_bay_flag or (service_bay is not None and service_bay.strip() == "")
 	resolved_bay: Optional[str] = None
@@ -1017,6 +1262,8 @@ def allocate_schedule_entry(
 			_throw_inactive_bay_error(effective_bay)
 
 	target_tech = resolve_technician_identifier(assigned_technician)
+	is_manual_override = bool(target_tech)
+	extra_warnings: List[str] = []
 
 	tech_check = None
 	if target_tech and scheduled_date and scheduled_time and not allow_overlap:
@@ -1039,11 +1286,27 @@ def allocate_schedule_entry(
 					duration_minutes=duration_int,
 					service_bay=effective_bay,
 					technician=target_tech,
-					repair_order=repair_order,
+					repair_order=effective_ro,
 					schedule_entry_name=clean_entry_name,
+					required_skills=resolved_skills,
+				)
+			if tech_check.get("reason") == "off_shift":
+				extra_warnings.append(
+					_("Assigned technician '{0}' is outside their configured weekly shift during this time window.").format(
+						target_tech
+					)
 				)
 		except ImportError:
 			tech_check = None
+
+	if is_manual_override and resolved_skills:
+		prof = load_active_technician_profiles([target_tech]).get(target_tech)
+		if prof and not is_technician_qualified(prof, resolved_skills):
+			extra_warnings.append(
+				_("Assigned technician '{0}' does not meet all required skill levels for this job (manual override).").format(
+					target_tech
+				)
+			)
 
 	if scheduled_date and scheduled_time:
 		break_window = _get_shop_break_window_for_start(scheduled_time)
@@ -1060,8 +1323,9 @@ def allocate_schedule_entry(
 				duration_minutes=duration_int,
 				service_bay=effective_bay,
 				technician=target_tech,
-				repair_order=repair_order,
+				repair_order=effective_ro,
 				schedule_entry_name=clean_entry_name,
+				required_skills=resolved_skills,
 			)
 
 	if tech_check and tech_check.get("conflicts"):
@@ -1077,9 +1341,10 @@ def allocate_schedule_entry(
 			duration_minutes=duration_int,
 			service_bay=effective_bay,
 			technician=target_tech,
-			repair_order=repair_order,
+			repair_order=effective_ro,
 			schedule_entry_name=clean_entry_name,
 			conflicting_entries=list(tech_check["conflicts"]),
+			required_skills=resolved_skills,
 		)
 
 	if effective_bay and scheduled_date and scheduled_time:
@@ -1102,13 +1367,14 @@ def allocate_schedule_entry(
 				duration_minutes=duration_int,
 				service_bay=effective_bay,
 				technician=target_tech,
-				repair_order=repair_order,
+				repair_order=effective_ro,
 				schedule_entry_name=clean_entry_name,
 				conflicting_entries=bay_conflicts,
+				required_skills=resolved_skills,
 			)
 
 	target_vehicle_payload: Dict[str, Any] = {
-		"repair_order": repair_order or (doc.repair_order if is_update else None),
+		"repair_order": effective_ro,
 		"customer": doc.customer if is_update else None,
 		"repair_vehicle": doc.repair_vehicle if is_update else None,
 		"provisional_customer_name": (
@@ -1158,15 +1424,155 @@ def allocate_schedule_entry(
 				duration_minutes=duration_int,
 				service_bay=effective_bay,
 				technician=target_tech,
-				repair_order=repair_order or (doc.repair_order if is_update else None),
+				repair_order=effective_ro,
 				schedule_entry_name=clean_entry_name,
 				conflicting_entries=veh_conflicts,
 				vehicle_identity=target_vehicle_identity,
+				required_skills=resolved_skills,
 			)
 
-	items_summary = _format_services_summary(parsed_services, repair_order)
+	items_summary = _format_services_summary(parsed_services, effective_ro)
+	settings = get_shop_settings()
+	enable_tech = cint(settings.get("enable_technician_capacity"))
+	target_status = (doc.status if is_update else "Scheduled") or "Scheduled"
+	should_auto_assign = (
+		not is_manual_override
+		and enable_tech == 1
+		and target_status not in NON_BLOCKING_ENTRY_STATUSES
+		and bool(scheduled_date)
+		and bool(scheduled_time)
+	)
 
+	assignment_mode = "Manual Override" if is_manual_override else ("Auto" if should_auto_assign else "Unassigned")
+	assignment_locked = 1 if is_manual_override else 0
+	assignment_reason = "Manual override by staff" if is_manual_override else ""
+
+	sp = f"ism_alloc_{frappe.generate_hash(length=8)}"
+	frappe.db.savepoint(sp)
 	try:
+		active_techs: List[str] = []
+		if should_auto_assign:
+			active_techs = _acquire_canonical_allocation_locks(
+				clean_entry_name if is_update else None,
+				settings,
+			)
+			if not (is_demo_mode() and not active_techs):
+				selection = select_technician_for_slot(
+					scheduled_date=scheduled_date,
+					scheduled_time=scheduled_time,
+					duration_minutes=duration_int,
+					required_skills=resolved_skills,
+					repair_order=effective_ro,
+					entry_type=entry_type,
+					waiter_preference=(getattr(doc, "waiter_preference", None) or "Drop-Off") if is_update else "Drop-Off",
+					is_comeback=bool(cint(getattr(doc, "is_comeback", 0))) if is_update else False,
+					exclude_entry=clean_entry_name if is_update else None,
+					candidate_employee_ids=active_techs,
+					settings=settings,
+				)
+
+				# Multi-service auto-split when no single technician holds all required skills
+				if not is_update and auto_split_flag and selection.get("needs_split") and effective_ro:
+					groups = plan_multi_service_split(
+						effective_ro,
+						selected_service_names=parsed_services or None,
+					)
+					if len(groups) > 1:
+						holiday_fn = build_holiday_checker(
+							settings.get("holiday_list"),
+							add_days(getdate(scheduled_date), -30),
+						)
+						cur_date = scheduled_date
+						cur_time = scheduled_time
+						split_results: List[Dict[str, Any]] = []
+
+						for g_idx, grp in enumerate(groups):
+							grp_svcs = list(grp.get("service_names") or [])
+							grp_reqs = list(grp.get("required_skills") or [])
+							grp_dur = max(15, int(grp.get("estimated_minutes") or 60))
+							grp_tags = _get_tags_for_ro_services(effective_ro, grp_svcs)
+
+							avail_bays = get_available_bays(
+								cur_date,
+								cur_time,
+								grp_dur,
+								required_tags=grp_tags or None,
+							)
+							avail_bay_names = [b["bay_name"] for b in avail_bays]
+							if g_idx == 0 and effective_bay and effective_bay in avail_bay_names:
+								grp_bay = effective_bay
+							elif avail_bay_names:
+								grp_bay = avail_bay_names[0]
+							else:
+								grp_bay = effective_bay if g_idx == 0 else None
+
+							grp_sel = select_technician_for_slot(
+								scheduled_date=cur_date,
+								scheduled_time=cur_time,
+								duration_minutes=grp_dur,
+								required_skills=grp_reqs,
+								repair_order=effective_ro,
+								entry_type=entry_type,
+								candidate_employee_ids=active_techs,
+								settings=settings,
+							)
+							grp_tech = grp_sel.get("assigned_technician")
+							grp_mode = grp_sel.get("assignment_mode") or ("Auto" if grp_tech else "Unassigned")
+							grp_reason = grp_sel.get("assignment_reason") or ""
+							grp_skills_json = _serialize_required_skills(grp_reqs)
+							grp_summary = _format_services_summary(grp_svcs, effective_ro)
+
+							split_doc = frappe.get_doc({
+								"doctype": "Schedule Entry",
+								"repair_order": effective_ro,
+								"entry_type": entry_type,
+								"scheduled_date": cur_date,
+								"scheduled_time": cur_time,
+								"estimated_duration": grp_dur,
+								"service_bay": grp_bay,
+								"assigned_technician": grp_tech,
+								"assignment_mode": grp_mode,
+								"assignment_locked": 0,
+								"assignment_reason": grp_reason,
+								"required_skills_json": grp_skills_json,
+								"provisional_customer_name": provisional_customer_name or None,
+								"provisional_vehicle_info": provisional_vehicle_info or None,
+								"notes": notes or None,
+								"items_summary": grp_summary,
+								"status": "Scheduled",
+							})
+							split_doc.insert()
+
+							_sync_allocated_ro_services(
+								repair_order=effective_ro,
+								schedule_entry_name=split_doc.name,
+								service_names=grp_svcs,
+								assigned_technician=split_doc.assigned_technician,
+							)
+
+							entry_dict = _build_entry_result_dict(split_doc)
+							entry_dict["service_names"] = grp_svcs
+							entry_dict["required_skills"] = [[s, d] for s, d in grp_reqs]
+							split_results.append(entry_dict)
+
+							span = _calculate_working_span(
+								cur_date,
+								cur_time,
+								grp_dur,
+								is_holiday_fn=holiday_fn,
+							)
+							cur_date, cur_time = _next_working_start_after_span(span, settings, holiday_fn)
+
+						_release_savepoint_safe(sp)
+						primary = dict(split_results[0])
+						primary["split_entries"] = split_results
+						return primary
+
+				target_tech = selection.get("assigned_technician")
+				assignment_mode = selection.get("assignment_mode") or ("Auto" if target_tech else "Unassigned")
+				assignment_locked = 0
+				assignment_reason = selection.get("assignment_reason") or ""
+
 		if is_update:
 			if repair_order:
 				doc.repair_order = repair_order
@@ -1179,6 +1585,14 @@ def allocate_schedule_entry(
 			elif resolved_bay is not None:
 				doc.service_bay = resolved_bay
 			doc.assigned_technician = target_tech
+			if hasattr(doc, "assignment_mode"):
+				doc.assignment_mode = assignment_mode
+			if hasattr(doc, "assignment_locked"):
+				doc.assignment_locked = assignment_locked
+			if hasattr(doc, "assignment_reason"):
+				doc.assignment_reason = assignment_reason
+			if hasattr(doc, "required_skills_json"):
+				doc.required_skills_json = skills_json
 			if notes is not None:
 				doc.notes = notes or None
 			if provisional_customer_name is not None:
@@ -1189,23 +1603,36 @@ def allocate_schedule_entry(
 				doc.items_summary = items_summary
 			doc.save()
 		else:
-			doc = frappe.get_doc({
+			doc_payload: Dict[str, Any] = {
 				"doctype": "Schedule Entry",
-				"repair_order": repair_order or None,
+				"repair_order": effective_ro,
 				"entry_type": entry_type,
 				"scheduled_date": scheduled_date,
 				"scheduled_time": scheduled_time,
 				"estimated_duration": duration_int,
 				"service_bay": effective_bay,
 				"assigned_technician": target_tech,
+				"assignment_mode": assignment_mode,
+				"assignment_locked": assignment_locked,
+				"assignment_reason": assignment_reason,
+				"required_skills_json": skills_json,
 				"provisional_customer_name": provisional_customer_name or None,
 				"provisional_vehicle_info": provisional_vehicle_info or None,
 				"notes": notes or None,
 				"items_summary": items_summary,
 				"status": "Scheduled",
-			})
+			}
+			doc = frappe.get_doc(doc_payload)
 			doc.insert()
+
+		_sync_allocated_ro_services(
+			repair_order=effective_ro,
+			schedule_entry_name=doc.name,
+			service_names=parsed_services,
+			assigned_technician=doc.assigned_technician,
+		)
 	except frappe.ValidationError as exc:
+		_rollback_savepoint_safe(sp)
 		err_msg = str(exc)
 		lowered_err = err_msg.lower()
 		reason_code = getattr(exc, "reason_code", None)
@@ -1226,35 +1653,19 @@ def allocate_schedule_entry(
 				duration_minutes=duration_int,
 				service_bay=effective_bay,
 				technician=target_tech,
-				repair_order=repair_order or (doc.repair_order if is_update else None),
+				repair_order=effective_ro,
 				schedule_entry_name=clean_entry_name,
 				vehicle_identity=target_vehicle_identity,
+				required_skills=resolved_skills,
 			)
 		raise
+	except Exception:
+		_rollback_savepoint_safe(sp)
+		raise
+	else:
+		_release_savepoint_safe(sp)
 
-	if parsed_services and repair_order and frappe.db.has_column("Repair Order Service", "schedule_entry"):
-		frappe.db.set_value(
-			"Repair Order Service",
-			{"parent": repair_order, "name": ["in", parsed_services]},
-			"schedule_entry",
-			doc.name,
-			update_modified=False,
-		)
-
-	result: Dict[str, Any] = {
-		"name": doc.name,
-		"status": doc.status,
-		"scheduled_date": str(doc.scheduled_date),
-		"scheduled_time": str(doc.scheduled_time),
-		"completion_date": str(getattr(doc, "completion_date", None) or doc.scheduled_date),
-		"completion_time": str(getattr(doc, "completion_time", None) or doc.scheduled_time),
-		"service_bay": doc.service_bay,
-		"assigned_technician": doc.assigned_technician,
-	}
-	warnings = getattr(doc.flags, "scheduling_warnings", None) or []
-	if warnings:
-		result["warnings"] = list(warnings)
-	return result
+	return _build_entry_result_dict(doc, extra_warnings=extra_warnings)
 
 
 def _resolve_provisional_customer_for_entry(provisional_name: Optional[str]) -> Optional[str]:
@@ -1516,6 +1927,12 @@ def create_repair_order_from_schedule_entry(
 	ro.insert()
 
 	se.db_set("repair_order", ro.name)
+	try:
+		from ism.scheduling.rebalancer import on_repair_order_lock_assignments
+
+		on_repair_order_lock_assignments(ro)
+	except ImportError:
+		pass
 	try:
 		from ism.portal.pin_vault import transfer_schedule_entry_pin_to_ro
 
