@@ -2,17 +2,21 @@
 # For license information, please see license.txt
 
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import frappe
 from frappe import _
 from frappe.database.query import Engine
-from frappe.utils import cint, flt, now_datetime, time_diff_in_hours, today
+from frappe.utils import cint, flt, get_datetime, now_datetime, today
 
 from ism.api._validation import escape_like
 from ism.api.parts import _resolve_default_warehouse as get_default_warehouse
 from ism.api.parts import get_items_available_stock_batch
 from ism.api.sms import dispatch_sms
+from ism.permissions import get_employee_for_user
+from ism.scheduling.time_utils import calculate_net_working_session
+from ism.time_calibration.contracts import SESSION_CLOSED, SESSION_OPEN, get_calibration_settings
 from ism.utils.demo_mode import is_demo_mode
 
 IN_BAY_VEHICLE_LOCATION = "In Bay / Being Serviced"
@@ -290,6 +294,155 @@ def _publish_ro_execution_updated(ro, action: str) -> None:
 		)
 
 
+def _resolve_pickup_technician(ro, user: Optional[str]) -> Optional[str]:
+	"""Resolve Employee for the acting user, falling back to a single assigned RO technician."""
+	employee = get_employee_for_user(user)
+	if employee:
+		return employee
+
+	services = ro.services or []
+	approved_techs = {s.assigned_technician for s in services if s.status == "Approved" and s.assigned_technician}
+	if len(approved_techs) == 1:
+		return next(iter(approved_techs))
+	if not approved_techs:
+		all_techs = {s.assigned_technician for s in services if s.assigned_technician}
+		if len(all_techs) == 1:
+			return next(iter(all_techs))
+	return None
+
+
+def _get_overlapping_technician_intervals(
+	ro_name: Optional[str],
+	technician: Optional[str],
+	start_dt: datetime,
+	end_dt: datetime,
+) -> List[tuple[datetime, datetime]]:
+	"""Fetch closed Repair Order Time Log spans for the same technician on other ROs."""
+	if not technician or not start_dt or not end_dt or end_dt <= start_dt:
+		return []
+
+	filters: Dict[str, Any] = {
+		"parenttype": "Repair Order",
+		"technician": technician,
+		"session_status": ["!=", SESSION_OPEN],
+		"from_time": ["<", end_dt],
+		"to_time": [">", start_dt],
+	}
+	if ro_name:
+		filters["parent"] = ["!=", ro_name]
+
+	rows = frappe.get_all(
+		"Repair Order Time Log",
+		filters=filters,
+		fields=["from_time", "to_time"],
+	)
+	intervals: List[tuple[datetime, datetime]] = []
+	for row in rows:
+		r_start = row.get("from_time")
+		r_end = row.get("to_time")
+		if not r_start or not r_end:
+			continue
+		dt_start = get_datetime(r_start)
+		dt_end = get_datetime(r_end)
+		if dt_end > dt_start:
+			intervals.append((dt_start, dt_end))
+	return intervals
+
+
+def _close_time_log_row(ro, row, end_dt: datetime) -> None:
+	"""Close or recalculate a Repair Order Time Log row using net working session math."""
+	end_val = get_datetime(end_dt) if not isinstance(end_dt, datetime) else end_dt
+	row.to_time = end_val
+	row.session_status = SESSION_CLOSED
+
+	start_val = get_datetime(row.from_time) if row.from_time else None
+	if not start_val or end_val <= start_val:
+		row.raw_hours = 0.0
+		row.time_in_hours = 0.0
+		row.deducted_overlap_hours = 0.0
+		row.spans_overnight = 0
+		row.needs_review = 0
+		row.flag_reason = ""
+		row._time_log_computed = True
+		return
+
+	cal_settings = get_calibration_settings()
+	exclude_intervals = _get_overlapping_technician_intervals(
+		getattr(ro, "name", None),
+		row.technician,
+		start_val,
+		end_val,
+	)
+	metrics = calculate_net_working_session(
+		start_val,
+		end_val,
+		max_single_session_hours=cal_settings.max_single_session_hours,
+		exclude_intervals=exclude_intervals,
+	)
+	row.raw_hours = flt(metrics["raw_hours"], 3)
+	row.time_in_hours = flt(metrics["net_hours"], 3)
+	row.deducted_overlap_hours = flt(metrics["deducted_overlap_hours"], 3)
+	row.spans_overnight = 1 if metrics["spans_overnight"] else 0
+	row.needs_review = 1 if metrics["needs_review"] else 0
+	row.flag_reason = metrics["flag_reason"] or ""
+	row._time_log_computed = True
+
+
+def rollup_ro_total_bay_hours(ro) -> float:
+	"""Roll up total_bay_hours from all closed Repair Order Time Log rows."""
+	total = flt(
+		sum(flt(r.time_in_hours) for r in (ro.time_logs or []) if r.session_status != SESSION_OPEN),
+		3,
+	)
+	ro.total_bay_hours = total
+	return total
+
+
+def recalculate_ro_time_logs(ro) -> None:
+	"""Recalculate modified closed time_logs rows and roll up total_bay_hours in validate."""
+	if not getattr(ro, "time_logs", None):
+		return
+
+	prev_doc = ro.get_doc_before_save() if not ro.is_new() and hasattr(ro, "get_doc_before_save") else None
+	prev_by_name = (
+		{r.name: r for r in (prev_doc.time_logs or []) if getattr(r, "name", None)}
+		if prev_doc is not None
+		else {}
+	)
+
+	for row in ro.time_logs:
+		if row.session_status == SESSION_OPEN:
+			continue
+		if getattr(row, "_time_log_computed", False):
+			row._time_log_computed = False
+			continue
+		if not (row.from_time and row.to_time):
+			# Preserve manually seeded tests where only time_in_hours is set without from_time/to_time
+			continue
+
+		start_dt = get_datetime(row.from_time)
+		end_dt = get_datetime(row.to_time)
+		prev = prev_by_name.get(row.name) if getattr(row, "name", None) else None
+		prev_start = get_datetime(prev.from_time) if (prev and prev.from_time) else None
+		prev_end = get_datetime(prev.to_time) if (prev and prev.to_time) else None
+
+		times_modified = (
+			prev is not None
+			and (
+				prev_start != start_dt
+				or prev_end != end_dt
+				or getattr(prev, "technician", None) != row.technician
+			)
+		)
+		needs_zero_recalc = flt(row.time_in_hours) == 0.0 and end_dt > start_dt
+
+		if times_modified or needs_zero_recalc:
+			_close_time_log_row(ro, row, end_dt)
+			row._time_log_computed = False
+
+	rollup_ro_total_bay_hours(ro)
+
+
 def pick_up_ro_vehicle(ro) -> Dict[str, Any]:
 	"""Technician pulls vehicle from lot into service bay."""
 	ro.check_permission("write")
@@ -312,8 +465,43 @@ def pick_up_ro_vehicle(ro) -> Dict[str, Any]:
 				)
 			)
 
-	ro.picked_up_at = now_datetime()
-	ro.picked_up_by = frappe.session.user
+	now = now_datetime()
+	actor_user = frappe.session.user
+	employee = _resolve_pickup_technician(ro, actor_user)
+
+	open_rows = [r for r in (ro.time_logs or []) if r.session_status == SESSION_OPEN]
+	keep_existing_open = False
+	for open_row in open_rows:
+		same_actor_or_tech = (
+			(employee and open_row.technician == employee)
+			or (not employee and not open_row.technician and open_row.actor_user == actor_user)
+		)
+		if same_actor_or_tech and not keep_existing_open:
+			keep_existing_open = True
+		else:
+			_close_time_log_row(ro, open_row, now)
+
+	if not keep_existing_open:
+		ro.append(
+			"time_logs",
+			{
+				"technician": employee,
+				"actor_user": actor_user,
+				"from_time": now,
+				"session_status": SESSION_OPEN,
+				"raw_hours": 0.0,
+				"time_in_hours": 0.0,
+				"deducted_overlap_hours": 0.0,
+				"spans_overnight": 0,
+				"needs_review": 0,
+				"flag_reason": "",
+			},
+		)
+
+	rollup_ro_total_bay_hours(ro)
+
+	ro.picked_up_at = now
+	ro.picked_up_by = actor_user
 	ro.vehicle_location = "In Bay / Being Serviced"
 	if ro.status in ["Draft Estimate", "Pending Authorization", "Waiting on Parts"]:
 		ro.status = "Authorized - In Progress"
@@ -334,12 +522,40 @@ def park_ro_vehicle(ro, odometer_out=None, require_odometer=False, temporary=Fal
 	is_temporary = _as_bool(temporary)
 
 	prev_status = ro.status
-	ro.parked_at = now_datetime()
+	now = now_datetime()
+	ro.parked_at = now
 	ro.parked_by = frappe.session.user
 	if parsed_odo is not None:
 		ro.odometer_out = parsed_odo
-	if ro.picked_up_at:
-		ro.total_bay_hours = flt(time_diff_in_hours(ro.parked_at, ro.picked_up_at), 2)
+
+	open_rows = [r for r in (ro.time_logs or []) if r.session_status == SESSION_OPEN]
+	if open_rows:
+		for row in open_rows:
+			_close_time_log_row(ro, row, now)
+	elif ro.picked_up_at and not (ro.time_logs or []):
+		picked_dt = get_datetime(ro.picked_up_at)
+		already_logged = any(
+			r.from_time and get_datetime(r.from_time) == picked_dt
+			for r in (ro.time_logs or [])
+		)
+		if not already_logged:
+			legacy_actor = ro.picked_up_by or frappe.session.user
+			legacy_tech = _resolve_pickup_technician(ro, legacy_actor)
+			synthesized = ro.append(
+				"time_logs",
+				{
+					"technician": legacy_tech,
+					"actor_user": legacy_actor,
+					"from_time": picked_dt,
+					"session_status": SESSION_OPEN,
+					"raw_hours": 0.0,
+					"time_in_hours": 0.0,
+					"deducted_overlap_hours": 0.0,
+				},
+			)
+			_close_time_log_row(ro, synthesized, now)
+
+	rollup_ro_total_bay_hours(ro)
 
 	has_approved = any(s.status == "Approved" for s in ro.services)
 	has_pending = any(s.status in ["Draft", "Estimating", "Pending Approval"] for s in ro.services)
@@ -473,8 +689,6 @@ def toggle_ro_service_completion(ro, service_row_id=None, is_completed=None, **k
 	if target_service.is_completed:
 		target_service.completed_at = now_datetime()
 		target_service.completed_by = frappe.session.user
-		if ro.picked_up_at:
-			target_service.actual_duration_hours = flt(time_diff_in_hours(target_service.completed_at, ro.picked_up_at), 2)
 	else:
 		target_service.completed_at = None
 		target_service.completed_by = None

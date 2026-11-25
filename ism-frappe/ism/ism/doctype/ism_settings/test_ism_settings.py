@@ -430,3 +430,51 @@ class TestISMSettings(ISMTestCase):
 		with patch("frappe.msgprint") as mock_msgprint:
 			off_doc.validate()
 		mock_msgprint.assert_not_called()
+
+	def test_time_calibration_migrated_zero_defaults_and_bounds(self):
+		"""Verify migrated Single docs with zero/unset Time Calibration fields coerce to defaults while invalid bounds still fail."""
+		doc = frappe.get_single("ISM Settings")
+		doc.time_calibration_mode = ""
+		doc.calibration_prior_strength = 0.0
+		doc.calibration_overlap_prior_strength = 0.0
+		doc.calibration_half_life_days = 0
+		doc.calibration_min_ratio = 0.0
+		doc.calibration_max_ratio = 0.0
+		doc.calibration_drift_alert_pct = 0.0
+		doc.calibration_max_single_session_hours = 0.0
+
+		doc.save(ignore_permissions=True)
+		reloaded = frappe.get_single("ISM Settings")
+		self.assertEqual(reloaded.time_calibration_mode, "Shadow (Observe Only)")
+		self.assertAlmostEqual(float(reloaded.calibration_prior_strength), 5.0, places=2)
+		self.assertAlmostEqual(float(reloaded.calibration_overlap_prior_strength), 5.0, places=2)
+		self.assertEqual(int(reloaded.calibration_half_life_days), 180)
+		self.assertAlmostEqual(float(reloaded.calibration_min_ratio), 0.20, places=2)
+		self.assertAlmostEqual(float(reloaded.calibration_max_ratio), 4.00, places=2)
+		self.assertAlmostEqual(float(reloaded.calibration_drift_alert_pct), 25.0, places=2)
+		self.assertAlmostEqual(float(reloaded.calibration_max_single_session_hours), 8.5, places=2)
+
+		invalid_cases = [
+			("time_calibration_mode", "InvalidMode"),
+			("calibration_prior_strength", -1.0),
+			("calibration_prior_strength", 0.1),
+			("calibration_prior_strength", 99.0),
+			("calibration_overlap_prior_strength", 0.2),
+			("calibration_overlap_prior_strength", 60.0),
+			("calibration_half_life_days", 7),
+			("calibration_half_life_days", 2000),
+			("calibration_min_ratio", 0.01),
+			("calibration_min_ratio", 0.95),
+			("calibration_max_ratio", 1.10),
+			("calibration_max_ratio", 15.0),
+			("calibration_drift_alert_pct", 2.0),
+			("calibration_drift_alert_pct", 150.0),
+			("calibration_max_single_session_hours", 0.5),
+			("calibration_max_single_session_hours", 30.0),
+		]
+		for fieldname, bad_val in invalid_cases:
+			bad_doc = frappe.new_doc("ISM Settings")
+			setattr(bad_doc, fieldname, bad_val)
+			with self.subTest(fieldname=fieldname, bad_val=bad_val):
+				with self.assertRaises(frappe.ValidationError):
+					bad_doc.validate()

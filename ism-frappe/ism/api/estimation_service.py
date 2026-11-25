@@ -17,6 +17,14 @@ from ism.scheduling.estimation_light import (
 	estimate_total_duration,
 	get_sigma_for_item,
 )
+from ism.time_calibration.contracts import (
+	apply_overlap_discounts_to_operations,
+	derive_overlap_group_info,
+	get_calibration_settings,
+	is_diagnostic_service,
+	resolve_package_calibrated_params,
+)
+from ism.utils.tesla_manual import detect_service_side
 
 _MIN_PERCENTILE = 0.50
 _MAX_PERCENTILE = 1.0
@@ -298,21 +306,39 @@ def _prefetch_items_meta(item_codes: List[str]) -> Dict[str, Dict[str, Any]]:
 	return {r["name"]: r for r in rows}
 
 
-def _prefetch_package_hours(package_names: List[str]) -> Dict[str, float]:
-	"""Batch-load standard_labor_hours for Service Packages."""
+_PACKAGE_CALIBRATION_FIELDS: List[str] = [
+	"name",
+	"package_name",
+	"standard_labor_hours",
+	"calibrated_median_minutes",
+	"calibrated_sigma",
+	"overlap_group",
+	"correction_code",
+	"exclude_from_time_calibration",
+]
+
+
+def _prefetch_packages_meta(package_names: List[str]) -> Dict[str, Dict[str, Any]]:
+	"""Batch-load FRT and operational time calibration metadata for Service Packages."""
 	unique_pkgs = list({str(p).strip() for p in package_names if p})
 	if not unique_pkgs or not frappe.db.exists("DocType", "Service Package"):
 		return {}
-	rows = frappe.get_list(
+	rows = frappe.get_all(
 		"Service Package",
 		filters={"name": ["in", unique_pkgs]},
-		fields=["name", "standard_labor_hours"],
+		fields=_PACKAGE_CALIBRATION_FIELDS,
 	)
+	return {r["name"]: r for r in rows}
+
+
+def _prefetch_package_hours(package_names: List[str]) -> Dict[str, float]:
+	"""Batch-load standard_labor_hours for Service Packages."""
+	meta_map = _prefetch_packages_meta(package_names)
 	out: Dict[str, float] = {}
-	for r in rows:
-		val = flt(r.get("standard_labor_hours"))
+	for name, row in meta_map.items():
+		val = flt(row.get("standard_labor_hours"))
 		if val > 0:
-			out[r["name"]] = val
+			out[name] = val
 	return out
 
 
@@ -417,7 +443,7 @@ def get_estimate(item_code: Optional[str] = None, **kwargs) -> Dict[str, Any]:
 			item_code=clean_code,
 		)
 		if emp is not None:
-			emp_p_pure, sample_count, _ = emp
+			emp_p_pure, sample_count, _raw_emp = emp
 			return {
 				"duration_minutes": emp_p_pure + opts["buffer_padding"],
 				"p_pure": emp_p_pure,
@@ -427,6 +453,23 @@ def get_estimate(item_code: Optional[str] = None, **kwargs) -> Dict[str, Any]:
 				"empirical_used": True,
 				"sample_count": sample_count,
 			}
+
+	raw_pkg = kwargs.get("service_package")
+	pkg_name = raw_pkg.strip() if isinstance(raw_pkg, str) and raw_pkg.strip() else None
+	if pkg_name:
+		cal_settings = get_calibration_settings(settings)
+		if cal_settings.is_active:
+			pkg_meta = _prefetch_packages_meta([pkg_name]).get(pkg_name)
+			if pkg_meta and not is_diagnostic_service(kwargs, pkg_meta):
+				cal_params = resolve_package_calibrated_params(
+					pkg_meta,
+					default_sigma=sigma,
+					settings=cal_settings,
+				)
+				if cal_params["is_calibrated"]:
+					frt = cal_params["median_minutes"]
+					if opts["sigma_override"] is None:
+						sigma = cal_params["sigma"]
 
 	if frt is None or frt <= 0:
 		res = {
@@ -673,10 +716,16 @@ def estimate_repair_order(repair_order: Optional[str] = None, **kwargs) -> Dict[
 			item_codes.append(str(item_code).strip())
 		item_codes.extend(_extract_part_item_codes(getattr(s, "parts", None)))
 
-	package_hours = _prefetch_package_hours(pkg_names)
+	packages_meta = _prefetch_packages_meta(pkg_names)
+	package_hours = {
+		name: flt(meta.get("standard_labor_hours"))
+		for name, meta in packages_meta.items()
+		if flt(meta.get("standard_labor_hours")) > 0
+	}
 	items_meta = _prefetch_items_meta(item_codes)
+	cal_settings = get_calibration_settings(settings)
 
-	operations: List[Dict[str, float]] = []
+	operations: List[Dict[str, Any]] = []
 	empirical_sample_counts: Dict[str, int] = {}
 	single_emp_p_pure: Optional[int] = None
 	z_pct = _Z_SCORES.get(opts["percentile"])
@@ -701,6 +750,57 @@ def estimate_repair_order(repair_order: Optional[str] = None, **kwargs) -> Dict[
 				operations.append({"flat_rate_minutes": float(max(0.1, eff_frt)), "sigma": float(sig)})
 				continue
 
+		pkg_name = getattr(s, "service_package", None)
+		pkg_meta = packages_meta.get(pkg_name) if pkg_name else None
+
+		if cal_settings.is_active:
+			diag = is_diagnostic_service(s, pkg_meta)
+			op_entry: Optional[Dict[str, Any]] = None
+			if pkg_meta and not diag:
+				cal_params = resolve_package_calibrated_params(
+					pkg_meta,
+					default_sigma=sig,
+					settings=cal_settings,
+				)
+				if cal_params["is_calibrated"]:
+					op_entry = {
+						"flat_rate_minutes": float(cal_params["median_minutes"]),
+						"sigma": float(cal_params["sigma"]),
+						"service_package": pkg_name,
+						"overlap_group": cal_params["overlap_group"],
+						"correction_code": getattr(s, "correction_code", None) or pkg_meta.get("correction_code"),
+					}
+
+			if op_entry is None:
+				frt_min = _resolve_service_frt_minutes(s, package_hours=package_hours, items_meta=items_meta)
+				if frt_min is not None and frt_min > 0:
+					op_entry = {
+						"flat_rate_minutes": float(frt_min),
+						"sigma": float(sig),
+					}
+					if not diag:
+						corr_code = getattr(s, "correction_code", None) or (
+							pkg_meta.get("correction_code") if pkg_meta else None
+						)
+						explicit_grp = pkg_meta.get("overlap_group") if pkg_meta else None
+						grp_code, _grp_label, _is_auto = derive_overlap_group_info(corr_code, explicit_grp)
+						op_entry["overlap_group"] = grp_code
+						op_entry["correction_code"] = corr_code
+
+			if op_entry is not None:
+				if not diag:
+					raw_pos = str(getattr(s, "service_position", None) or "").strip()
+					if raw_pos in ("LH", "RH", "None"):
+						pos = raw_pos
+					else:
+						pos = detect_service_side(
+							getattr(s, "service_title", "") or "",
+							op_entry.get("correction_code"),
+						)
+					op_entry["service_position"] = pos
+				operations.append(op_entry)
+			continue
+
 		frt_min = _resolve_service_frt_minutes(s, package_hours=package_hours, items_meta=items_meta)
 		if frt_min is not None and frt_min > 0:
 			operations.append({"flat_rate_minutes": float(frt_min), "sigma": float(sig)})
@@ -713,6 +813,8 @@ def estimate_repair_order(repair_order: Optional[str] = None, **kwargs) -> Dict[
 				"flat_rate_minutes": float(diag_duration),
 				"sigma": float(diag_sigma),
 			})
+	elif cal_settings.is_active:
+		operations = apply_overlap_discounts_to_operations(operations)
 
 	if opts["empirical"] and len(operations) == 1 and single_emp_p_pure is not None and len(empirical_sample_counts) == 1:
 		res = {

@@ -667,6 +667,8 @@ class SimBuilder:
 		ro.reload()
 
 		logs = self._time_logs_cfg or [{"technician": tech_name, "hours": 1.0, "from_time": None, "to_time": None, "notes": "Bay service execution"}]
+		if logs:
+			ro.set("time_logs", [r for r in (ro.time_logs or []) if r.session_status != "Open"])
 		for log_cfg in logs:
 			log_tech = self.ctx.resolve("techs", log_cfg.get("technician") or tech_name)
 			hrs = flt(log_cfg.get("hours") or 1.0)

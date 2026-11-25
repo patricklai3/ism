@@ -1,0 +1,161 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:group_code",
+ "creation": "2026-11-25 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "group_code",
+  "group_label",
+  "is_auto_derived",
+  "cb_calibration",
+  "calibrated_overlap_factor",
+  "manual_overlap_factor",
+  "effective_overlap_factor",
+  "sb_stats",
+  "bundle_sample_count",
+  "effective_bundle_weight",
+  "last_calibrated_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "group_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Group Code",
+   "reqd": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "group_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Group Label",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "is_auto_derived",
+   "fieldtype": "Check",
+   "label": "Is Auto-Derived",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_calibration",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1.0",
+   "description": "Learned same-corner overlap factor in [0.35, 1.0]. Starts at neutral prior 1.0.",
+   "fieldname": "calibrated_overlap_factor",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Calibrated Overlap Factor",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "description": "Optional manager override in [0.25, 1.0]. Leave 0 or empty to use the calibrated factor.",
+   "fieldname": "manual_overlap_factor",
+   "fieldtype": "Float",
+   "label": "Manual Overlap Factor",
+   "precision": "3"
+  },
+  {
+   "default": "1.0",
+   "description": "Manual override if set (> 0), otherwise calibrated overlap factor.",
+   "fieldname": "effective_overlap_factor",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Effective Overlap Factor",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_stats",
+   "fieldtype": "Section Break",
+   "label": "Calibration Statistics"
+  },
+  {
+   "default": "0",
+   "fieldname": "bundle_sample_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Bundle Sample Count",
+   "read_only": 1
+  },
+  {
+   "default": "0.0",
+   "fieldname": "effective_bundle_weight",
+   "fieldtype": "Float",
+   "label": "Effective Bundle Weight",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_calibrated_at",
+   "fieldtype": "Datetime",
+   "label": "Last Calibrated At",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-11-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "ISM",
+ "name": "Service Overlap Group",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "ISM Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "ISM Service Advisor",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "ISM Technician"
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "group_code,group_label",
+ "show_name_in_global_search": 1,
+ "sort_field": "group_code",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "group_label",
+ "track_changes": 1
+}

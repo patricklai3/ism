@@ -3,11 +3,11 @@
 
 import re
 from datetime import date, datetime, time, timedelta
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Union
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, cint, getdate
+from frappe.utils import add_days, cint, get_datetime, getdate
 
 DEFAULT_SHOP_SETTINGS: Dict[str, Any] = {
 	"operating_hours_start": timedelta(hours=8),
@@ -479,4 +479,171 @@ def calculate_working_span(
 			"end_date": str(curr_date),
 			"end_time": comp_clock,
 		},
+	}
+
+
+def _coerce_datetime(val: Union[datetime, str, None]) -> Optional[datetime]:
+	if val is None or val == "":
+		return None
+	if isinstance(val, datetime):
+		return val
+	return get_datetime(val)
+
+
+def subtract_intervals(
+	base_start: datetime,
+	base_end: datetime,
+	exclude_intervals: Sequence[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
+	"""Subtract a sequence of [start, end] intervals from [base_start, base_end].
+
+	Returns sorted, disjoint remaining (start, end) datetime spans with end > start.
+	"""
+	start_dt = _coerce_datetime(base_start)
+	end_dt = _coerce_datetime(base_end)
+	if start_dt is None or end_dt is None or end_dt <= start_dt:
+		return []
+
+	clipped: list[tuple[datetime, datetime]] = []
+	for interval in exclude_intervals or ():
+		if not interval or len(interval) < 2:
+			continue
+		ex_start = _coerce_datetime(interval[0])
+		ex_end = _coerce_datetime(interval[1])
+		if ex_start is None or ex_end is None or ex_end <= ex_start:
+			continue
+		clamped_s = max(ex_start, start_dt)
+		clamped_e = min(ex_end, end_dt)
+		if clamped_e > clamped_s:
+			clipped.append((clamped_s, clamped_e))
+
+	if not clipped:
+		return [(start_dt, end_dt)]
+
+	clipped.sort(key=lambda item: (item[0], item[1]))
+	merged: list[tuple[datetime, datetime]] = [clipped[0]]
+	for ex_s, ex_e in clipped[1:]:
+		prev_s, prev_e = merged[-1]
+		if ex_s <= prev_e:
+			merged[-1] = (prev_s, max(prev_e, ex_e))
+		else:
+			merged.append((ex_s, ex_e))
+
+	remaining: list[tuple[datetime, datetime]] = []
+	cursor = start_dt
+	for ex_s, ex_e in merged:
+		if ex_s > cursor:
+			remaining.append((cursor, ex_s))
+		if ex_e > cursor:
+			cursor = ex_e
+	if cursor < end_dt:
+		remaining.append((cursor, end_dt))
+	return remaining
+
+
+def calculate_net_working_session(
+	start_dt: datetime,
+	end_dt: datetime,
+	*,
+	settings: Optional[Dict[str, Any]] = None,
+	is_holiday_fn: Optional[Callable[[date], bool]] = None,
+	max_single_session_hours: float = 8.5,
+	exclude_intervals: Optional[Sequence[tuple[datetime, datetime]]] = None,
+) -> Dict[str, Any]:
+	"""Compute raw_hours, net_hours, deducted_overlap_hours, spans_overnight, needs_review, flag_reason.
+
+	- Same-day (`start_dt.date() == end_dt.date()`): subtract `exclude_intervals` AND configured
+	  shop lunch break (`break_start..break_end`), preserving early-start, past-closing, and
+	  weekend/holiday overtime.
+	- Multi-day (`start_dt.date() != end_dt.date()`): subtract `exclude_intervals`, clip remaining
+	  spans to configured `operating_hours_start..operating_hours_end` minus lunch on non-holiday
+	  days, and set `spans_overnight=True`, `needs_review=True`,
+	  `flag_reason="Overnight / Multi-Day Session"`.
+	- If `net_hours > max_single_session_hours`: set `needs_review=True` and include
+	  `"Oversized Session"` in `flag_reason`.
+	"""
+	s_dt = _coerce_datetime(start_dt)
+	e_dt = _coerce_datetime(end_dt)
+	if s_dt is None or e_dt is None or e_dt <= s_dt:
+		return {
+			"raw_hours": 0.0,
+			"net_hours": 0.0,
+			"deducted_overlap_hours": 0.0,
+			"spans_overnight": False,
+			"needs_review": False,
+			"flag_reason": "",
+		}
+
+	cfg = settings if settings is not None else get_shop_settings()
+	raw_op_start = cfg.get("operating_hours_start")
+	raw_op_end = cfg.get("operating_hours_end")
+	raw_bs = cfg.get("break_start")
+	raw_be = cfg.get("break_end")
+
+	op_start = to_timedelta(raw_op_start) if _has_time_value(raw_op_start) else None
+	op_end = to_timedelta(raw_op_end) if _has_time_value(raw_op_end) else None
+	bs_td = to_timedelta(raw_bs) if _has_time_value(raw_bs) else None
+	be_td = to_timedelta(raw_be) if _has_time_value(raw_be) else None
+	has_lunch = bool(bs_td is not None and be_td is not None and be_td > bs_td)
+	holiday_list = cfg.get("holiday_list")
+
+	raw_seconds = (e_dt - s_dt).total_seconds()
+	spans_overnight = s_dt.date() != e_dt.date()
+
+	base_working_spans: list[tuple[datetime, datetime]] = []
+	if not spans_overnight:
+		day_midnight = datetime.combine(s_dt.date(), time.min)
+		lunch_exclusions = [(day_midnight + bs_td, day_midnight + be_td)] if has_lunch else []
+		base_working_spans = subtract_intervals(s_dt, e_dt, lunch_exclusions)
+	else:
+		has_op_hours = bool(op_start is not None and op_end is not None and op_end > op_start)
+		curr_date = s_dt.date()
+		last_date = e_dt.date()
+		while curr_date <= last_date:
+			is_hol = is_holiday_fn(curr_date) if is_holiday_fn else _default_is_holiday(curr_date, holiday_list)
+			if not is_hol:
+				day_midnight = datetime.combine(curr_date, time.min)
+				if has_op_hours:
+					win_start = max(s_dt, day_midnight + op_start)
+					win_end = min(e_dt, day_midnight + op_end)
+				else:
+					win_start = max(s_dt, day_midnight)
+					win_end = min(e_dt, day_midnight + timedelta(days=1))
+
+				if win_end > win_start:
+					lunch_exclusions = [(day_midnight + bs_td, day_midnight + be_td)] if has_lunch else []
+					base_working_spans.extend(subtract_intervals(win_start, win_end, lunch_exclusions))
+			curr_date = add_days(curr_date, 1)
+
+	if exclude_intervals:
+		final_spans: list[tuple[datetime, datetime]] = []
+		for span_s, span_e in base_working_spans:
+			final_spans.extend(subtract_intervals(span_s, span_e, exclude_intervals))
+	else:
+		final_spans = base_working_spans
+
+	base_working_seconds = sum((e - s).total_seconds() for s, e in base_working_spans)
+	net_seconds = sum((e - s).total_seconds() for s, e in final_spans)
+	deducted_overlap_seconds = max(0.0, base_working_seconds - net_seconds)
+
+	raw_hours = round(raw_seconds / 3600.0, 3)
+	net_hours = round(net_seconds / 3600.0, 3)
+	deducted_overlap_hours = round(deducted_overlap_seconds / 3600.0, 3)
+
+	reasons: list[str] = []
+	needs_review = False
+	if spans_overnight:
+		needs_review = True
+		reasons.append("Overnight / Multi-Day Session")
+	if max_single_session_hours and float(max_single_session_hours) > 0 and net_hours > float(max_single_session_hours):
+		needs_review = True
+		reasons.append("Oversized Session")
+
+	return {
+		"raw_hours": raw_hours,
+		"net_hours": net_hours,
+		"deducted_overlap_hours": deducted_overlap_hours,
+		"spans_overnight": spans_overnight,
+		"needs_review": needs_review,
+		"flag_reason": "; ".join(reasons),
 	}
