@@ -169,13 +169,18 @@ def sync_approval_status_to_services(ro) -> None:
 		return
 
 	if ro.approval_status == "Approved":
+		ts = now_datetime()
 		for s in ro.services:
 			if s.status != "Declined":
 				s.status = "Approved"
+				if not s.authorized_at:
+					s.authorized_at = ts
 	elif ro.approval_status == "Partially Approved" and not has_approved and ro.services:
 		for s in ro.services:
 			if s.status not in ["Declined", "Estimating", "Draft", "Pending Approval"]:
 				s.status = "Approved"
+				if not s.authorized_at:
+					s.authorized_at = now_datetime()
 				break
 
 	ro._update_parts_waiting_status()
@@ -406,6 +411,7 @@ def authorize_repair_order_jobs(
 	newly_approved = []
 	newly_declined = []
 	newly_authorized_amount = 0.0
+	current_timestamp = now_datetime()
 
 	if not approvals:
 		for s in ro.services:
@@ -414,6 +420,7 @@ def authorize_repair_order_jobs(
 					newly_approved.append(s)
 					newly_authorized_amount += flt(s.total_amount)
 					s.authorized_amount = flt(s.total_amount, 2)
+					s.authorized_at = current_timestamp
 				s.status = "Approved"
 	else:
 		for s in ro.services:
@@ -428,6 +435,7 @@ def authorize_repair_order_jobs(
 				s.status = decision
 				if decision == "Approved":
 					s.authorized_amount = flt(s.total_amount, 2)
+					s.authorized_at = current_timestamp
 					newly_approved.append(s)
 					newly_authorized_amount += flt(s.total_amount)
 				elif decision == "Declined":
@@ -439,7 +447,6 @@ def authorize_repair_order_jobs(
 	ro.approval_status = _derive_approval_status(ro.services)
 	ro._update_parts_waiting_status()
 
-	current_timestamp = now_datetime()
 	if (not getattr(ro, "approval_logs", None) or len(ro.approval_logs) == 0) and ro.authorized_at and ro.authorized_by:
 		prior_approved = [s for s in ro.services if s.status == "Approved" and s not in newly_approved]
 		if prior_approved:

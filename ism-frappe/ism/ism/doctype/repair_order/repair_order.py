@@ -4,7 +4,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint, flt, now_datetime, time_diff_in_hours
+from frappe.utils import cint, flt, now_datetime
 
 from ism.scheduling.capacity import format_required_tags, parse_required_tags
 
@@ -30,6 +30,7 @@ from ism.ism.doctype.repair_order.fulfillment import (
 	query_deferred_services_for_vehicle,
 	query_filtered_vehicles,
 	query_vehicle_customers,
+	recalculate_ro_time_logs,
 	sync_completed_deferred_services,
 	sync_declined_to_deferred_services,
 	sync_ro_schedule_entries,
@@ -95,6 +96,7 @@ class RepairOrder(Document):
 		self._calculate_service_totals()
 		self._calculate_taxes_and_totals()
 		self._update_progress_and_job_timing()
+		self._recalculate_time_logs()
 		self._validate_authorization_guards()
 		self._update_required_equipment_tags()
 
@@ -242,8 +244,9 @@ class RepairOrder(Document):
 			if s.is_completed and not s.completed_at:
 				s.completed_at = now_datetime()
 				s.completed_by = frappe.session.user
-				if self.picked_up_at:
-					s.actual_duration_hours = flt(time_diff_in_hours(s.completed_at, self.picked_up_at), 2)
+
+	def _recalculate_time_logs(self):
+		recalculate_ro_time_logs(self)
 
 	def _sync_declined_to_deferred_services(self):
 		sync_declined_to_deferred_services(self)
