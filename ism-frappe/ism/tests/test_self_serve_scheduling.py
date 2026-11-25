@@ -703,7 +703,7 @@ class TestSelfServeScheduling(ISMTestCase):
 
 	def test_reschedule_clears_conflicted_technician_when_pool_available(self):
 		target_date = str(self.base_date)
-		# Tech1 busy at 10:00 on bay2; Tech2 is free -> pool available, Tech1 cleared on SE1
+		# Tech1 busy at 10:00 on bay2; qualified pool is free -> soft-assigns available tech != Tech1 (unlocked)
 		self._create_scheduled_entry(
 			target_date,
 			sched_time="10:00:00",
@@ -729,7 +729,9 @@ class TestSelfServeScheduling(ISMTestCase):
 		self._assert_customer_safe(res)
 		se1.reload()
 		self.assertEqual(se1.scheduled_time, timedelta(hours=10))
-		self.assertIsNone(se1.assigned_technician)
+		self.assertTrue(se1.assigned_technician)
+		self.assertNotEqual(se1.assigned_technician, self.tech1)
+		self.assertEqual(int(se1.assignment_locked or 0), 0)
 
 	# -------------------------------------------------------------------------
 	# 7. Canonical lock order & concurrent slot-contention race proof
