@@ -42,12 +42,16 @@ from ism.api.technician_availability import (
 	get_active_technicians,
 	get_daily_technician_overview,
 )
+from ism.permissions import is_manager_or_advisor
 from ism.scheduling.capacity import (
 	NON_BLOCKING_ENTRY_STATUSES,
 	ShopCapacityWindow,
 	get_required_tags_for_repair_order,
 	load_bay_tags_map,
 )
+from ism.scheduling.fairness import compute_fairness_ledger
+from ism.scheduling.rebalancer import apply_rebalance_day, preview_rebalance_day
+from ism.scheduling.skills import load_active_technician_profiles
 from ism.scheduling.time_utils import effective_end_time, get_shop_settings, normalize_date, normalize_time
 
 _VALID_SCHEDULE_ENTRY_STATUSES = (
@@ -193,6 +197,9 @@ def _serialize_schedule_entry(doc: Any) -> Dict[str, Any]:
 		"estimated_duration": int(doc.estimated_duration or 0),
 		"service_bay": doc.service_bay,
 		"assigned_technician": doc.assigned_technician,
+		"assignment_mode": getattr(doc, "assignment_mode", None) or "Auto",
+		"assignment_locked": cint(getattr(doc, "assignment_locked", 0) or 0),
+		"assignment_reason": getattr(doc, "assignment_reason", None) or "",
 	}
 	warnings = getattr(doc.flags, "scheduling_warnings", None) or []
 	if warnings:
@@ -926,21 +933,120 @@ def get_shop_floor_status(date: Optional[str] = None, include_summary: Any = Fal
 
 @frappe.whitelist()
 def get_tech_overview(date: Optional[str] = None, include_summary: Any = False) -> Dict[str, Any]:
-	"""Return daily technician workload, shift windows, and bottleneck analysis."""
+	"""Return daily technician workload, shift windows, tier/fairness ledger, and bottleneck analysis."""
 	frappe.has_permission("Schedule Entry", "read", throw=True)
 	frappe.has_permission("Service Bay", "read", throw=True)
 	raw_date = optional_str(date, "Date")
 	target_date = normalize_date(raw_date) if raw_date else today()
 	overview = get_daily_technician_overview(target_date)
+	shop = get_shop_settings()
+	policy_mode = str(shop.get("assignment_policy_mode") or "Tiered Waterfall")
+	try:
+		ledger = compute_fairness_ledger(target_date, settings=shop)
+	except Exception:
+		ledger = {}
+	try:
+		profiles = load_active_technician_profiles()
+	except Exception:
+		profiles = {}
+
+	data_payload: Dict[str, Any]
+	if isinstance(overview, dict):
+		data_payload = dict(overview)
+		tech_rows = data_payload.get("technicians")
+		if isinstance(tech_rows, list):
+			enriched_rows = []
+			for row in tech_rows:
+				if not isinstance(row, dict):
+					enriched_rows.append(row)
+					continue
+				row_copy = dict(row)
+				emp_id = str(row_copy.get("employee") or "")
+				prof = profiles.get(emp_id) or {}
+				f_row = ledger.get(emp_id) or {}
+				tier = max(1, cint(prof.get("assignment_tier") or f_row.get("assignment_tier") or 1))
+				tier_label = "Workhorse" if tier == 1 else ("Buffer" if tier == 2 else "Reserve")
+				norm_load = float(f_row.get("normalized_load") or 0.0)
+				row_copy["assignment_tier"] = tier
+				row_copy["tier_label"] = tier_label
+				row_copy["target_load_weight"] = float(prof.get("target_load_weight") or f_row.get("target_load_weight") or 1.0)
+				row_copy["assigned_frt_hours_7d"] = round(float(f_row.get("assigned_frt_hours") or 0.0), 2)
+				row_copy["available_shift_hours_7d"] = round(float(f_row.get("available_shift_hours") or 0.0), 2)
+				row_copy["normalized_load"] = round(norm_load, 4)
+				row_copy["fairness_load_pct"] = round(norm_load * 100.0, 1)
+				enriched_rows.append(row_copy)
+			data_payload["technicians"] = enriched_rows
+		data_payload["assignment_policy_mode"] = policy_mode
+		data_payload["fairness_ledger"] = ledger
+	else:
+		data_payload = {
+			"date": target_date,
+			"overview": overview,
+			"assignment_policy_mode": policy_mode,
+			"fairness_ledger": ledger,
+		}
+
 	return build_agent_envelope(
 		success=True,
-		data=overview if isinstance(overview, dict) else {"date": target_date, "overview": overview},
+		data=data_payload,
 		message=_("Technician overview retrieved for {0}.").format(target_date),
 		include_summary=include_summary,
 		summary_builder=lambda: (
 			f"### Technician Overview ({target_date})\n"
-			f"- **Total Scheduled Hours**: `{overview.get('total_scheduled_hours', 0) if isinstance(overview, dict) else 0}`\n"
-			f"- **Bottleneck**: `{overview.get('bottleneck', 'None') if isinstance(overview, dict) else 'None'}`"
+			f"- **Policy Mode**: `{policy_mode}`\n"
+			f"- **Total Scheduled Hours**: `{data_payload.get('total_scheduled_hours', 0)}`\n"
+			f"- **Bottleneck**: `{data_payload.get('bottleneck', 'None')}`"
+		),
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def rebalance_schedule_day(
+	target_date: Optional[str] = None,
+	dry_run: Any = True,
+	include_summary: Any = False,
+) -> Dict[str, Any]:
+	"""Preview or apply soft-assignment rebalancing for unlocked Schedule Entries on target_date."""
+	user = (getattr(frappe.session, "user", None) or "").strip()
+	if not user or user == "Guest" or not is_manager_or_advisor(user):
+		frappe.throw(_("You do not have permission to rebalance schedules."), frappe.PermissionError)
+	frappe.has_permission("Schedule Entry", "write", throw=True)
+
+	raw_date = optional_str(target_date, "target_date")
+	iso_date = normalize_date(raw_date) if raw_date else today()
+	is_dry_run = coerce_bool(dry_run, default=True)
+
+	if is_dry_run:
+		result = preview_rebalance_day(iso_date)
+		msg = _("Rebalance preview for {0}: {1} proposed change(s).").format(
+			iso_date, len(result.get("changes") or [])
+		)
+	else:
+		result = apply_rebalance_day(iso_date)
+		try:
+			frappe.publish_realtime(
+				"ism_calendar_update",
+				{
+					"date": iso_date,
+					"rebalanced": True,
+					"applied_count": result.get("applied_count", 0),
+				},
+			)
+		except Exception:
+			pass
+		msg = _("Rebalance applied for {0}: {1} entry(ies) updated.").format(
+			iso_date, result.get("applied_count", 0)
+		)
+
+	return build_agent_envelope(
+		success=True,
+		data={"dry_run": is_dry_run, **result},
+		message=msg,
+		include_summary=include_summary,
+		summary_builder=lambda: (
+			f"### Schedule Rebalance ({iso_date}) [{'Dry Run' if is_dry_run else 'Applied'}]\n"
+			f"- **Changes**: `{len(result.get('changes') or [])}`\n"
+			f"- **Spread**: `{result.get('before_spread_pct', 0)}%` -> `{result.get('after_spread_pct', 0)}%`"
 		),
 	)
 

@@ -31,6 +31,8 @@ from ism.api.technician_availability import (
 from ism.scheduling.capacity import INACTIVE_WORK_STATUSES, load_bay_tags_map
 from ism.scheduling.entry_queries import build_holiday_checker
 from ism.scheduling.estimation_light import DEFAULT_SIGMA, estimate_total_duration
+from ism.scheduling.fairness import compute_fairness_ledger
+from ism.scheduling.skills import load_active_technician_profiles
 from ism.scheduling.time_utils import get_shop_settings, normalize_date, normalize_time
 
 _ACTIVE_RO_STATUSES: Tuple[str, ...] = (
@@ -108,6 +110,7 @@ def _load_ism_monitoring_settings() -> Dict[str, Any]:
 		"buffer_padding_minutes": max(0, buffer_minutes),
 		"default_labor_rate": default_labor_rate,
 		"authorization_token_expiry_hours": max(1, expiry_hours),
+		"assignment_policy_mode": str(shop.get("assignment_policy_mode") or "Tiered Waterfall"),
 	}
 
 
@@ -344,6 +347,32 @@ def get_cockpit_snapshot(
 	tech_overview = get_daily_technician_overview(target_date)
 	next_open_techs = get_active_technicians(next_open_date)
 
+	assignment_policy_mode = str(settings.get("assignment_policy_mode") or "Tiered Waterfall")
+	try:
+		fairness_ledger = compute_fairness_ledger(target_date)
+	except Exception:
+		fairness_ledger = {}
+	try:
+		raw_profiles = load_active_technician_profiles()
+	except Exception:
+		raw_profiles = {}
+	technician_profiles = {
+		emp_id: {
+			"assignment_tier": max(1, cint(prof.get("assignment_tier") or 1)),
+			"target_load_weight": flt(prof.get("target_load_weight") or 1.0),
+			"daily_soft_cap_pct": prof.get("daily_soft_cap_pct"),
+		}
+		for emp_id, prof in raw_profiles.items()
+	}
+	if isinstance(tech_overview, dict) and isinstance(tech_overview.get("technicians"), list):
+		for tech_row in tech_overview["technicians"]:
+			if not isinstance(tech_row, dict):
+				continue
+			emp_id = str(tech_row.get("employee") or "")
+			prof_meta = technician_profiles.get(emp_id) or {}
+			tech_row["assignment_tier"] = prof_meta.get("assignment_tier", 1)
+			tech_row["target_load_weight"] = prof_meta.get("target_load_weight", 1.0)
+
 	raw_entries = frappe.get_list(
 		"Schedule Entry",
 		filters={"scheduled_date": ["in", [target_date, next_open_date]], "status": ["!=", "Cancelled"]},
@@ -368,6 +397,10 @@ def get_cockpit_snapshot(
 			*(["provisional_license_plate"] if frappe.db.has_column("Schedule Entry", "provisional_license_plate") else []),
 			"service_bay",
 			"assigned_technician",
+			*(["assignment_mode"] if frappe.db.has_column("Schedule Entry", "assignment_mode") else []),
+			*(["assignment_locked"] if frappe.db.has_column("Schedule Entry", "assignment_locked") else []),
+			*(["assignment_reason"] if frappe.db.has_column("Schedule Entry", "assignment_reason") else []),
+			*(["is_comeback"] if frappe.db.has_column("Schedule Entry", "is_comeback") else []),
 			"items_summary",
 		],
 		order_by="scheduled_date asc, scheduled_time asc",
@@ -581,6 +614,10 @@ def get_cockpit_snapshot(
 			"provisional_vehicle_info": entry.get("provisional_vehicle_info"),
 			"service_bay": entry.get("service_bay"),
 			"assigned_technician": entry.get("assigned_technician"),
+			"assignment_mode": entry.get("assignment_mode") or "Auto",
+			"assignment_locked": cint(entry.get("assignment_locked") or 0),
+			"assignment_reason": entry.get("assignment_reason") or "",
+			"is_comeback": cint(entry.get("is_comeback") or 0),
 			"items_summary": entry.get("items_summary"),
 			"p80_duration_minutes": ro_p80_map.get(ro_id, 0) if ro_id else 0,
 			"desk_url": f"{base_url}/app/schedule-entry/{quote(entry['name'], safe='')}",
@@ -703,6 +740,9 @@ def get_cockpit_snapshot(
 			"next_open_date": next_open_date,
 			"server_now": _fmt_dt(server_now),
 			"settings": settings,
+			"assignment_policy_mode": assignment_policy_mode,
+			"fairness_ledger": fairness_ledger,
+			"technician_profiles": technician_profiles,
 			"bays": bays,
 			"technician_overview": tech_overview,
 			"next_open_technicians": next_open_techs,

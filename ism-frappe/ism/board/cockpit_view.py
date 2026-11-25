@@ -263,6 +263,13 @@ def build_cockpit_view(
 	active_ros = data.get("active_repair_orders") if isinstance(data.get("active_repair_orders"), list) else []
 	raw_action_items = data.get("action_items") if isinstance(data.get("action_items"), list) else []
 	health_snapshots = data.get("health_snapshots") if isinstance(data.get("health_snapshots"), dict) else {}
+	assignment_policy_mode = str(
+		data.get("assignment_policy_mode")
+		or settings.get("assignment_policy_mode")
+		or "Tiered Waterfall"
+	)
+	fairness_ledger = data.get("fairness_ledger") if isinstance(data.get("fairness_ledger"), dict) else {}
+	tech_profiles = data.get("technician_profiles") if isinstance(data.get("technician_profiles"), dict) else {}
 
 	# Batch-load vehicle display info for all active ROs and schedule entries in a single DB query
 	_all_vehicle_names: list[str] = []
@@ -887,6 +894,10 @@ def build_cockpit_view(
 			"left_pct": left_pct,
 			"width_pct": width_pct,
 			"deep_link": str(raw.get("desk_url") or ""),
+			"assignment_mode": str(raw.get("assignment_mode") or "Auto"),
+			"assignment_locked": bool(int(raw.get("assignment_locked") or 0)),
+			"assignment_reason": str(raw.get("assignment_reason") or ""),
+			"is_comeback": bool(int(raw.get("is_comeback") or 0)),
 		}
 		block.update(_thread_enrichment_for_key(t_key, resolved_threads))
 		return block
@@ -919,11 +930,26 @@ def build_cockpit_view(
 			continue
 		t_id = str(t.get("employee") or "")
 		t_entries = [p for p in parsed_today_entries if p["tech"] == t_id and p["status"] not in ("Cancelled", "No Show")]
+		f_row = fairness_ledger.get(t_id) if isinstance(fairness_ledger.get(t_id), dict) else {}
+		p_row = tech_profiles.get(t_id) if isinstance(tech_profiles.get(t_id), dict) else {}
+		tier = int(t.get("assignment_tier") or f_row.get("assignment_tier") or p_row.get("assignment_tier") or 1)
+		if tier < 1:
+			tier = 1
+		tier_label = "Workhorse" if tier == 1 else ("Buffer" if tier == 2 else "Reserve")
+		norm_load = float(f_row.get("normalized_load") or 0.0)
+		fairness_load_pct = round(norm_load * 100.0, 1)
+		assigned_frt_hours_7d = round(float(f_row.get("assigned_frt_hours") or 0.0), 2)
+		available_shift_hours_7d = round(float(f_row.get("available_shift_hours") or 0.0), 2)
 		tech_lanes.append({
 			"id": t_id,
 			"label": str(t.get("employee_name") or t_id),
 			"on_leave": bool(t.get("on_leave")),
 			"utilization_pct": round(float(t.get("utilization_pct") or t.get("utilization_percent") or 0.0), 1),
+			"assignment_tier": tier,
+			"tier_label": tier_label,
+			"fairness_load_pct": fairness_load_pct,
+			"assigned_frt_hours_7d": assigned_frt_hours_7d,
+			"available_shift_hours_7d": available_shift_hours_7d,
 			"blocks": [_build_block(p, str(p["bay"] or "No Bay")) for p in t_entries],
 		})
 
@@ -963,6 +989,7 @@ def build_cockpit_view(
 
 	swimlane = {
 		"date": target_date,
+		"assignment_policy_mode": assignment_policy_mode,
 		"op_start_clock": _minutes_to_clock(op_start),
 		"op_end_clock": _minutes_to_clock(op_end),
 		"hours": [
@@ -1236,6 +1263,7 @@ def build_cockpit_view(
 		"date": target_date,
 		"next_open_date": next_open_date,
 		"server_now": server_now_str,
+		"assignment_policy_mode": assignment_policy_mode,
 		"capacity": {
 			"window_label": window_label,
 			"active_bays": len(bays),
