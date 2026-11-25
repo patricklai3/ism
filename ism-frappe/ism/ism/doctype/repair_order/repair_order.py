@@ -95,12 +95,64 @@ class RepairOrder(Document):
 		self._validate_vehicle_and_customer()
 		self._validate_odometer()
 		self._calculate_service_totals()
+		self._populate_service_skills_from_packages()
 		self._calculate_taxes_and_totals()
 		self._update_progress_and_job_timing()
 		self._recalculate_time_logs()
 		self._validate_authorization_guards()
 		self._validate_service_completion_bay_guard()
 		self._update_required_equipment_tags()
+
+	def _populate_service_skills_from_packages(self):
+		"""Auto-populate required_skill and difficulty_level from Service Package primary/highest-difficulty skill."""
+		if not self.services or not frappe.db.exists("DocType", "Service Package Skill"):
+			return
+
+		rows_missing_skill = [
+			s
+			for s in self.services
+			if getattr(s, "service_package", None)
+			and not (getattr(s, "required_skill", None) or "").strip()
+		]
+		if not rows_missing_skill:
+			return
+
+		pkg_names = list(dict.fromkeys(str(s.service_package).strip() for s in rows_missing_skill if s.service_package))
+		if not pkg_names:
+			return
+
+		skill_rows = frappe.get_all(
+			"Service Package Skill",
+			filters={"parent": ["in", pkg_names], "parenttype": "Service Package"},
+			fields=["parent", "skill", "difficulty_level", "idx"],
+			order_by="idx asc",
+			ignore_permissions=True,
+		)
+		if not skill_rows:
+			return
+
+		by_pkg: dict[str, list[dict]] = {}
+		for row in skill_rows:
+			parent = row.get("parent")
+			skill = (row.get("skill") or "").strip()
+			if parent and skill:
+				by_pkg.setdefault(parent, []).append(row)
+
+		primary_by_pkg: dict[str, tuple[str, int]] = {}
+		for pkg, rows in by_pkg.items():
+			best = max(
+				rows,
+				key=lambda r: (cint(r.get("difficulty_level") or 1), -cint(r.get("idx") or 0)),
+			)
+			diff = max(1, min(3, cint(best.get("difficulty_level") or 1)))
+			primary_by_pkg[pkg] = (str(best["skill"]).strip(), diff)
+
+		for s in rows_missing_skill:
+			pkg_key = str(s.service_package).strip()
+			if pkg_key in primary_by_pkg:
+				skill_name, diff_level = primary_by_pkg[pkg_key]
+				s.required_skill = skill_name
+				s.difficulty_level = diff_level
 
 	def _update_required_equipment_tags(self):
 		"""Normalize per-service equipment tags and roll up union across all services."""

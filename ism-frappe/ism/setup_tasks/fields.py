@@ -185,6 +185,24 @@ def setup_procurement_custom_fields(force_update=False):
 	)
 
 
+def setup_leave_custom_fields(force_update=False):
+	"""Ensure AM/PM half-day period custom field exists on Leave Application."""
+	if not frappe.db.exists("DocType", "Leave Application"):
+		return
+	fields = [
+		{
+			"fieldname": "ism_half_day_period",
+			"label": "Half Day Period",
+			"fieldtype": "Select",
+			"options": "\nAM\nPM",
+			"depends_on": "eval:doc.half_day",
+			"insert_after": "half_day_date",
+			"description": "AM blocks [shift_start, break_start); PM blocks [break_end, shift_end). Blank conservatively blocks the full shift.",
+		}
+	]
+	_ensure_custom_fields_present({"Leave Application": fields}, force_update=force_update)
+
+
 def backfill_service_package_models():
 	"""Backfill applicable_model, applicable_generation, and generation_compatibility rows."""
 	from ism.utils.tesla_manual import parse_tesla_manual_url, resolve_generation_entries

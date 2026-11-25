@@ -504,6 +504,12 @@ def authorize_repair_order_jobs(
 		})
 
 	ro.save(ignore_permissions=is_public_portal)
+	try:
+		from ism.scheduling.rebalancer import on_repair_order_lock_assignments
+
+		on_repair_order_lock_assignments(ro)
+	except ImportError:
+		pass
 	return {
 		"status": "success",
 		"approval_status": ro.approval_status,

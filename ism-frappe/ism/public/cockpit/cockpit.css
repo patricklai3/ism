@@ -1199,3 +1199,534 @@ body.cockpit-body {
   padding: 0 0.32em;
   font-size: 0.88em;
 }
+
+/* Technician Tier Pills, 7-Day Fairness Bar & Block Lock Toggle */
+.cockpit-tier-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  border: 1px solid var(--shop-border, #263554);
+  background: var(--shop-surface-2, #19243d);
+  color: var(--shop-text-muted, #94a3b8);
+}
+
+.cockpit-tier-pill--t1 {
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.14);
+  color: #bae6fd;
+}
+
+.cockpit-tier-pill--t2 {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.14);
+  color: #fde68a;
+}
+
+.cockpit-tier-pill--t3 {
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #cbd5e1;
+}
+
+.cockpit-fairness-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.cockpit-fairness-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+  min-width: 44px;
+}
+
+.cockpit-fairness-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.cockpit-fairness-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.63rem;
+  color: var(--shop-text-muted, #94a3b8);
+  white-space: nowrap;
+}
+
+.cockpit-job-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.cockpit-lock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(11, 17, 32, 0.55);
+  color: var(--shop-text, #f1f5f9);
+  border-radius: 4px;
+  padding: 0 3px;
+  height: 16px;
+  font-size: 0.62rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cockpit-lock-btn:hover:not(:disabled) {
+  border-color: var(--shop-accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.22);
+}
+
+.cockpit-lock-btn.is-locked {
+  border-color: rgba(245, 158, 11, 0.55);
+}
+
+/* Modals (Matrix Grid & Rebalance Preview) */
+body.cockpit-modal-open {
+  overflow: hidden;
+}
+
+.cockpit-modal[hidden] {
+  display: none;
+}
+
+.cockpit-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.cockpit-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.cockpit-modal__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(780px, 96vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--shop-surface, #131c31);
+  border: 1px solid var(--shop-border, #263554);
+  border-radius: 12px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.cockpit-modal__dialog--wide {
+  width: min(1140px, 96vw);
+}
+
+.cockpit-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--shop-border, #263554);
+  background: var(--shop-surface-2, #19243d);
+}
+
+.cockpit-modal__title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cockpit-modal__title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--shop-text, #f1f5f9);
+}
+
+.cockpit-modal__body {
+  padding: 14px 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cockpit-modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--shop-border, #263554);
+}
+
+/* Matrix Policy Bar & Inputs */
+.cockpit-policy-bar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--shop-surface-2, #19243d);
+  border: 1px solid var(--shop-border, #263554);
+}
+
+.cockpit-policy-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.7rem;
+  color: var(--shop-text-muted, #94a3b8);
+  font-weight: 600;
+}
+
+.cockpit-policy-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--shop-text, #f1f5f9);
+  min-height: 30px;
+  cursor: pointer;
+}
+
+.cockpit-input,
+.cockpit-select {
+  font-family: inherit;
+  font-size: 0.76rem;
+  color: var(--shop-text, #f1f5f9);
+  background: var(--shop-bg, #0b1120);
+  border: 1px solid var(--shop-border, #263554);
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-height: 30px;
+}
+
+.cockpit-input--sm {
+  width: 72px;
+}
+
+.cockpit-input--xs,
+.cockpit-select--xs {
+  min-height: 24px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+}
+
+.cockpit-input--xs[type="number"] {
+  width: 56px;
+}
+
+.cockpit-pill--xs {
+  padding: 1px 6px;
+  font-size: 0.64rem;
+}
+
+/* Matrix Grid Table */
+.cockpit-matrix-wrap {
+  overflow: auto;
+  border: 1px solid var(--shop-border, #263554);
+  border-radius: 10px;
+  background: rgba(11, 17, 32, 0.45);
+}
+
+.cockpit-matrix-table,
+.cockpit-rebalance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+
+.cockpit-matrix-table th,
+.cockpit-matrix-table td,
+.cockpit-rebalance-table th,
+.cockpit-rebalance-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(38, 53, 84, 0.65);
+  border-right: 1px solid rgba(38, 53, 84, 0.4);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.cockpit-matrix-table thead th,
+.cockpit-rebalance-table thead th {
+  background: var(--shop-surface-2, #19243d);
+  color: var(--shop-text-muted, #94a3b8);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.cockpit-matrix-tech-hd,
+.cockpit-matrix-tech-cell {
+  min-width: 230px;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--shop-surface, #131c31);
+}
+
+.cockpit-matrix-tech-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.cockpit-matrix-tech-name {
+  font-weight: 700;
+  color: var(--shop-text, #f1f5f9);
+}
+
+.cockpit-matrix-tech-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.cockpit-matrix-skill-hd {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.cockpit-matrix-scarcity {
+  font-size: 0.64rem;
+  color: #fde68a;
+}
+
+.cockpit-matrix-td {
+  text-align: center !important;
+  min-width: 96px;
+}
+
+.cockpit-matrix-cell-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 40px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: rgba(25, 36, 61, 0.55);
+  color: var(--shop-text, #f1f5f9);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.cockpit-matrix-cell-btn:hover,
+.cockpit-matrix-cell-btn.is-editing {
+  border-color: var(--shop-accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.14);
+}
+
+.cockpit-cell-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.cockpit-cell-badge--d0 {
+  background: rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+}
+
+.cockpit-cell-badge--d1 {
+  background: rgba(56, 189, 248, 0.2);
+  color: #bae6fd;
+}
+
+.cockpit-cell-badge--d2 {
+  background: rgba(245, 158, 11, 0.22);
+  color: #fde68a;
+}
+
+.cockpit-cell-badge--d3 {
+  background: rgba(34, 197, 94, 0.22);
+  color: #86efac;
+}
+
+.cockpit-cell-role {
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+.cockpit-cell-role--pref {
+  color: #fde68a;
+}
+
+.cockpit-cell-role--std {
+  color: var(--shop-text-muted, #94a3b8);
+}
+
+.cockpit-cell-role--bkp {
+  color: #fca5a5;
+}
+
+/* Matrix Cell Inline Popover */
+.cockpit-matrix-popover {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--shop-accent, #38bdf8);
+  background: var(--shop-surface-2, #19243d);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cockpit-matrix-popover__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.cockpit-matrix-popover__group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cockpit-matrix-popover__label {
+  min-width: 90px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--shop-text-muted, #94a3b8);
+}
+
+.cockpit-matrix-popover__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cockpit-pop-chip {
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--shop-border, #263554);
+  background: var(--shop-bg, #0b1120);
+  color: var(--shop-text, #f1f5f9);
+  cursor: pointer;
+}
+
+.cockpit-pop-chip:hover {
+  border-color: var(--shop-accent, #38bdf8);
+}
+
+.cockpit-pop-chip.is-selected {
+  border-color: var(--shop-accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.2);
+  color: #e0f2fe;
+}
+
+/* Weekly Shift Editor */
+.cockpit-matrix-shift-row td {
+  background: rgba(11, 17, 32, 0.65);
+  padding: 10px 12px;
+}
+
+.cockpit-shift-editor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.76rem;
+}
+
+.cockpit-shift-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.cockpit-shift-day {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--shop-border, #263554);
+  background: var(--shop-surface, #131c31);
+}
+
+.cockpit-shift-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 52px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cockpit-shift-sep {
+  color: var(--shop-text-muted, #94a3b8);
+}
+
+/* Rebalance Preview Summary */
+.cockpit-rebalance-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.cockpit-rebalance-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--shop-surface-2, #19243d);
+  border: 1px solid var(--shop-border, #263554);
+}
+
+.cockpit-rebalance-stat__label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--shop-text-muted, #94a3b8);
+  font-weight: 700;
+}
+
+.cockpit-rebalance-stat__val {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--shop-text, #f1f5f9);
+}
+
+.cockpit-rebalance-ro {
+  font-size: 0.68rem;
+  color: var(--shop-text-muted, #94a3b8);
+}

@@ -19,6 +19,7 @@ from ism.scheduling.arrival_policy import (
 	to_internal_slot_start,
 	to_public_slot_projection,
 )
+from ism.scheduling.assignment import _select_technician_with_context
 from ism.scheduling.bookable_catalog import (
 	compute_packages_booking_requirements,
 	normalize_vehicle_model,
@@ -37,8 +38,19 @@ from ism.scheduling.entry_queries import (
 	fetch_leaves_by_employee,
 	find_conflicting_vehicle_entries,
 	intervals_overlap,
-	is_employee_on_leave_for_date,
 	span_datetimes,
+)
+from ism.scheduling.shifts import (
+	apply_leave_to_shift_window,
+	get_technician_shift_window,
+	is_interval_within_shift,
+)
+from ism.scheduling.skills import (
+	get_required_skills_for_packages,
+	get_required_skills_for_schedule_entry,
+	is_technician_qualified,
+	load_active_technician_profiles,
+	normalize_skill_requirements,
 )
 from ism.utils.vehicle_display import (
 	build_vehicle_display_dict,
@@ -204,6 +216,49 @@ def get_required_tags_for_entry(schedule_entry: Any) -> List[str]:
 	return []
 
 
+def get_required_skills_for_entry(schedule_entry: Any) -> List[Tuple[str, int]]:
+	"""Derive required (skill, difficulty) pairs from required_skills_json, booked_packages_json, RO, or entry_type."""
+	if isinstance(schedule_entry, str):
+		se_name = schedule_entry.strip()
+		if not se_name or not frappe.db.exists("Schedule Entry", se_name):
+			return []
+		fields = ["name", "entry_type", "repair_order", "booked_packages_json"]
+		if frappe.db.has_column("Schedule Entry", "required_skills_json"):
+			fields.append("required_skills_json")
+		schedule_entry = frappe.db.get_value("Schedule Entry", se_name, fields, as_dict=True) or {}
+
+	raw_snapshot = _get_entry_field(schedule_entry, "required_skills_json")
+	if raw_snapshot:
+		parsed_snapshot = normalize_skill_requirements(raw_snapshot)
+		if parsed_snapshot:
+			return parsed_snapshot
+
+	raw_json = _get_entry_field(schedule_entry, "booked_packages_json")
+	pkg_ids: List[str] = []
+	if raw_json:
+		try:
+			parsed = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+		except (TypeError, ValueError):
+			parsed = []
+		if isinstance(parsed, list):
+			for item in parsed:
+				if isinstance(item, str) and item.strip():
+					pkg_ids.append(item.strip())
+				elif isinstance(item, dict):
+					pid = (
+						item.get("package_id")
+						or item.get("name")
+						or item.get("service_package")
+						or item.get("package_name")
+					)
+					if pid and str(pid).strip():
+						pkg_ids.append(str(pid).strip())
+	if pkg_ids:
+		return get_required_skills_for_packages(list(dict.fromkeys(pkg_ids)))
+
+	return get_required_skills_for_schedule_entry(schedule_entry)
+
+
 def get_self_serve_policy() -> Dict[str, Any]:
 	"""Return cached self-serve policy snapshot from get_shop_settings()."""
 	settings = get_shop_settings()
@@ -361,6 +416,7 @@ def find_self_serve_slots(
 	package_ids: Optional[Sequence[str]] = None,
 	duration_minutes: Optional[int] = None,
 	required_tags: Optional[Sequence[str]] = None,
+	required_skills: Optional[Any] = None,
 	start_date: Optional[str] = None,
 	days_ahead: int = 7,
 	vehicle_model: Optional[str] = None,
@@ -389,9 +445,16 @@ def find_self_serve_slots(
 		)
 		resolved_duration = int(reqs["duration_minutes"])
 		resolved_tags = list(reqs["required_tags"])
+		resolved_skills = normalize_skill_requirements(reqs.get("required_skills"))
 	else:
 		resolved_duration = int(duration_minutes) if duration_minutes and int(duration_minutes) > 0 else default_diag_dur
 		resolved_tags = parse_required_tags(list(required_tags) if required_tags else None)
+		if required_skills is not None:
+			resolved_skills = normalize_skill_requirements(required_skills)
+		elif exclude_entry:
+			resolved_skills = get_required_skills_for_entry(exclude_entry)
+		else:
+			resolved_skills = []
 
 	if start_date is not None and str(start_date).strip() != "":
 		norm_start = normalize_date(start_date)
@@ -425,6 +488,7 @@ def find_self_serve_slots(
 		skip_holidays=True,
 		exclude_entry=exclude_entry,
 		vehicle_identity=vehicle_identity,
+		required_skills=resolved_skills,
 	)
 
 	days_out: List[Dict[str, Any]] = []
@@ -684,6 +748,8 @@ def _fetch_blocking_entries_current_read(
 		f"""
 		SELECT
 			`name`,
+			`repair_order`,
+			`entry_type`,
 			`service_bay`,
 			`assigned_technician`,
 			`scheduled_date`,
@@ -769,6 +835,253 @@ def _select_available_bay_under_lock(
 	)
 
 
+def _serialize_required_skills(reqs: Sequence[Tuple[str, int]]) -> Optional[str]:
+	if not reqs:
+		return None
+	return json.dumps([[skill, int(diff)] for skill, diff in reqs])
+
+
+def _is_specific_tech_available_under_lock(
+	emp_id: str,
+	span: Dict[str, Any],
+	*,
+	settings: Dict[str, Any],
+	required_skills: Sequence[Tuple[str, int]],
+	current_blocking: Sequence[Dict[str, Any]],
+	active_techs: Sequence[str],
+	enable_tech: bool,
+	holiday_fn: Optional[Callable[[Union[str, date, datetime]], bool]] = None,
+) -> bool:
+	"""Return True iff emp_id is active, skill-qualified, on-shift after AM/PM leave, and overlap-free."""
+	if enable_tech and emp_id not in active_techs:
+		return False
+	emp_status = frappe.db.get_value("Employee", emp_id, "status")
+	if emp_status != "Active":
+		return False
+
+	profile = load_active_technician_profiles([emp_id]).get(emp_id)
+	if required_skills and (not profile or not is_technician_qualified(profile, required_skills)):
+		return False
+
+	seg_dates = [s["date"] for s in span["segments"]] or [span["start_date"]]
+	leaves_by_emp = fetch_leaves_by_employee([emp_id], min(seg_dates), max(seg_dates))
+	emp_leaves = leaves_by_emp.get(emp_id, ())
+	for prop_seg in span["segments"]:
+		seg_date = str(prop_seg["date"])
+		raw_shift = get_technician_shift_window(profile, seg_date, settings=settings)
+		eff_shift = apply_leave_to_shift_window(raw_shift, emp_leaves, seg_date)
+		if not is_interval_within_shift(
+			to_timedelta(prop_seg["start_time"]),
+			to_timedelta(prop_seg["end_time"]),
+			eff_shift,
+		):
+			return False
+
+	prop_start_dt, prop_end_dt = span_datetimes(span)
+	for ent in current_blocking:
+		if (ent.get("assigned_technician") or "").strip() != emp_id:
+			continue
+		ex_start_dt, ex_end_dt = entry_datetimes(ent, is_holiday_fn=holiday_fn)
+		if intervals_overlap(prop_start_dt, prop_end_dt, ex_start_dt, ex_end_dt):
+			return False
+	return True
+
+
+def _count_max_unassigned_overlaps(
+	span: Dict[str, Any],
+	current_blocking: Sequence[Dict[str, Any]],
+	holiday_fn: Optional[Callable[[Union[str, date, datetime]], bool]] = None,
+) -> int:
+	"""Count max concurrent unassigned blocking entries overlapping any working segment of span."""
+	unassigned_segs_by_date: Dict[str, List[Tuple[timedelta, timedelta, str]]] = {}
+	for ent in current_blocking:
+		if (ent.get("assigned_technician") or "").strip():
+			continue
+		e_span = calculate_working_span(
+			ent.get("scheduled_date"),
+			ent.get("scheduled_time"),
+			ent.get("estimated_duration") or 0,
+			is_holiday_fn=holiday_fn,
+		)
+		e_name = str(ent.get("name") or "")
+		for s in e_span["segments"]:
+			unassigned_segs_by_date.setdefault(str(s["date"]), []).append((
+				to_timedelta(s["start_time"]),
+				to_timedelta(s["end_time"]),
+				e_name,
+			))
+
+	if not unassigned_segs_by_date:
+		return 0
+
+	max_overlap = 0
+	for prop_seg in span["segments"]:
+		seg_date = str(prop_seg["date"])
+		seg_start = to_timedelta(prop_seg["start_time"])
+		seg_end = to_timedelta(prop_seg["end_time"])
+		names = {
+			e_name
+			for ex_s, ex_e, e_name in unassigned_segs_by_date.get(seg_date, ())
+			if intervals_overlap(seg_start, seg_end, ex_s, ex_e)
+		}
+		if len(names) > max_overlap:
+			max_overlap = len(names)
+	return max_overlap
+
+
+def _assign_technician_under_lock(
+	active_techs: List[str],
+	iso_date: str,
+	internal_start_time: str,
+	duration_minutes: int,
+	*,
+	settings: Dict[str, Any],
+	required_skills: Optional[Sequence[Tuple[str, int]]] = None,
+	current_assigned_tech: Optional[str] = None,
+	assignment_locked: int = 0,
+	repair_order: Optional[str] = None,
+	entry_type: Optional[str] = None,
+	waiter_preference: str = "Drop-Off",
+	is_comeback: bool = False,
+	exclude_entry: Optional[str] = None,
+	holiday_fn: Optional[Callable[[Union[str, date, datetime]], bool]] = None,
+) -> Dict[str, Any]:
+	"""Verify skill-qualified technician capacity under lock and soft-assign (or retain locked tech)."""
+	enable_tech = bool(cint(settings.get("enable_technician_capacity")))
+	reqs = normalize_skill_requirements(required_skills)
+	if enable_tech and not active_techs:
+		_throw_self_serve_error(
+			_("No appointment capacity is available for the selected date and time."),
+			"capacity_conflict",
+		)
+
+	span = calculate_working_span(
+		iso_date,
+		internal_start_time,
+		duration_minutes,
+		is_holiday_fn=holiday_fn,
+	)
+	seg_dates = [s["date"] for s in span["segments"]] or [iso_date]
+	current_blocking = _fetch_blocking_entries_current_read(
+		min(seg_dates),
+		max(seg_dates),
+		exclude_entry=exclude_entry,
+	)
+
+	# On reschedule, retain an explicitly locked technician if still qualified & free in the new slot.
+	if cint(assignment_locked) == 1 and current_assigned_tech:
+		if _is_specific_tech_available_under_lock(
+			current_assigned_tech,
+			span,
+			settings=settings,
+			required_skills=reqs,
+			current_blocking=current_blocking,
+			active_techs=active_techs,
+			enable_tech=enable_tech,
+			holiday_fn=holiday_fn,
+		):
+			return {
+				"assigned_technician": current_assigned_tech,
+				"assignment_locked": 1,
+				"keep_locked": True,
+			}
+
+	if enable_tech:
+		has_active_profiles = bool(
+			frappe.db.exists("DocType", "Technician Profile")
+			and frappe.db.exists("Technician Profile", {"is_active": 1})
+		)
+		max_unassigned = _count_max_unassigned_overlaps(span, current_blocking, holiday_fn=holiday_fn)
+		if not has_active_profiles:
+			# Fallback only when zero active Technician Profiles exist in DB (e.g., rolled-back pre-seed snapshot).
+			free_techs = [
+				emp_id
+				for emp_id in active_techs
+				if _is_specific_tech_available_under_lock(
+					emp_id,
+					span,
+					settings=settings,
+					required_skills=[],
+					current_blocking=current_blocking,
+					active_techs=active_techs,
+					enable_tech=True,
+					holiday_fn=holiday_fn,
+				)
+			]
+			if len(free_techs) - max_unassigned <= 0:
+				_throw_self_serve_error(
+					_("No appointment capacity is available for the selected date and time."),
+					"capacity_conflict",
+				)
+			chosen_fallback = (
+				current_assigned_tech
+				if (current_assigned_tech and current_assigned_tech in free_techs)
+				else free_techs[0]
+			)
+			return {
+				"assigned_technician": chosen_fallback,
+				"assignment_mode": "Auto",
+				"assignment_locked": 0,
+				"assignment_reason": "Auto-assigned (no active technician profiles configured)",
+				"keep_locked": False,
+			}
+
+		decision = _select_technician_with_context(
+			scheduled_date=iso_date,
+			scheduled_time=internal_start_time,
+			duration_minutes=duration_minutes,
+			required_skills=reqs,
+			repair_order=repair_order,
+			entry_type=entry_type,
+			waiter_preference=waiter_preference or "Drop-Off",
+			is_comeback=is_comeback,
+			exclude_entry=exclude_entry,
+			candidate_employee_ids=active_techs,
+			settings=settings,
+			blocking_entries_override=current_blocking,
+			is_holiday_fn_override=holiday_fn,
+		)
+		feasible_count = int((decision.get("reason_details") or {}).get("feasible_count") or 0)
+		chosen_tech = decision.get("assigned_technician")
+		if not chosen_tech or (feasible_count - max_unassigned) <= 0:
+			_throw_self_serve_error(
+				_("No appointment capacity is available for the selected date and time."),
+				"capacity_conflict",
+			)
+		return {
+			"assigned_technician": chosen_tech,
+			"assignment_mode": decision.get("assignment_mode") or "Auto",
+			"assignment_locked": 0,
+			"assignment_reason": decision.get("assignment_reason") or "",
+			"keep_locked": False,
+		}
+
+	# Capacity gating disabled: preserve existing tech only if active and non-conflicting
+	if current_assigned_tech and _is_specific_tech_available_under_lock(
+		current_assigned_tech,
+		span,
+		settings=settings,
+		required_skills=[],
+		current_blocking=current_blocking,
+		active_techs=active_techs,
+		enable_tech=False,
+		holiday_fn=holiday_fn,
+	):
+		return {
+			"assigned_technician": current_assigned_tech,
+			"assignment_locked": cint(assignment_locked),
+			"keep_locked": True,
+		}
+
+	return {
+		"assigned_technician": None,
+		"assignment_mode": "Unassigned",
+		"assignment_locked": 0,
+		"assignment_reason": "",
+		"keep_locked": False,
+	}
+
+
 def _check_technician_capacity_under_lock(
 	active_techs: List[str],
 	iso_date: str,
@@ -779,92 +1092,21 @@ def _check_technician_capacity_under_lock(
 	current_assigned_tech: Optional[str] = None,
 	exclude_entry: Optional[str] = None,
 	holiday_fn: Optional[Callable[[Union[str, date, datetime]], bool]] = None,
+	required_skills: Optional[Sequence[Tuple[str, int]]] = None,
 ) -> Optional[str]:
-	"""Verify technician pool capacity (when enabled) and resolve whether current_assigned_tech stays assigned."""
-	enable_tech = cint(settings.get("enable_technician_capacity"))
-	if enable_tech and not active_techs:
-		_throw_self_serve_error(
-			_("No appointment capacity is available for the selected date and time."),
-			"capacity_conflict",
-		)
-
-	check_techs: List[str] = list(active_techs)
-	if not enable_tech and current_assigned_tech:
-		emp_status = frappe.db.get_value("Employee", current_assigned_tech, "status")
-		if emp_status != "Active":
-			return None
-		check_techs = [current_assigned_tech]
-
-	if not check_techs:
-		return current_assigned_tech
-
-	span = calculate_working_span(
+	"""Backward-compatible wrapper returning the resolved assigned_technician under lock."""
+	res = _assign_technician_under_lock(
+		active_techs,
 		iso_date,
 		internal_start_time,
 		duration_minutes,
-		is_holiday_fn=holiday_fn,
-	)
-	seg_dates = [s["date"] for s in span["segments"]] or [iso_date]
-	leaves_by_emp = fetch_leaves_by_employee(check_techs, min(seg_dates), max(seg_dates))
-	blocking_entries = _fetch_blocking_entries_current_read(
-		min(seg_dates),
-		max(seg_dates),
-		assigned_technicians=check_techs,
+		settings=settings,
+		required_skills=required_skills,
+		current_assigned_tech=current_assigned_tech,
 		exclude_entry=exclude_entry,
+		holiday_fn=holiday_fn,
 	)
-
-	entry_segs_by_tech: Dict[str, List[Tuple[str, timedelta, timedelta]]] = {}
-	for ent in blocking_entries:
-		tid = ent.get("assigned_technician")
-		if not tid:
-			continue
-		e_span = calculate_working_span(
-			ent.get("scheduled_date"),
-			ent.get("scheduled_time"),
-			ent.get("estimated_duration") or 0,
-			is_holiday_fn=holiday_fn,
-		)
-		bucket = entry_segs_by_tech.setdefault(tid, [])
-		for s in e_span["segments"]:
-			bucket.append((s["date"], to_timedelta(s["start_time"]), to_timedelta(s["end_time"])))
-
-	def _is_tech_free_for_seg(emp_id: str, seg_date: str, seg_start: timedelta, seg_end: timedelta) -> bool:
-		if is_employee_on_leave_for_date(leaves_by_emp.get(emp_id, ()), seg_date)["on_leave"]:
-			return False
-		for ex_date, ex_start, ex_end in entry_segs_by_tech.get(emp_id, ()):
-			if ex_date == seg_date and intervals_overlap(seg_start, seg_end, ex_start, ex_end):
-				return False
-		return True
-
-	if enable_tech:
-		for prop_seg in span["segments"]:
-			seg_date = prop_seg["date"]
-			seg_start = to_timedelta(prop_seg["start_time"])
-			seg_end = to_timedelta(prop_seg["end_time"])
-			free_count = sum(
-				1 for emp_id in active_techs if _is_tech_free_for_seg(emp_id, seg_date, seg_start, seg_end)
-			)
-			if free_count <= 0:
-				_throw_self_serve_error(
-					_("No appointment capacity is available for the selected date and time."),
-					"capacity_conflict",
-				)
-
-	if not current_assigned_tech:
-		return None
-	if enable_tech and current_assigned_tech not in active_techs:
-		return None
-
-	for prop_seg in span["segments"]:
-		if not _is_tech_free_for_seg(
-			current_assigned_tech,
-			prop_seg["date"],
-			to_timedelta(prop_seg["start_time"]),
-			to_timedelta(prop_seg["end_time"]),
-		):
-			return None
-
-	return current_assigned_tech
+	return res.get("assigned_technician")
 
 
 def _check_vehicle_availability_under_lock(
@@ -1049,6 +1291,8 @@ def reschedule_self_serve_appointment(
 		offset_minutes=offset_minutes,
 	)
 	required_tags = get_required_tags_for_entry(se)
+	required_skills = get_required_skills_for_entry(se)
+	skills_json = _serialize_required_skills(required_skills)
 
 	demo_active = is_demo_mode()
 
@@ -1074,15 +1318,24 @@ def reschedule_self_serve_appointment(
 				holiday_fn=holiday_fn,
 			)
 		if demo_active and cint(settings.get("enable_technician_capacity")) and not active_techs:
-			new_assigned_tech = se.assigned_technician
+			tech_assignment: Dict[str, Any] = {
+				"assigned_technician": se.assigned_technician,
+				"keep_locked": True,
+			}
 		else:
-			new_assigned_tech = _check_technician_capacity_under_lock(
+			tech_assignment = _assign_technician_under_lock(
 				active_techs,
 				iso_date,
 				internal_start_time,
 				duration,
 				settings=settings,
+				required_skills=required_skills,
 				current_assigned_tech=se.assigned_technician,
+				assignment_locked=cint(getattr(se, "assignment_locked", 0)),
+				repair_order=se.repair_order,
+				entry_type=se.entry_type,
+				waiter_preference=getattr(se, "waiter_preference", None) or "Drop-Off",
+				is_comeback=bool(cint(getattr(se, "is_comeback", 0))),
 				exclude_entry=se.name,
 				holiday_fn=holiday_fn,
 			)
@@ -1098,7 +1351,16 @@ def reschedule_self_serve_appointment(
 		se.scheduled_date = iso_date
 		se.scheduled_time = internal_start_time
 		se.service_bay = chosen_bay
-		se.assigned_technician = new_assigned_tech
+		se.assigned_technician = tech_assignment.get("assigned_technician")
+		if not tech_assignment.get("keep_locked"):
+			if hasattr(se, "assignment_mode"):
+				se.assignment_mode = tech_assignment.get("assignment_mode") or "Auto"
+			if hasattr(se, "assignment_locked"):
+				se.assignment_locked = cint(tech_assignment.get("assignment_locked", 0))
+			if hasattr(se, "assignment_reason"):
+				se.assignment_reason = tech_assignment.get("assignment_reason") or ""
+		if hasattr(se, "required_skills_json") and skills_json and not getattr(se, "required_skills_json", None):
+			se.required_skills_json = skills_json
 		se.reschedule_count = max(0, cint(se.reschedule_count or 0)) + 1
 		se.last_rescheduled_at = now_val
 
@@ -1384,6 +1646,8 @@ def create_provisional_booking(
 		)
 
 	duration = int(reqs["duration_minutes"])
+	required_skills = normalize_skill_requirements(reqs.get("required_skills"))
+	skills_json = _serialize_required_skills(required_skills)
 	iso_date, internal_start_time, holiday_fn = _validate_target_slot(
 		target_date,
 		customer_arrival_time,
@@ -1413,13 +1677,23 @@ def create_provisional_booking(
 				required_tags=reqs["required_tags"],
 				holiday_fn=holiday_fn,
 			)
-		if not (demo_active and cint(settings.get("enable_technician_capacity")) and not active_techs):
-			_check_technician_capacity_under_lock(
+		if demo_active and cint(settings.get("enable_technician_capacity")) and not active_techs:
+			tech_assignment: Dict[str, Any] = {
+				"assigned_technician": None,
+				"assignment_mode": "Unassigned",
+				"assignment_locked": 0,
+				"assignment_reason": "",
+			}
+		else:
+			tech_assignment = _assign_technician_under_lock(
 				active_techs,
 				iso_date,
 				internal_start_time,
 				duration,
 				settings=settings,
+				required_skills=required_skills,
+				entry_type=entry_type,
+				waiter_preference=intake["waiter_preference"],
 				holiday_fn=holiday_fn,
 			)
 		_check_vehicle_availability_under_lock(
@@ -1450,6 +1724,11 @@ def create_provisional_booking(
 			"scheduled_time": internal_start_time,
 			"estimated_duration": duration,
 			"service_bay": chosen_bay,
+			"assigned_technician": tech_assignment.get("assigned_technician"),
+			"assignment_mode": tech_assignment.get("assignment_mode") or "Auto",
+			"assignment_locked": 0,
+			"assignment_reason": tech_assignment.get("assignment_reason") or "",
+			"required_skills_json": skills_json,
 			"booking_source": booking_source,
 			"waiter_preference": intake["waiter_preference"],
 			"reschedule_count": 0,

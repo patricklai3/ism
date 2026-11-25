@@ -17,11 +17,20 @@ from ism.scheduling.entry_queries import (
 	fetch_blocking_entries,
 	fetch_leaves_by_employee,
 	intervals_overlap,
-	is_employee_on_leave_for_date,
 	match_booking_conflict,
 	peak_concurrent_overlaps,
 	resolve_conflict_identities_batch,
 	span_datetimes,
+)
+from ism.scheduling.shifts import (
+	apply_leave_to_shift_window,
+	get_technician_shift_window,
+	is_interval_within_shift,
+)
+from ism.scheduling.skills import (
+	is_technician_qualified,
+	load_active_technician_profiles,
+	normalize_skill_requirements,
 )
 from ism.scheduling.time_utils import (
 	calculate_working_span,
@@ -46,6 +55,7 @@ class _SlotSearchContext:
 		target_tech: Optional[str] = None,
 		exclude_entry: Optional[str] = None,
 		vehicle_identity: Optional[Any] = None,
+		required_skills: Optional[Any] = None,
 	) -> None:
 		self.settings = get_shop_settings()
 		self.op_start: timedelta = self.settings["operating_hours_start"]
@@ -66,6 +76,7 @@ class _SlotSearchContext:
 		self.service_bay = service_bay
 		self.target_tech = target_tech
 		self.exclude_entry = exclude_entry
+		self.required_skills: List[Tuple[str, int]] = normalize_skill_requirements(required_skills)
 		self.vehicle_identity = (
 			extract_vehicle_identity(vehicle_identity) if vehicle_identity is not None else None
 		)
@@ -86,9 +97,14 @@ class _SlotSearchContext:
 		self.target_tech_valid: bool = True
 		self.tech_ids: List[str] = []
 		self._tech_id_set: Set[str] = set()
+		self.profiles: Dict[str, Dict[str, Any]] = {}
+		self.inactive_profile_ids: Set[str] = set()
 		self.leaves_by_emp: Dict[str, List[Dict[str, Any]]] = {}
 		self.bay_intervals: Dict[str, List[Tuple[datetime, datetime, str]]] = {}
 		self.tech_segments: Dict[str, Dict[str, List[Tuple[timedelta, timedelta, str]]]] = {}
+		self.unassigned_segments: Dict[str, List[Tuple[timedelta, timedelta, str]]] = {}
+		self._base_shift_cache: Dict[Tuple[str, str], Optional[Dict[str, Any]]] = {}
+		self._eff_shift_cache: Dict[Tuple[str, str], Optional[Dict[str, Any]]] = {}
 		self.vehicle_intervals: List[Tuple[datetime, datetime, str]] = []
 		self.phone_intervals: List[Tuple[datetime, datetime, str]] = []
 		self._max_phone_concurrent: int = max(
@@ -147,6 +163,17 @@ class _SlotSearchContext:
 			)
 		return self._extra_holidays[d_str]
 
+	def _load_inactive_profile_ids(self, emp_ids: List[str]) -> Set[str]:
+		if not emp_ids or not frappe.db.exists("DocType", "Technician Profile"):
+			return set()
+		rows = frappe.get_all(
+			"Technician Profile",
+			filters={"employee": ["in", emp_ids], "is_active": 0},
+			pluck="employee",
+			ignore_permissions=True,
+		)
+		return {str(emp) for emp in rows if emp}
+
 	def _load_technicians(self, start_dt: date, horizon_end_dt: date) -> None:
 		designation = self.settings.get("technician_designation") or "Technician"
 		if self.target_tech:
@@ -159,17 +186,59 @@ class _SlotSearchContext:
 			self.target_tech_valid = bool(
 				emp_doc and emp_doc.status == "Active" and emp_doc.designation == designation
 			)
-			self.tech_ids = [self.target_tech] if self.target_tech_valid else []
+			raw_ids = [self.target_tech] if self.target_tech_valid else []
+			if raw_ids:
+				self.inactive_profile_ids = self._load_inactive_profile_ids(raw_ids)
+				if self.target_tech in self.inactive_profile_ids:
+					self.target_tech_valid = False
+					raw_ids = []
+			if raw_ids:
+				self.profiles = load_active_technician_profiles(raw_ids)
+			self.tech_ids = raw_ids
 		elif self.enable_tech:
-			self.tech_ids = frappe.get_all(
+			raw_ids = frappe.get_all(
 				"Employee",
 				filters={"designation": designation, "status": "Active"},
 				pluck="name",
 				order_by="employee_name asc, name asc",
 			)
+			if raw_ids:
+				self.inactive_profile_ids = self._load_inactive_profile_ids(raw_ids)
+				self.profiles = load_active_technician_profiles(raw_ids)
+			eligible_ids: List[str] = []
+			for emp_id in raw_ids:
+				if emp_id in self.inactive_profile_ids:
+					continue
+				if self.required_skills:
+					profile = self.profiles.get(emp_id)
+					if not profile or not is_technician_qualified(profile, self.required_skills):
+						continue
+				eligible_ids.append(emp_id)
+			self.tech_ids = eligible_ids
 		self._tech_id_set = set(self.tech_ids)
 		if self.tech_ids:
 			self.leaves_by_emp = fetch_leaves_by_employee(self.tech_ids, start_dt, horizon_end_dt)
+
+	def _get_base_shift(self, emp_id: str, seg_date: str) -> Optional[Dict[str, Any]]:
+		key = (emp_id, seg_date)
+		if key not in self._base_shift_cache:
+			self._base_shift_cache[key] = get_technician_shift_window(
+				self.profiles.get(emp_id),
+				seg_date,
+				settings=self.settings,
+			)
+		return self._base_shift_cache[key]
+
+	def _get_effective_shift(self, emp_id: str, seg_date: str) -> Optional[Dict[str, Any]]:
+		key = (emp_id, seg_date)
+		if key not in self._eff_shift_cache:
+			base_shift = self._get_base_shift(emp_id, seg_date)
+			self._eff_shift_cache[key] = apply_leave_to_shift_window(
+				base_shift,
+				self.leaves_by_emp.get(emp_id, ()),
+				seg_date,
+			)
+		return self._eff_shift_cache[key]
 
 	def _load_entries(self, start_dt: date, horizon_end_dt: date) -> None:
 		if not self._candidate_bay_set and not self._tech_id_set and not self.vehicle_identity:
@@ -201,7 +270,7 @@ class _SlotSearchContext:
 				else:
 					self.phone_intervals.append((entry_span_dt[0], entry_span_dt[1], entry["name"]))
 
-			tech = entry.get("assigned_technician")
+			tech = (entry.get("assigned_technician") or "").strip()
 			if tech and tech in self._tech_id_set:
 				ex_dur = entry.get("estimated_duration") or 0
 				ex_span = calculate_working_span(
@@ -213,6 +282,20 @@ class _SlotSearchContext:
 				by_date = self.tech_segments.setdefault(tech, {})
 				for seg in ex_span["segments"]:
 					by_date.setdefault(seg["date"], []).append((
+						to_timedelta(seg["start_time"]),
+						to_timedelta(seg["end_time"]),
+						entry["name"],
+					))
+			elif not tech and self.enable_tech and not self.target_tech:
+				ex_dur = entry.get("estimated_duration") or 0
+				ex_span = calculate_working_span(
+					entry.get("scheduled_date"),
+					entry.get("scheduled_time"),
+					ex_dur,
+					is_holiday_fn=self.is_holiday,
+				)
+				for seg in ex_span["segments"]:
+					self.unassigned_segments.setdefault(seg["date"], []).append((
 						to_timedelta(seg["start_time"]),
 						to_timedelta(seg["end_time"]),
 						entry["name"],
@@ -283,48 +366,67 @@ class _SlotSearchContext:
 				avail_techs_count = 0
 				tech_available = False
 				tech_reason = _("Tech Unavailable")
+			elif self.required_skills and not is_technician_qualified(
+				self.profiles.get(self.target_tech) or {},
+				self.required_skills,
+			):
+				avail_techs_count = 0
+				tech_available = False
+				tech_reason = _("Unqualified")
 			else:
-				emp_leaves = self.leaves_by_emp.get(self.target_tech, ())
-				on_leave = any(
-					is_employee_on_leave_for_date(emp_leaves, str(seg["date"]))["on_leave"]
-					for seg in span["segments"]
-				)
-				if on_leave:
-					avail_techs_count = 0
-					tech_available = False
-					tech_reason = _("On Leave")
-				else:
-					tech_by_date = self.tech_segments.get(self.target_tech, {})
-					for seg in span["segments"]:
-						seg_start = to_timedelta(seg["start_time"])
-						seg_end = to_timedelta(seg["end_time"])
-						for ex_s, ex_e, entry_name in tech_by_date.get(seg["date"], ()):
-							if intervals_overlap(seg_start, seg_end, ex_s, ex_e):
-								conflict_entry = entry_name
-								avail_techs_count = 0
-								tech_available = False
-								tech_reason = _("Tech Busy")
-								break
-						if not tech_available:
+				tech_by_date = self.tech_segments.get(self.target_tech, {})
+				for seg in span["segments"]:
+					seg_date = str(seg["date"])
+					seg_start = to_timedelta(seg["start_time"])
+					seg_end = to_timedelta(seg["end_time"])
+					base_shift = self._get_base_shift(self.target_tech, seg_date)
+					if not base_shift:
+						avail_techs_count = 0
+						tech_available = False
+						tech_reason = _("Off Shift")
+						break
+					eff_shift = self._get_effective_shift(self.target_tech, seg_date)
+					if not eff_shift:
+						avail_techs_count = 0
+						tech_available = False
+						tech_reason = _("On Leave")
+						break
+					if not is_interval_within_shift(seg_start, seg_end, eff_shift):
+						avail_techs_count = 0
+						tech_available = False
+						tech_reason = (
+							_("On Leave")
+							if is_interval_within_shift(seg_start, seg_end, base_shift)
+							else _("Off Shift")
+						)
+						break
+					for ex_s, ex_e, entry_name in tech_by_date.get(seg_date, ()):
+						if intervals_overlap(seg_start, seg_end, ex_s, ex_e):
+							conflict_entry = entry_name
+							avail_techs_count = 0
+							tech_available = False
+							tech_reason = _("Tech Busy")
 							break
-					if tech_available:
-						avail_techs_count = 1
+					if not tech_available:
+						break
+				if tech_available:
+					avail_techs_count = 1
 		elif self.enable_tech:
 			total_techs = len(self.tech_ids)
 			if total_techs == 0:
 				avail_techs_count = 0
 				tech_available = False
-				tech_reason = _("Techs Full")
+				tech_reason = _("No Qualified Tech") if self.required_skills else _("Techs Full")
 			else:
 				min_available = total_techs
 				for seg in span["segments"]:
-					seg_date = seg["date"]
+					seg_date = str(seg["date"])
 					seg_start = to_timedelta(seg["start_time"])
 					seg_end = to_timedelta(seg["end_time"])
-					avail_in_seg = 0
+					qualified_free = 0
 					for emp_id in self.tech_ids:
-						emp_leaves = self.leaves_by_emp.get(emp_id, ())
-						if is_employee_on_leave_for_date(emp_leaves, str(seg_date))["on_leave"]:
+						eff_shift = self._get_effective_shift(emp_id, seg_date)
+						if not is_interval_within_shift(seg_start, seg_end, eff_shift):
 							continue
 						emp_segs = self.tech_segments.get(emp_id, {}).get(seg_date, ())
 						has_overlap = any(
@@ -333,7 +435,13 @@ class _SlotSearchContext:
 						)
 						if has_overlap:
 							continue
-						avail_in_seg += 1
+						qualified_free += 1
+					unassigned_names = {
+						entry_name
+						for ex_s, ex_e, entry_name in self.unassigned_segments.get(seg_date, ())
+						if intervals_overlap(seg_start, seg_end, ex_s, ex_e)
+					}
+					avail_in_seg = max(0, qualified_free - len(unassigned_names))
 					if avail_in_seg < min_available:
 						min_available = avail_in_seg
 					if min_available == 0:
@@ -505,6 +613,7 @@ def search_day_slots(
 	include_all: bool = False,
 	exclude_entry: Optional[str] = None,
 	vehicle_identity: Optional[Any] = None,
+	required_skills: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
 	"""Return slots for a single date using a single batched snapshot load."""
 	ctx = _SlotSearchContext(
@@ -516,6 +625,7 @@ def search_day_slots(
 		target_tech=technician,
 		exclude_entry=exclude_entry,
 		vehicle_identity=vehicle_identity,
+		required_skills=required_skills,
 	)
 	return ctx.slots_for_date(target_date, include_all=include_all, max_slots=max_slots)
 
@@ -530,6 +640,7 @@ def find_next_available_slot_batch(
 	technician: Optional[str] = None,
 	exclude_entry: Optional[str] = None,
 	vehicle_identity: Optional[Any] = None,
+	required_skills: Optional[Any] = None,
 ) -> Optional[Dict[str, Any]]:
 	"""Find the earliest non-holiday date after start_dt (up to max_days) with open slots."""
 	if max_days <= 0:
@@ -546,6 +657,7 @@ def find_next_available_slot_batch(
 		target_tech=technician,
 		exclude_entry=exclude_entry,
 		vehicle_identity=vehicle_identity,
+		required_skills=required_skills,
 	)
 	if not ctx.valid_hours:
 		return None

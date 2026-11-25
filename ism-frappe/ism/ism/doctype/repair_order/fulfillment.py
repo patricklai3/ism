@@ -507,6 +507,12 @@ def pick_up_ro_vehicle(ro) -> Dict[str, Any]:
 		ro.status = "Authorized - In Progress"
 
 	ro.save()
+	try:
+		from ism.scheduling.rebalancer import on_repair_order_lock_assignments
+
+		on_repair_order_lock_assignments(ro)
+	except ImportError:
+		pass
 	_publish_ro_execution_updated(ro, "pick_up")
 	return {"status": "success", "vehicle_location": ro.vehicle_location, "picked_up_at": ro.picked_up_at}
 

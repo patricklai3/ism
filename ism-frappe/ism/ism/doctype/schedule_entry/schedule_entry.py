@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 from datetime import timedelta
+import json
 
 import frappe
 from frappe import _
@@ -15,6 +16,11 @@ from ism.scheduling.entry_queries import (
 	extract_vehicle_identity,
 	find_conflicting_vehicle_entries,
 	lock_vehicle_rows_for_identity,
+)
+from ism.scheduling.skills import (
+	get_required_skills_for_packages,
+	get_required_skills_for_schedule_entry,
+	normalize_skill_requirements,
 )
 from ism.scheduling.time_utils import (
 	calculate_working_span,
@@ -185,13 +191,25 @@ class ScheduleEntry(Document):
 	def before_save(self):
 		self._normalize_provisional_fields()
 		self._normalize_reschedule_count()
+		if self.status in ("In Progress", "Completed") and hasattr(self, "assignment_locked"):
+			self.assignment_locked = 1
 		if getattr(self.flags, "ignore_validate", False) or not self.completion_date or not self.completion_time:
 			self.update_working_span()
-		self._prev_repair_order = (
-			frappe.db.get_value("Schedule Entry", self.name, "repair_order")
-			if self.name and not self.is_new()
-			else None
-		)
+		if self.name and not self.is_new():
+			prev_vals = (
+				frappe.db.get_value(
+					"Schedule Entry",
+					self.name,
+					["repair_order", "assigned_technician"],
+					as_dict=True,
+				)
+				or {}
+			)
+			self._prev_repair_order = prev_vals.get("repair_order")
+			self._prev_assigned_technician = prev_vals.get("assigned_technician")
+		else:
+			self._prev_repair_order = None
+			self._prev_assigned_technician = None
 		self.populate_from_repair_order()
 		self.set_title()
 
@@ -233,9 +251,26 @@ class ScheduleEntry(Document):
 
 	def on_update(self):
 		prev_ro = getattr(self, "_prev_repair_order", None)
+		prev_tech = getattr(self, "_prev_assigned_technician", None)
 		if prev_ro and prev_ro != self.repair_order:
 			sync_repair_order_schedule_entries(prev_ro)
 		if self.repair_order:
+			if (
+				(self.assigned_technician != prev_tech or self.repair_order != prev_ro)
+				and frappe.db.exists("DocType", "Repair Order Service")
+				and frappe.db.has_column("Repair Order Service", "schedule_entry")
+			):
+				frappe.db.set_value(
+					"Repair Order Service",
+					{
+						"parent": self.repair_order,
+						"parenttype": "Repair Order",
+						"schedule_entry": self.name,
+					},
+					"assigned_technician",
+					self.assigned_technician,
+					update_modified=False,
+				)
 			sync_repair_order_schedule_entries(self.repair_order)
 		frappe.publish_realtime(
 			"ism_calendar_update",
@@ -384,6 +419,38 @@ class ScheduleEntry(Document):
 				frappe.ValidationError,
 			)
 
+	def _resolve_required_skills_for_pool(self):
+		raw_snapshot = getattr(self, "required_skills_json", None)
+		if raw_snapshot:
+			parsed = normalize_skill_requirements(raw_snapshot)
+			if parsed:
+				return parsed
+
+		raw_pkgs = getattr(self, "booked_packages_json", None)
+		if raw_pkgs:
+			try:
+				parsed_pkgs = json.loads(raw_pkgs) if isinstance(raw_pkgs, str) else raw_pkgs
+			except (TypeError, ValueError):
+				parsed_pkgs = None
+			if isinstance(parsed_pkgs, list):
+				pkg_ids = []
+				for item in parsed_pkgs:
+					if isinstance(item, str) and item.strip():
+						pkg_ids.append(item.strip())
+					elif isinstance(item, dict):
+						pid = (
+							item.get("package_id")
+							or item.get("name")
+							or item.get("service_package")
+							or item.get("package_name")
+						)
+						if pid and str(pid).strip():
+							pkg_ids.append(str(pid).strip())
+				if pkg_ids:
+					return get_required_skills_for_packages(list(dict.fromkeys(pkg_ids)))
+
+		return get_required_skills_for_schedule_entry(self)
+
 	def validate_technician_pool(self):
 		"""Validate technician pool capacity gating."""
 		if (
@@ -414,11 +481,15 @@ class ScheduleEntry(Document):
 		if is_demo_mode() and not active_tech_rows:
 			return
 
+		req_skills = self._resolve_required_skills_for_pool()
+		if req_skills and not frappe.db.exists("Technician Profile", {"is_active": 1}):
+			req_skills = []
 		pool = get_technician_pool_availability(
 			date=str(self.scheduled_date),
 			start_time=self.scheduled_time,
 			duration_minutes=self.estimated_duration or 60,
 			exclude_entry=self.name,
+			required_skills=req_skills or None,
 		)
 
 		if not pool.get("is_available"):

@@ -10,6 +10,8 @@
   "type_name",
   "color",
   "requires_repair_order",
+  "default_skill",
+  "default_difficulty_level",
   "description"
  ],
  "fields": [
@@ -35,6 +37,19 @@
    "label": "Requires Repair Order"
   },
   {
+   "fieldname": "default_skill",
+   "fieldtype": "Link",
+   "label": "Default Skill",
+   "options": "Technician Skill"
+  },
+  {
+   "default": "1",
+   "description": "Default skill difficulty level (1=Routine, 2=Standard, 3=Complex).",
+   "fieldname": "default_difficulty_level",
+   "fieldtype": "Int",
+   "label": "Default Difficulty Level"
+  },
+  {
    "fieldname": "description",
    "fieldtype": "Small Text",
    "in_list_view": 1,
@@ -42,7 +57,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-26 12:00:00.000000",
+ "modified": "2026-11-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "ISM",
  "name": "Schedule Entry Type",

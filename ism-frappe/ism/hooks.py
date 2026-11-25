@@ -193,6 +193,10 @@ doc_events = {
 		"on_submit": "ism.ism.doctype.repair_order.billing.on_payment_entry_submit",
 		"on_cancel": "ism.ism.doctype.repair_order.billing.on_payment_entry_cancel",
 	},
+	"Leave Application": {
+		"on_submit": "ism.scheduling.rebalancer.on_leave_application_change",
+		"on_cancel": "ism.scheduling.rebalancer.on_leave_application_change",
+	},
 	"Repair Order": {
 		"after_insert": "ism.board.projections.on_repair_order_after_insert",
 		"on_update": [
@@ -200,6 +204,7 @@ doc_events = {
 			"ism.portal.pin_vault.on_repair_order_update_purge_pin",
 			"ism.ism.doctype.shop_action_item.clearing.on_repair_order_update_clear_actions",
 			"ism.time_calibration.service.on_repair_order_update",
+			"ism.scheduling.rebalancer.on_repair_order_lock_assignments",
 		],
 	},
 	"Service Time Observation": {
@@ -210,6 +215,7 @@ doc_events = {
 			"ism.board.projections.on_schedule_entry_update",
 			"ism.portal.pin_vault.on_schedule_entry_update_sync_pin",
 			"ism.ism.doctype.shop_action_item.clearing.on_schedule_entry_update_clear_actions",
+			"ism.scheduling.rebalancer.on_schedule_entry_change",
 		],
 	},
 	"SMS Audit Log": {
@@ -237,6 +243,7 @@ scheduler_events = {
 		"ism.comms.sessions.cleanup_expired_portal_sessions",
 		"ism.portal.pin_vault.purge_stale_closed_ro_pins",
 		"ism.time_calibration.deconvolution.run_nightly_calibration_job",
+		"ism.scheduling.rebalancer.run_morning_auto_rebalance",
 	],
 }
 

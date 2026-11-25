@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Optional, Sequence, Union
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, cint, get_datetime, getdate
+from frappe.utils import add_days, cint, flt, get_datetime, getdate
 
 DEFAULT_SHOP_SETTINGS: Dict[str, Any] = {
 	"operating_hours_start": timedelta(hours=8),
@@ -28,6 +28,15 @@ DEFAULT_SHOP_SETTINGS: Dict[str, Any] = {
 	"self_serve_min_lead_time_minutes": 120,
 	"self_serve_horizon_days": 30,
 	"enable_waiter_preference": 1,
+	"assignment_policy_mode": "Tiered Waterfall",
+	"fairness_window_days": 7,
+	"tier_spillover_threshold_pct": 85.0,
+	"fairness_weight": 0.55,
+	"skill_conservation_weight": 0.25,
+	"skill_preference_weight": 0.12,
+	"schedule_packing_weight": 0.08,
+	"enable_morning_auto_rebalance": 0,
+	"auto_rebalance_skew_threshold_pct": 25.0,
 }
 
 
@@ -263,6 +272,31 @@ def get_shop_settings() -> Dict[str, Any]:
 	raw_waiter = getattr(doc, "enable_waiter_preference", None)
 	if raw_waiter is not None and raw_waiter != "":
 		settings["enable_waiter_preference"] = 1 if cint(raw_waiter) else 0
+
+	raw_policy_mode = (getattr(doc, "assignment_policy_mode", None) or "").strip()
+	if raw_policy_mode in ("Tiered Waterfall", "Equal Balance", "Weighted Share"):
+		settings["assignment_policy_mode"] = raw_policy_mode
+	raw_fairness_window = getattr(doc, "fairness_window_days", None)
+	if raw_fairness_window is not None and raw_fairness_window != "":
+		settings["fairness_window_days"] = min(30, max(1, cint(raw_fairness_window)))
+	raw_spillover = getattr(doc, "tier_spillover_threshold_pct", None)
+	if raw_spillover is not None and raw_spillover != "":
+		settings["tier_spillover_threshold_pct"] = min(100.0, max(0.0, flt(raw_spillover)))
+	for weight_key in (
+		"fairness_weight",
+		"skill_conservation_weight",
+		"skill_preference_weight",
+		"schedule_packing_weight",
+	):
+		raw_weight = getattr(doc, weight_key, None)
+		if raw_weight is not None and raw_weight != "":
+			settings[weight_key] = max(0.0, flt(raw_weight))
+	raw_auto_rebal = getattr(doc, "enable_morning_auto_rebalance", None)
+	if raw_auto_rebal is not None and raw_auto_rebal != "":
+		settings["enable_morning_auto_rebalance"] = 1 if cint(raw_auto_rebal) else 0
+	raw_skew = getattr(doc, "auto_rebalance_skew_threshold_pct", None)
+	if raw_skew is not None and raw_skew != "":
+		settings["auto_rebalance_skew_threshold_pct"] = min(100.0, max(0.0, flt(raw_skew)))
 
 	if cache is not None:
 		try:

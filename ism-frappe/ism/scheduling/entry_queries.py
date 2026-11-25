@@ -113,6 +113,10 @@ def fetch_leaves_by_employee(
 	if not employees or not min_str or not max_str or not frappe.db.exists("DocType", "Leave Application"):
 		return {}
 
+	fields = ["employee", "from_date", "to_date", "half_day", "half_day_date"]
+	if frappe.db.has_column("Leave Application", "ism_half_day_period"):
+		fields.append("ism_half_day_period")
+
 	leaves = frappe.get_all(
 		"Leave Application",
 		filters=[
@@ -122,7 +126,7 @@ def fetch_leaves_by_employee(
 			["from_date", "<=", max_str],
 			["to_date", ">=", min_str],
 		],
-		fields=["employee", "from_date", "to_date", "half_day", "half_day_date"],
+		fields=fields,
 	)
 	leaves_by_emp: Dict[str, List[Dict[str, Any]]] = {}
 	for leave in leaves:
@@ -137,24 +141,43 @@ def is_employee_on_leave_for_date(
 	"""Check whether any approved leave in emp_leaves covers target_date (preferring full-day)."""
 	target_str = normalize_date(target_date) or str(target_date or "")
 	if not target_str:
-		return {"on_leave": False, "half_day": False}
+		return {"on_leave": False, "half_day": False, "half_day_period": None}
 
 	half_day_hit = False
+	periods: Set[str] = set()
+	has_unspecified_half_day = False
+
 	for leave in emp_leaves:
 		from_str = normalize_date(leave.get("from_date")) or str(leave.get("from_date") or "")
 		to_str = normalize_date(leave.get("to_date")) or str(leave.get("to_date") or "")
 		if from_str and to_str and not (from_str <= target_str <= to_str):
 			continue
-		if not bool(leave.get("half_day")):
-			return {"on_leave": True, "half_day": False}
+		if not cint(leave.get("half_day")):
+			return {"on_leave": True, "half_day": False, "half_day_period": None}
 		half_day_raw = leave.get("half_day_date")
 		half_day_str = (normalize_date(half_day_raw) or str(half_day_raw)) if half_day_raw else None
-		if half_day_str == target_str:
-			half_day_hit = True
+		if half_day_str and half_day_str != target_str:
+			# On a multi-day leave with half_day=1, dates other than half_day_date are full days off.
+			return {"on_leave": True, "half_day": False, "half_day_period": None}
+		half_day_hit = True
+		raw_period = (
+			leave.get("ism_half_day_period")
+			or leave.get("half_day_period")
+			or ""
+		)
+		period_norm = str(raw_period).strip().upper()
+		if period_norm in ("AM", "PM"):
+			periods.add(period_norm)
+		else:
+			has_unspecified_half_day = True
 
 	if half_day_hit:
-		return {"on_leave": True, "half_day": True}
-	return {"on_leave": False, "half_day": False}
+		if "AM" in periods and "PM" in periods:
+			return {"on_leave": True, "half_day": False, "half_day_period": None}
+		if has_unspecified_half_day:
+			return {"on_leave": True, "half_day": True, "half_day_period": None}
+		return {"on_leave": True, "half_day": True, "half_day_period": next(iter(periods), None)}
+	return {"on_leave": False, "half_day": False, "half_day_period": None}
 
 
 def intervals_overlap(start_a: Any, end_a: Any, start_b: Any, end_b: Any) -> bool:
