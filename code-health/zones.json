@@ -26,10 +26,10 @@
         "ism-frappe/ism/api/inspection.py"
       ],
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "last_audited_at": null,
-      "last_audited_run": null,
-      "last_audited_commit": null,
-      "audit_count": 0
+      "last_audited_at": "2026-11-25T00:07:42Z",
+      "last_audited_run": "run-002",
+      "last_audited_commit": "13b4858d4eeec15a1d6fc4bf3879af3abb23940d",
+      "audit_count": 1
     },
     {
       "id": "frappe-scheduling",
@@ -96,10 +96,10 @@
         "ism-frappe/ism/ism/doctype/shop_health_snapshot"
       ],
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "last_audited_at": null,
-      "last_audited_run": null,
-      "last_audited_commit": null,
-      "audit_count": 0
+      "last_audited_at": "2026-11-25T00:07:41Z",
+      "last_audited_run": "run-002",
+      "last_audited_commit": "13b4858d4eeec15a1d6fc4bf3879af3abb23940d",
+      "audit_count": 1
     },
     {
       "id": "frappe-portal-booking",

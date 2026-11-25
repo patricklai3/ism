@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "next_id": 506,
+  "next_id": 513,
   "items": [
     {
       "id": "CH-001",
@@ -126,16 +126,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/repair_order/billing.py:195 passes `ignore_permissions=True` inside `_ensure_non_stock_item`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:39Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): internal billing bootstrap creating standard non-stock UOM/Item records after Sales Invoice create/submit permission checks."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:39Z"
     },
     {
       "id": "CH-006",
@@ -369,16 +375,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/repair_order/fulfillment.py:67 passes `ignore_permissions=True` inside `sync_declined_to_deferred_services`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:39Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): triggered from RepairOrder.on_update (including guest portal approval) to append declined services onto Repair Vehicle.deferred_services."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:39Z"
     },
     {
       "id": "CH-015",
@@ -450,16 +462,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/repair_order/fulfillment.py:363 passes `ignore_permissions=True` inside `park_ro_vehicle`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:39Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): guarded by ro.check_permission('write'); ignore_permissions=True required because ISM Technician lacks write permission on Schedule Entry."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:39Z"
     },
     {
       "id": "CH-018",
@@ -477,16 +495,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/repair_order/fulfillment.py:449 passes `ignore_permissions=True` inside `toggle_ro_service_completion`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:39Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): guarded by ro.check_permission('write'); ignore_permissions=True allows ISM Technician to auto-complete linked schedule entries on finishing last approved service."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:39Z"
     },
     {
       "id": "CH-019",
@@ -639,16 +663,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/repair_order/fulfillment.py:763 passes `ignore_permissions=True` inside `_notify_ro_parts_ready`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:40Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): stock-update hook notification helper creating/updating a system Shop Action Item when incoming inventory satisfies a Waiting on Parts RO."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:40Z"
     },
     {
       "id": "CH-025",
@@ -1053,7 +1083,13 @@
       "evidence": "ism-frappe/ism/ism/doctype/repair_order/repair_order.js has 2027 lines (critical threshold > 1500).",
       "proposed_fix": "Plan a scoped 1-file modularization extracting pure helpers while preserving all public re-exports.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:41Z",
+          "text": "Verified run-002 modularization plan: repair_order.js is 2,028 LOC with 9 modal dialogs (including 350-LOC open_manage_parts_dialog); split dialogs into sibling client modules under a scoped refactor."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:41Z"
     },
     {
       "id": "CH-040",
@@ -1125,16 +1161,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/repair_order/repair_order.py:167 passes `ignore_permissions=True` inside `RepairOrder.on_trash`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:40Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): explicitly restricted to Administrator and System Manager at L154-158 before deleting empty linked Shop Board Thread records."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:40Z"
     },
     {
       "id": "CH-043",
@@ -1206,16 +1248,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/repair_vehicle/repair_vehicle.py:117 passes `ignore_permissions=True` inside `RepairVehicle._propagate_vehicle_display`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:40Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): denormalization hook in RepairVehicle.on_update propagating updated display title to linked ROs, Schedule Entries, and Board Threads after vehicle write auth."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:40Z"
     },
     {
       "id": "CH-046",
@@ -1260,16 +1308,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/repair_vehicle/vehicle_queries.py:138 passes formatted/concatenated SQL expression to `frappe.db.sql`.",
       "proposed_fix": "Parameterize all dynamic values with `%s` / named placeholders (or Frappe QueryBuilder) and validate any dynamic identifiers against an allowlist.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:39Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): where_sql combines Frappe build_match_conditions('Repair Vehicle') with hardcoded %s predicates; all user inputs bound via tuple(params)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:39Z"
     },
     {
       "id": "CH-048",
@@ -1449,16 +1503,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/approval.py:145 declares @frappe.whitelist(allow_guest=True) on get_public_quote_approval.",
       "proposed_fix": "Audit rate limiting, input validation, and data-exposure boundaries; mark wontfix once verified safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:40Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): intentional guest approval read endpoint protected by 32-byte URL-safe approval_token, expiry check, strict isinstance(token, str) validation, and rate limiting."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:40Z"
     },
     {
       "id": "CH-055",
@@ -1476,16 +1536,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/approval.py:307 declares @frappe.whitelist(allow_guest=True) on submit_customer_approval.",
       "proposed_fix": "Audit rate limiting, input validation, and data-exposure boundaries; mark wontfix once verified safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:41Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): intentional guest approval submit endpoint protected by approval_token + FOR UPDATE row lock, expiry check, raster-only signature validation, lifecycle lock, and rate limiting."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:41Z"
     },
     {
       "id": "CH-056",
@@ -1503,16 +1569,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/approval.py:364 declares @frappe.whitelist(allow_guest=True) on submit_public_quote_approval.",
       "proposed_fix": "Audit rate limiting, input validation, and data-exposure boundaries; mark wontfix once verified safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math,ism.tests.test_approval_and_inspection,ism.tests.test_pricing_and_discounts",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:41Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): thin whitelisted alias delegating directly to submit_customer_approval with identical security controls."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:41Z"
     },
     {
       "id": "CH-057",
@@ -4608,16 +4680,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/board/gateways.py:193 passes `ignore_permissions=True` inside `_insert_board_event`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:37Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): internal append-only Shop Board Event insert helper invoked only after caller RBAC or background orchestrator authorization."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:37Z"
     },
     {
       "id": "CH-172",
@@ -4716,16 +4794,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/board/gateways.py:481 passes `ignore_permissions=True` inside `update_board_action_card_status`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:37Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): guarded by assert_can_manage_board_actions(user) at L431 before elevating to _as_system_user() and saving Shop Action Item."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:37Z"
     },
     {
       "id": "CH-176",
@@ -4851,16 +4935,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/board/projections.py:177 passes `ignore_permissions=True` inside `ensure_thread_for_ro`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:38Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): intentional system thread-provisioning helper called by RO hooks and authorized board APIs with duplicate-entry idempotency."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:38Z"
     },
     {
       "id": "CH-181",
@@ -4932,16 +5022,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/board/projections.py:556 passes `ignore_permissions=True` inside `project_external_domain_event`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:38Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): internal domain-event projector inserting SYSTEM STATE_MUTATION events onto validated existing RO threads with idempotency dedup."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:38Z"
     },
     {
       "id": "CH-184",
@@ -5022,7 +5118,13 @@
       "evidence": "ism-frappe/ism/api/board.py has 1661 lines (critical threshold > 1500).",
       "proposed_fix": "Plan a scoped 1-file modularization extracting pure helpers while preserving all public re-exports.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:38Z",
+          "text": "Verified run-002 modularization plan: api/board.py is 1,661 LOC; extract serialization/summary helpers (L63-629) into ism/board/serializers.py while re-exporting all public/whitelisted endpoints in api/board.py."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:38Z"
     },
     {
       "id": "CH-187",
@@ -5067,16 +5169,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/board.py:186 passes formatted/concatenated SQL expression to `frappe.db.sql`.",
       "proposed_fix": "Parameterize all dynamic values with `%s` / named placeholders (or Frappe QueryBuilder) and validate any dynamic identifiers against an allowlist.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:36Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): only %s placeholder count interpolated into IN ({placeholders}); all thread keys bound via tuple(unique_keys)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:36Z"
     },
     {
       "id": "CH-189",
@@ -5148,16 +5256,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/board.py:720 passes formatted/concatenated SQL expression to `frappe.db.sql`.",
       "proposed_fix": "Parameterize all dynamic values with `%s` / named placeholders (or Frappe QueryBuilder) and validate any dynamic identifiers against an allowlist.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:36Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): where_sql and vehicle_display_select use hardcoded SQL fragments/column literals; all user filters bound via tuple(values)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:36Z"
     },
     {
       "id": "CH-192",
@@ -5202,16 +5316,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/board.py:810 passes formatted/concatenated SQL expression to `frappe.db.sql`.",
       "proposed_fix": "Parameterize all dynamic values with `%s` / named placeholders (or Frappe QueryBuilder) and validate any dynamic identifiers against an allowlist.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:37Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): cols_sql from hardcoded _get_event_fields() and fixed predicates; cursor and thread args bound via tuple(values)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:37Z"
     },
     {
       "id": "CH-194",
@@ -5310,16 +5430,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/board.py:931 passes formatted/concatenated SQL expression to `frappe.db.sql`.",
       "proposed_fix": "Parameterize all dynamic values with `%s` / named placeholders (or Frappe QueryBuilder) and validate any dynamic identifiers against an allowlist.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:37Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): cols_sql and where_sql use hardcoded literals; canonical_key and cursor fields bound via tuple(values)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:37Z"
     },
     {
       "id": "CH-198",
@@ -5391,16 +5517,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/board.py:1193 passes `ignore_permissions=True` inside `post_board_capture`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:38Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): guarded upfront by resolve_actor_role() (L1083) and assert_can_access_ro() (L1100, L1104); race-branch IDOR tracked separately as a new run-002 issue."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:38Z"
     },
     {
       "id": "CH-201",
@@ -5634,16 +5766,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/api/board.py:1472 passes formatted/concatenated SQL expression to `frappe.db.sql`.",
       "proposed_fix": "Parameterize all dynamic values with `%s` / named placeholders (or Frappe QueryBuilder) and validate any dynamic identifiers against an allowlist.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:37Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): cols_sql joined from hardcoded _get_event_fields() and both t_key and events_limit are parameterized."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:37Z"
     },
     {
       "id": "CH-210",
@@ -6012,16 +6150,22 @@
       "source": "static-scanner",
       "safe_for_auto_fix": false,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "wontfix",
       "discovered_at": "2026-11-24T11:56:23Z",
       "discovered_run": "scan",
-      "resolved_run": null,
+      "resolved_run": "run-002",
       "commit": null,
       "branch": null,
       "evidence": "ism-frappe/ism/ism/doctype/shop_action_item/clearing.py:652 passes `ignore_permissions=True` inside `_auto_clear_item`.",
       "proposed_fix": "Verify explicit authorization/ownership check precedes the privileged call; mark wontfix once audited safe.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_orchestrator_and_firewall,ism.tests.test_board_pricing_and_cockpit,ism.tests.test_board_schema_and_projections",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:38Z",
+          "text": "Verified run-002 (auditor + cross-family verifier): system auto-clearing engine triggered by RO/PO/PR/SMS/Communication hooks to resolve satisfied Shop Action Item docs."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:38Z"
     },
     {
       "id": "CH-224",
@@ -13087,16 +13231,26 @@
       "source": "llm-audit",
       "safe_for_auto_fix": true,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "fixed",
       "discovered_at": "2026-11-24T12:27:56Z",
       "discovered_run": "run-001",
-      "resolved_run": null,
-      "commit": null,
-      "branch": null,
+      "resolved_run": "run-002",
+      "commit": "13b4858d4eeec15a1d6fc4bf3879af3abb23940d",
+      "branch": "code_health_audit_run",
       "evidence": "Two monotonic state-transition bugs affect out-of-order Square webhooks: (1) In _handle_refund_webhook_event() (L1228-1256), an existing refund_id entry is unconditionally overwritten at L1230-1231; if refund.created (PENDING) arrives after refund.updated (COMPLETED) with a different event_id, it overwrites status to PENDING, drops completed_refund_cents/tx.refunded_amount to 0.0 (L1244-1249), and leaves tx.status stuck at Refunded/Partially Refunded (L1252). (2) In reconcile_and_post_square_payment() (L1111-1136), the PENDING/APPROVED branch only checks 'if tx.payment_entry or tx.status == TX_STATUS_POSTED' (L1112), allowing a delayed PENDING webhook to overwrite terminal Failed/Voided/Reconciliation Error transactions back to TX_STATUS_PENDING and lock out customer retries.",
       "proposed_fix": "In _handle_refund_webhook_event(), enforce monotonic refund state precedence (never regress COMPLETED to PENDING/UNKNOWN) and verify currency=='CAD' before crediting refunded_amount. In reconcile_and_post_square_payment() L1112, ignore PENDING/APPROVED updates whenever tx.status is already in a terminal state (Posted, Failed, Voided, Refunded, Partially Refunded, Reconciliation Error).",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_payments_api_e2e,ism.tests.test_comms_telnyx_and_webhooks,ism.tests.test_billing_and_deposits,ism.tests.test_tesla_integration",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-24T23:52:17Z",
+          "text": "Assigned in run-002"
+        },
+        {
+          "at": "2026-11-25T00:07:36Z",
+          "text": "Fixed by fixer-b (monotonic refund status precedence, CAD currency validation, and terminal tx guard on PENDING/APPROVED webhooks); verified PASS by cross-family verifier (49/49 tests on slot-3)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:36Z"
     },
     {
       "id": "CH-470",
@@ -13142,16 +13296,26 @@
       "source": "llm-audit",
       "safe_for_auto_fix": true,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "fixed",
       "discovered_at": "2026-11-24T12:27:56Z",
       "discovered_run": "run-001",
-      "resolved_run": null,
-      "commit": null,
-      "branch": null,
+      "resolved_run": "run-002",
+      "commit": "13b4858d4eeec15a1d6fc4bf3879af3abb23940d",
+      "branch": "code_health_audit_run",
       "evidence": "_process_inbound_message_event() (telnyx.py:617-619) only inspects the first whitespace-delimited token: first_token = raw_text.split()[0].upper(); keyword = _KEYWORD_CLEAN_RE.sub('', first_token). Although STOP_KEYWORDS (contracts.py:24-26) lists 'OPTOUT' and 'STOPALL', a customer replying with standard TCPA phrases 'OPT OUT' or 'OPT-OUT' (with space) yields keyword='OPT', which misses STOP_KEYWORDS and leaves the customer opted in. Conversely, multi-word conversational replies such as 'CANCEL my appointment' or 'YES, 3pm works' trigger unintended opt-out or opt-in transitions because only token[0] is checked. [Verifier clarification: 'STOP ALL' and hyphenated 'OPT-OUT' already match 'STOP' and 'OPTOUT' via _KEYWORD_CLEAN_RE, while space-separated 'OPT OUT' yields keyword='OPT' (missing STOP_KEYWORDS) and conversational replies like 'CANCEL my appointment' or 'YES, 3pm works' misfire on token[0].]",
       "proposed_fix": "Normalize the full trimmed inbound body by stripping non-alphanumeric punctuation and collapsing spaces: match exact single-word keywords (STOP_KEYWORDS / START_KEYWORDS / HELP_KEYWORDS) and canonical two-word opt-out phrases ('OPT OUT' -> 'OPTOUT', 'STOP ALL' -> 'STOPALL'), avoiding false opt-out/opt-in matches on unrelated multi-word conversational replies starting with 'CANCEL'/'END'/'YES'.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_payments_api_e2e,ism.tests.test_comms_telnyx_and_webhooks,ism.tests.test_billing_and_deposits,ism.tests.test_tesla_integration",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-24T23:52:17Z",
+          "text": "Assigned in run-002"
+        },
+        {
+          "at": "2026-11-25T00:07:36Z",
+          "text": "Fixed by fixer-b (full-body SMS normalization with canonical two-word TCPA opt-outs and conversational non-match protection); verified PASS by cross-family verifier (49/49 tests on slot-3)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:36Z"
     },
     {
       "id": "CH-472",
@@ -13400,7 +13564,13 @@
       "evidence": "Audit of test_payments_erpnext_bridge.py (test_07, test_09), test_payments_api_e2e.py, and test_comms_telnyx_and_webhooks.py shows four high-risk failure paths have zero test coverage: (1) Payment Entry insert/submit raising an exception after Square returns COMPLETED; (2) retryable 502/504 SquareApiError during execute_tokenized_payment; (3) out-of-order Square webhooks (refund PENDING after COMPLETED; payment PENDING after FAILED/VOIDED); (4) two-word 'OPT OUT'/'STOP ALL' inbound SMS and concurrent first-time upsert_sms_opt_out calls.",
       "proposed_fix": "Add targeted regression test cases in test_payments_erpnext_bridge.py and test_comms_telnyx_and_webhooks.py exercising each of these four production failure and compliance scenarios. [Coordinator note: Keep safe_for_auto_fix=false until the underlying Critical/High production defects (erpnext-posting-failure-strands-charged-tx, retryable-square-error-enables-double-charge) are fixed, or land each regression test in the same PR as its production fix per POLICY.md §3.5.]",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_payments_api_e2e,ism.tests.test_comms_telnyx_and_webhooks,ism.tests.test_billing_and_deposits,ism.tests.test_tesla_integration",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-25T00:07:36Z",
+          "text": "run-002: out-of-order Square webhook and two-word TCPA OPT OUT regression tests added in commit 13b4858; post-charge ERPNext posting failure (CH-467) and retryable 5xx SquareApiError (CH-468) coverage still pending."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:36Z"
     },
     {
       "id": "CH-481",
@@ -13446,16 +13616,26 @@
       "source": "llm-audit",
       "safe_for_auto_fix": true,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "fixed",
       "discovered_at": "2026-11-24T12:27:56Z",
       "discovered_run": "run-001",
-      "resolved_run": null,
-      "commit": null,
-      "branch": null,
+      "resolved_run": "run-002",
+      "commit": "a5adaa84621711c604030ff60838c11f59972446",
+      "branch": "code_health_audit_run",
       "evidence": "Lines 799-807 check only `ro.docstatus != 0 or ro.approval_status == 'Approved' or (ro.approval_status == 'Partially Approved' and (not has_updates or bool(validated_remove)))`. First, Repair Order is non-submittable (is_submittable=0, docstatus always 0) and ro.status is never checked, allowing amendments on Billed / Paid, Closed / Released, or Cancelled ROs whenever approval_status != 'Approved'. Second, on a Partially Approved RO, supplying any unapproved row in update_services makes has_updates=True and bypasses the guard, letting the same request simultaneously execute add_services (L820-829) and mutate RO-level discount_amount, shop_supplies_amount, and environmental_fee_amount (L834-841) without customer re-authorization.",
       "proposed_fix": "Unconditionally reject amend_quote when ro.status in ('Billed / Paid', 'Closed / Released', 'Cancelled'). When ro.approval_status == 'Partially Approved', also reject if add_services, remove_service_indices, discount_amount, shop_supplies_amount, or environmental_fee_amount are provided (allowing only in-place updates on unapproved rows).",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_agent_facade,ism.tests.test_auth_and_roles",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-24T23:52:16Z",
+          "text": "Assigned in run-002"
+        },
+        {
+          "at": "2026-11-25T00:07:35Z",
+          "text": "Fixed by fixer-a (amend_quote terminal status + Partially Approved guard); verified PASS by cross-family verifier (77/77 tests on slot-3)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:35Z"
     },
     {
       "id": "CH-483",
@@ -13527,16 +13707,26 @@
       "source": "llm-audit",
       "safe_for_auto_fix": true,
       "estimated_effort": "small",
-      "status": "open",
+      "status": "fixed",
       "discovered_at": "2026-11-24T12:27:56Z",
       "discovered_run": "run-001",
-      "resolved_run": null,
-      "commit": null,
-      "branch": null,
+      "resolved_run": "run-002",
+      "commit": "a5adaa84621711c604030ff60838c11f59972446",
+      "branch": "code_health_audit_run",
       "evidence": "Lines 115-124 query fifo_ros with `status NOT IN ('Closed / Released', 'Cancelled')`, omitting 'Billed / Paid'. Per ism/ism/doctype/repair_order/billing.py:L776,L890, invoicing a Repair Order posts a submitted Sales Invoice with update_stock=1, which already deducts parts from Bin.actual_qty. Keeping 'Billed / Paid' ROs in fifo_ros deducts their required parts a second time from actual_by_wh (L220-233), permanently generating false has_stock_deficit / has_uncovered_deficit alerts on subsequent active ROs in /cockpit.",
       "proposed_fix": "Exclude 'Billed / Paid' from fifo_ros status filters (`['not in', ['Billed / Paid', 'Closed / Released', 'Cancelled']]`) and align with Repair Order stock-issued state so already-invoiced ROs do not consume live FIFO stock twice.",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_monitoring_cockpit",
-      "notes": []
+      "notes": [
+        {
+          "at": "2026-11-24T23:52:17Z",
+          "text": "Assigned in run-002"
+        },
+        {
+          "at": "2026-11-25T00:07:35Z",
+          "text": "Fixed by fixer-a (exclude Billed / Paid and submitted update_stock Sales Invoice ROs from FIFO deduction); verified PASS by cross-family verifier (77/77 tests on slot-3)."
+        }
+      ],
+      "updated_at": "2026-11-25T00:07:35Z"
     },
     {
       "id": "CH-486",
@@ -14099,6 +14289,196 @@
       "evidence": "Unlike email_invoice_copy (rate-limited via Project 1 email dispatch) and exchange_portal_link (30/min IP & token bucket), download_invoice_pdf (api/portal.py:726-750) imposes zero rate limiting before calling frappe.get_print('Sales Invoice', si_name, as_pdf=True) (invoices.py:173-187), which spawns CPU/memory-intensive wkhtmltopdf subprocesses synchronously on Gunicorn workers. Any holder of a single valid magic link or portal session can flood GET downloads to saturate workers and host memory.",
       "proposed_fix": "Enforce a Redis-backed per-IP and per-session rate limit (e.g. 20 downloads/minute) in api/portal.py:download_invoice_pdf raising frappe.TooManyRequestsError before rendering the Sales Invoice PDF. [Verifier note: Clear the new Redis bucket prefix inside clear_portal_auth_rate_limits so tests stay hermetic.]",
       "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_portal_invoices,ism.tests.test_portal_visit_hub_and_features",
+      "notes": []
+    },
+    {
+      "id": "CH-506",
+      "fingerprint": "f8ca28bbe995",
+      "rule": "idor-idempotency-race-bypass",
+      "title": "Cross-RO IDOR in post_board_capture duplicate idempotency_key fallback",
+      "category": "security",
+      "severity": "medium",
+      "zone": "frappe-board-backend",
+      "files": [
+        "ism-frappe/ism/api/board.py"
+      ],
+      "line_hint": 1194,
+      "symbol": "post_board_capture",
+      "source": "llm-audit",
+      "safe_for_auto_fix": true,
+      "estimated_effort": "small",
+      "status": "open",
+      "discovered_at": "2026-11-25T00:07:35Z",
+      "discovered_run": "run-002",
+      "resolved_run": null,
+      "commit": null,
+      "branch": null,
+      "evidence": "Lines 1107-1120 check assert_can_access_ro(existing_thread.repair_order, user=caller_user) before returning a pre-existing idempotency_key event, but the DuplicateEntryError/UniqueValidationError fallback at L1194-1208 runs inside _as_system_user() and returns _serialize_event(existing_doc) without checking assert_can_access_ro on existing_doc.repair_order (and returns the caller's thread_doc instead of existing_doc.thread). [Cross-family verifier calibration: downgraded high -> medium because the unguarded fallback is only reachable during a sub-millisecond concurrent insert race on Shop Board Event.idempotency_key.]",
+      "proposed_fix": "In L1194-1208, load existing_thread = frappe.get_doc('Shop Board Thread', existing_doc.thread), enforce assert_can_access_ro(existing_thread.repair_order, user=caller_user) when existing_thread.repair_order is set, and return _serialize_thread(existing_thread). Add a regression test simulating DuplicateEntryError across ROs for an ISM Technician user.",
+      "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways",
+      "notes": []
+    },
+    {
+      "id": "CH-507",
+      "fingerprint": "045cad363d42",
+      "rule": "missing-row-lock-projection-version",
+      "title": "recompute_thread_projection increments projection_version without FOR UPDATE lock",
+      "category": "correctness",
+      "severity": "medium",
+      "zone": "frappe-board-backend",
+      "files": [
+        "ism-frappe/ism/board/projections.py"
+      ],
+      "line_hint": 239,
+      "symbol": "recompute_thread_projection",
+      "source": "llm-audit",
+      "safe_for_auto_fix": true,
+      "estimated_effort": "small",
+      "status": "open",
+      "discovered_at": "2026-11-25T00:07:35Z",
+      "discovered_run": "run-002",
+      "resolved_run": null,
+      "commit": null,
+      "branch": null,
+      "evidence": "recompute_thread_projection loads Shop Board Thread via frappe.get_doc (L239), computes new_version = cint(thread.projection_version or 0) + 1 (L312), and persists via thread.db_set (L316) without locking the thread row. Concurrent capture/RO/AI updates can compute identical projection_version values, overwrite fresher Andon status, and cause get_thread_delta clients to miss deltas. [Cross-family verifier confirmed: Shop Board Thread is always the leaf lock after Repair Order / Shop Action Item / Shop Board Event writes, so SELECT ... FOR UPDATE on primary key name is deadlock-free.]",
+      "proposed_fix": "Execute SELECT projection_version, board_status, blocked_since FROM `tabShop Board Thread` WHERE name = %s FOR UPDATE at the start of recompute_thread_projection and compute new_version/prev_status/prev_blocked_since from the locked row.",
+      "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_schema_and_projections",
+      "notes": []
+    },
+    {
+      "id": "CH-508",
+      "fingerprint": "669183700af8",
+      "rule": "read-polling-triggers-write-sweep",
+      "title": "get_thread_delta polling endpoint runs mutating sweep_open_action_items on every poll",
+      "category": "performance",
+      "severity": "medium",
+      "zone": "frappe-board-backend",
+      "files": [
+        "ism-frappe/ism/api/board.py"
+      ],
+      "line_hint": 908,
+      "symbol": "get_thread_delta",
+      "source": "llm-audit",
+      "safe_for_auto_fix": false,
+      "estimated_effort": "medium",
+      "status": "open",
+      "discovered_at": "2026-11-25T00:07:35Z",
+      "discovered_run": "run-002",
+      "resolved_run": null,
+      "commit": null,
+      "branch": null,
+      "evidence": "get_thread_delta (L882-913) is a high-frequency polling endpoint that synchronously invokes sweep_open_action_items(repair_order=thread_doc.repair_order, limit=50) (clearing.py:725-785) on every poll, performing N+1 Shop Action Item loads, PO/PR/SMS/Communication queries, and item_doc.save() writes on read traffic even though clearing hooks already run on document updates.",
+      "proposed_fix": "Throttle or remove the synchronous sweep from get_thread_delta (e.g., per-RO Redis cooldown of 30-60s or rely on reactive doc hooks + initial get_board_thread sweep) after confirming no UI flow depends on unhooked clearing conditions during delta polls.",
+      "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_board_gateways,ism.tests.test_board_schema_and_projections",
+      "notes": []
+    },
+    {
+      "id": "CH-509",
+      "fingerprint": "700e772322d3",
+      "rule": "invoice-tax-rate-drift",
+      "title": "Sales Invoice ignores explicit non-zero ro.tax_rate when default tax template is attached",
+      "category": "correctness",
+      "severity": "high",
+      "zone": "frappe-repair-order",
+      "files": [
+        "ism-frappe/ism/ism/doctype/repair_order/billing.py"
+      ],
+      "line_hint": 1121,
+      "symbol": "process_ro_payment_and_release",
+      "source": "llm-audit",
+      "safe_for_auto_fix": true,
+      "estimated_effort": "small",
+      "status": "open",
+      "discovered_at": "2026-11-25T00:07:35Z",
+      "discovered_run": "run-002",
+      "resolved_run": null,
+      "commit": null,
+      "branch": null,
+      "evidence": "pricing.py:388-409 calculates ro.total_taxes_and_charges and ro.grand_total from explicit ro.tax_rate (e.g. 5.0%) even when ro.taxes_and_charges holds the default 13% HST template. In billing.py:873-881 and L1121-1139, only explicit_zero_tax (0.0) skips si.set_taxes(); any non-zero custom ro.tax_rate loads the 13% template rate into si.taxes, skips the L1127 fallback, and invoices a different grand_total than the customer authorized.",
+      "proposed_fix": "After si.set_taxes() at L1122, when ro.tax_rate is explicitly set (> 0) and si.taxes has a single 'On Net Total' row whose rate differs from flt(ro.tax_rate), align si.taxes[0].rate to flt(ro.tax_rate) (and update si.taxes[0].description accordingly) so Sales Invoice totals match the authorized Repair Order. Add a regression test in test_repair_order.py.",
+      "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.ism.doctype.repair_order.test_repair_order,ism.tests.test_billing_and_deposits",
+      "notes": []
+    },
+    {
+      "id": "CH-510",
+      "fingerprint": "a1a6997e95a9",
+      "rule": "silent-noop-customer-authorization",
+      "title": "Customer approval silently succeeds and notifies shop floor when zero pending services match",
+      "category": "correctness",
+      "severity": "high",
+      "zone": "frappe-repair-order",
+      "files": [
+        "ism-frappe/ism/ism/doctype/repair_order/authorization.py",
+        "ism-frappe/ism/api/approval.py"
+      ],
+      "line_hint": 462,
+      "symbol": "authorize_repair_order_jobs",
+      "source": "llm-audit",
+      "safe_for_auto_fix": true,
+      "estimated_effort": "small",
+      "status": "open",
+      "discovered_at": "2026-11-25T00:07:35Z",
+      "discovered_run": "run-002",
+      "resolved_run": null,
+      "commit": null,
+      "branch": null,
+      "evidence": "In authorization.py:419-438, if an explicit approvals dict matches no pending service row on a multi-service RO, newly_approved and newly_declined are both empty; L462 skips signature/audit log creation, L499 still saves and returns status='success', and api/approval.py:294-303 emits _notify_shop_floor_approval and returns success=True to the customer despite zero services changing state. [Cross-family verifier regression guard: test_repair_order.py:1447-1454 calls ro.authorize_jobs(...) directly on an already-decided RO (has_pending == False) and expects a locked no-op without raising ValidationError.]",
+      "proposed_fix": "Scope the ValidationError guard to is_public_portal / authorize_ro_for_portal (or only when pending services exist on the RO and an explicit approvals payload matches zero pending rows), throwing frappe.ValidationError instead of returning success and notifying the shop floor — while preserving the locked no-op contract on already-decided ROs tested by test_repair_order.py:1447. Add a regression test in test_approval_and_inspection.py.",
+      "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_approval_and_inspection,ism.ism.doctype.repair_order.test_repair_order,ism.tests.test_auth_and_roles",
+      "notes": []
+    },
+    {
+      "id": "CH-511",
+      "fingerprint": "939efcf452de",
+      "rule": "non-atomic-sliding-lockout-rate-limit",
+      "title": "Public approval portal rate limiter uses non-atomic get-then-set and extends TTL on every hit",
+      "category": "security",
+      "severity": "medium",
+      "zone": "frappe-repair-order",
+      "files": [
+        "ism-frappe/ism/api/approval.py"
+      ],
+      "line_hint": 51,
+      "symbol": "_increment_rate_limit_key",
+      "source": "llm-audit",
+      "safe_for_auto_fix": true,
+      "estimated_effort": "small",
+      "status": "open",
+      "discovered_at": "2026-11-25T00:07:35Z",
+      "discovered_run": "run-002",
+      "resolved_run": null,
+      "commit": null,
+      "branch": null,
+      "evidence": "_increment_rate_limit_key (L51-60) reads cache.get_value(cache_key) and writes current+1 via cache.set_value(..., expires_in_sec=window_sec). Concurrent bursts race past the limit, and resetting expires_in_sec on every hit (including rejected calls) causes indefinite lockout for retrying clients.",
+      "proposed_fix": "Use atomic Redis INCR on cache.make_key(cache_key) (keeping delete_keys / clear_portal_rate_limits() key-compatible) and set EXPIRE only when count == 1, preserving a safe fallback if the cache client lacks incr. Add a unit test in test_approval_and_inspection.py.",
+      "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_approval_and_inspection",
+      "notes": []
+    },
+    {
+      "id": "CH-512",
+      "fingerprint": "345d457d98a8",
+      "rule": "n-plus-one-empirical-estimation-query",
+      "title": "estimate_repair_order executes empirical percentile DB lookup inside per-service loop",
+      "category": "performance",
+      "severity": "low",
+      "zone": "frappe-repair-order",
+      "files": [
+        "ism-frappe/ism/api/estimation_service.py"
+      ],
+      "line_hint": 689,
+      "symbol": "estimate_repair_order",
+      "source": "llm-audit",
+      "safe_for_auto_fix": true,
+      "estimated_effort": "small",
+      "status": "open",
+      "discovered_at": "2026-11-25T00:07:35Z",
+      "discovered_run": "run-002",
+      "resolved_run": null,
+      "commit": null,
+      "branch": null,
+      "evidence": "In estimate_repair_order (L681-703), when empirical=True, _compute_empirical_percentile_minutes (estimation_service.py:222-285) is called inside the `for s in services:` loop, issuing per-service frappe.qb join queries against `tabRepair Order Service` rather than batching by all service packages/titles.",
+      "proposed_fix": "Prefetch empirical duration samples across all service_package and service_title keys in a single query before the loop and pass the prefetched map into _compute_empirical_percentile_minutes.",
+      "verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_estimation_math",
       "notes": []
     }
   ]
