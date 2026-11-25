@@ -8,6 +8,16 @@ import frappe
 from frappe.query_builder.functions import Coalesce
 from frappe.utils import add_days, cint, getdate
 
+from ism.scheduling.shifts import (
+	apply_leave_to_shift_window,
+	get_technician_shift_window,
+	is_interval_within_shift,
+)
+from ism.scheduling.skills import (
+	is_technician_qualified,
+	load_active_technician_profiles,
+	normalize_skill_requirements,
+)
 from ism.scheduling.time_utils import (
 	calculate_working_span,
 	effective_end_time,
@@ -164,6 +174,7 @@ class ShopCapacityWindow:
 		skip_holidays: bool = False,
 		exclude_entry: Optional[str] = None,
 		vehicle_identity: Optional[Any] = None,
+		required_skills: Optional[Any] = None,
 	) -> None:
 		self.settings = get_shop_settings()
 		self.start_dt = getdate(start_date)
@@ -177,11 +188,15 @@ class ShopCapacityWindow:
 		self.skip_holidays: bool = bool(skip_holidays)
 		self.exclude_entry: Optional[str] = exclude_entry
 		self.vehicle_identity: Optional[Any] = vehicle_identity
+		self.required_skills: List[Tuple[str, int]] = normalize_skill_requirements(required_skills)
 
 		self.candidate_bays: List[str] = []
 		self.bay_tags: Dict[str, List[str]] = {}
 		self.active_techs: List[Dict[str, Any]] = []
 		self.tech_names: Dict[str, str] = {}
+		self._profiles: Dict[str, Dict[str, Any]] = {}
+		self._inactive_profile_ids: Set[str] = set()
+		self._eligible_tech_ids: List[str] = []
 		self.holidays: Dict[str, str] = {}
 		self._leaves_by_emp: Dict[str, List[Dict[str, Any]]] = {}
 		self._entries_by_date: Dict[str, List[Tuple[timedelta, timedelta, Optional[str], Optional[str]]]] = {}
@@ -210,6 +225,12 @@ class ShopCapacityWindow:
 			if not self.active_techs:
 				return
 			self.tech_names = {t["name"]: (t.get("employee_name") or t["name"]) for t in self.active_techs}
+			emp_ids = [t["name"] for t in self.active_techs]
+			self._profiles = load_active_technician_profiles(emp_ids)
+			self._inactive_profile_ids = self._load_inactive_profile_ids(emp_ids)
+			self._eligible_tech_ids = self._filter_eligible_tech_ids(emp_ids)
+			if not self._eligible_tech_ids:
+				return
 			self._leaves_by_emp = self._load_leaves(start_str, end_str)
 
 		self._entries_by_date = self._load_blocking_entries(start_str, end_str)
@@ -238,27 +259,35 @@ class ShopCapacityWindow:
 			order_by="employee_name asc, name asc",
 		)
 
-	def _load_leaves(self, start_str: str, end_str: str) -> Dict[str, List[Dict[str, Any]]]:
-		if not frappe.db.exists("DocType", "Leave Application"):
-			return {}
-		emp_ids = [t["name"] for t in self.active_techs]
-		if not emp_ids:
-			return {}
-		leaves = frappe.get_all(
-			"Leave Application",
-			filters=[
-				["employee", "in", emp_ids],
-				["status", "=", "Approved"],
-				["docstatus", "=", 1],
-				["from_date", "<=", end_str],
-				["to_date", ">=", start_str],
-			],
-			fields=["employee", "from_date", "to_date", "half_day", "half_day_date"],
+	def _load_inactive_profile_ids(self, emp_ids: List[str]) -> Set[str]:
+		if not emp_ids or not frappe.db.exists("DocType", "Technician Profile"):
+			return set()
+		rows = frappe.get_all(
+			"Technician Profile",
+			filters={"employee": ["in", emp_ids], "is_active": 0},
+			pluck="employee",
+			ignore_permissions=True,
 		)
-		grouped: Dict[str, List[Dict[str, Any]]] = {}
-		for row in leaves:
-			grouped.setdefault(row["employee"], []).append(row)
-		return grouped
+		return {str(emp) for emp in rows if emp}
+
+	def _filter_eligible_tech_ids(self, emp_ids: List[str]) -> List[str]:
+		eligible: List[str] = []
+		for emp_id in emp_ids:
+			if emp_id in self._inactive_profile_ids:
+				continue
+			if self.required_skills:
+				profile = self._profiles.get(emp_id)
+				if not profile or not is_technician_qualified(profile, self.required_skills):
+					continue
+			eligible.append(emp_id)
+		return eligible
+
+	def _load_leaves(self, start_str: str, end_str: str) -> Dict[str, List[Dict[str, Any]]]:
+		if not self._eligible_tech_ids:
+			return {}
+		from ism.scheduling.entry_queries import fetch_leaves_by_employee
+
+		return fetch_leaves_by_employee(self._eligible_tech_ids, start_str, end_str)
 
 	def _load_blocking_entries(
 		self,
@@ -375,28 +404,30 @@ class ShopCapacityWindow:
 	def is_holiday(self, target_date: Union[str, date, datetime]) -> bool:
 		return str(getdate(target_date)) in self.holidays
 
-	def _on_duty_tech_ids(self, target_str: str) -> Optional[List[str]]:
+	def _effective_shifts_for_date(self, target_str: str) -> Optional[Dict[str, Dict[str, Any]]]:
+		"""Return {emp_id: effective_shift_window} for active, skill-qualified techs working on target_str."""
 		if not self.enable_tech:
 			return None
-		on_duty: List[str] = []
-		for emp in self.active_techs:
-			emp_id = emp["name"]
-			leaves = self._leaves_by_emp.get(emp_id, ())
-			on_leave = False
-			for lv in leaves:
-				if lv.get("half_day"):
-					if str(lv.get("half_day_date") or "") == target_str:
-						on_leave = True
-						break
-				else:
-					from_str = str(lv.get("from_date") or "")
-					to_str = str(lv.get("to_date") or "")
-					if from_str <= target_str <= to_str:
-						on_leave = True
-						break
-			if not on_leave:
-				on_duty.append(emp_id)
-		return on_duty
+		shifts_by_tech: Dict[str, Dict[str, Any]] = {}
+		for emp_id in self._eligible_tech_ids:
+			profile = self._profiles.get(emp_id)
+			base_shift = get_technician_shift_window(profile, target_str, settings=self.settings)
+			if not base_shift:
+				continue
+			eff_shift = apply_leave_to_shift_window(
+				base_shift,
+				self._leaves_by_emp.get(emp_id, ()),
+				target_str,
+			)
+			if eff_shift:
+				shifts_by_tech[emp_id] = eff_shift
+		return shifts_by_tech
+
+	def _on_duty_tech_ids(self, target_str: str) -> Optional[List[str]]:
+		eff_shifts = self._effective_shifts_for_date(target_str)
+		if eff_shifts is None:
+			return None
+		return list(eff_shifts.keys())
 
 	def slots_for_date(
 		self,
@@ -413,8 +444,8 @@ class ShopCapacityWindow:
 		if self.skip_holidays and target_str in self.holidays:
 			return []
 
-		on_duty_techs = self._on_duty_tech_ids(target_str)
-		if on_duty_techs is not None and not on_duty_techs:
+		eff_shifts = self._effective_shifts_for_date(target_str)
+		if eff_shifts is not None and not eff_shifts:
 			return []
 
 		duration_val = float(duration_minutes or 0)
@@ -458,20 +489,28 @@ class ShopCapacityWindow:
 
 			occupied_bays: Set[str] = set()
 			occupied_techs: Set[str] = set()
+			unassigned_overlaps = 0
 			for ex_start, ex_end, ex_bay, ex_tech in day_intervals:
 				if max(curr_time, ex_start) < min(eff_end, ex_end):
 					if ex_bay:
 						occupied_bays.add(ex_bay)
-					if ex_tech:
+					if ex_tech and str(ex_tech).strip():
 						occupied_techs.add(ex_tech)
+					else:
+						unassigned_overlaps += 1
 
 			avail_bay_ids = [b for b in self.candidate_bays if b not in occupied_bays]
 			avail_bays_count = len(avail_bay_ids)
 
 			avail_tech_ids: Optional[List[str]] = None
-			if on_duty_techs is not None:
-				avail_tech_ids = [t for t in on_duty_techs if t not in occupied_techs]
-				avail_techs_count: Optional[int] = len(avail_tech_ids)
+			if eff_shifts is not None:
+				qualified_free_techs = [
+					emp_id
+					for emp_id, shift in eff_shifts.items()
+					if emp_id not in occupied_techs and is_interval_within_shift(curr_time, eff_end, shift)
+				]
+				avail_techs_count: Optional[int] = max(0, len(qualified_free_techs) - unassigned_overlaps)
+				avail_tech_ids = qualified_free_techs if avail_techs_count > 0 else []
 				eff_cap = min(avail_bays_count, avail_techs_count)
 				if avail_techs_count < avail_bays_count:
 					bottleneck: Optional[str] = "technician"

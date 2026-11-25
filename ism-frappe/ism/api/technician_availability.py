@@ -15,6 +15,16 @@ from ism.scheduling.entry_queries import (
 	intervals_overlap,
 	is_employee_on_leave_for_date as _is_employee_on_leave_for_date,
 )
+from ism.scheduling.shifts import (
+	apply_leave_to_shift_window,
+	get_technician_shift_window,
+	is_interval_within_shift,
+)
+from ism.scheduling.skills import (
+	is_technician_qualified,
+	load_active_technician_profiles,
+	normalize_skill_requirements,
+)
 from ism.scheduling.time_utils import (
 	calculate_working_span,
 	effective_end_time,
@@ -26,7 +36,20 @@ from ism.scheduling.time_utils import (
 )
 
 
-@frappe.whitelist()
+def _load_inactive_profile_ids(employee_ids: List[str]) -> set[str]:
+	"""Return employee IDs that explicitly have an inactive Technician Profile (is_active = 0)."""
+	if not employee_ids or not frappe.db.exists("DocType", "Technician Profile"):
+		return set()
+	rows = frappe.get_all(
+		"Technician Profile",
+		filters={"employee": ["in", employee_ids], "is_active": 0},
+		pluck="employee",
+		ignore_permissions=True,
+	)
+	return {str(emp) for emp in rows if emp}
+
+
+@frappe.whitelist(methods=["GET", "POST"])
 def get_active_technicians(date: Optional[Union[str, date, datetime]] = None) -> List[Dict[str, Any]]:
 	"""
 	Returns active employees matching ISM Settings -> technician_designation.
@@ -58,7 +81,7 @@ def get_active_technicians(date: Optional[Union[str, date, datetime]] = None) ->
 		leave_res = (
 			_is_employee_on_leave_for_date(leaves_by_emp.get(emp_id, ()), target_date)
 			if target_date
-			else {"on_leave": False, "half_day": False}
+			else {"on_leave": False, "half_day": False, "half_day_period": None}
 		)
 		results.append({
 			"employee": emp_id,
@@ -66,6 +89,7 @@ def get_active_technicians(date: Optional[Union[str, date, datetime]] = None) ->
 			"designation": emp.get("designation") or designation,
 			"on_leave": leave_res["on_leave"],
 			"half_day": leave_res["half_day"],
+			"half_day_period": leave_res.get("half_day_period"),
 		})
 
 	return results
@@ -82,7 +106,7 @@ def check_employee_leave(
 	"""
 	target_date = (normalize_date(date) or str(date)) if date else None
 	if not target_date or not employee or not frappe.db.exists("DocType", "Leave Application"):
-		return {"on_leave": False, "half_day": False}
+		return {"on_leave": False, "half_day": False, "half_day_period": None}
 
 	norm_start = normalize_time(start_time) if start_time is not None else None
 	duration_val = float(duration_minutes or 0)
@@ -96,31 +120,37 @@ def check_employee_leave(
 
 	emp_leaves = _get_leaves_by_employee([employee], min(seg_dates), max(seg_dates)).get(employee, [])
 	if not emp_leaves:
-		return {"on_leave": False, "half_day": False}
+		return {"on_leave": False, "half_day": False, "half_day_period": None}
 
 	half_day_hit = False
+	half_day_period: Optional[str] = None
 	for seg_d in seg_dates:
 		leave_res = _is_employee_on_leave_for_date(emp_leaves, seg_d)
 		if leave_res["on_leave"]:
 			if not leave_res["half_day"]:
-				return {"on_leave": True, "half_day": False}
+				return {"on_leave": True, "half_day": False, "half_day_period": None}
 			half_day_hit = True
+			if half_day_period is None:
+				half_day_period = leave_res.get("half_day_period")
 
 	if half_day_hit:
-		return {"on_leave": True, "half_day": True}
-	return {"on_leave": False, "half_day": False}
+		return {"on_leave": True, "half_day": True, "half_day_period": half_day_period}
+	return {"on_leave": False, "half_day": False, "half_day_period": None}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET", "POST"])
 def get_technician_pool_availability(
 	date: Union[str, date, datetime],
 	start_time: Union[str, time, timedelta],
 	duration_minutes: Union[int, float],
 	exclude_entry: Optional[str] = None,
+	required_skills: Optional[Any] = None,
 ) -> Dict[str, Any]:
 	"""
 	Pool-level capacity gating function.
-	Checks total, on-duty, occupied, and available technicians across all working segments.
+	Checks total, on-duty, occupied (assigned + unassigned), and available technicians
+	across all working segments, enforcing per-tech weekly shifts, AM/PM half-day leaves,
+	and optional skill+difficulty requirements.
 	"""
 	frappe.has_permission("Schedule Entry", "read", throw=True)
 	if exclude_entry is not None and not isinstance(exclude_entry, str):
@@ -132,10 +162,12 @@ def get_technician_pool_availability(
 			"on_leave": 0,
 			"on_duty": 999,
 			"occupied": 0,
+			"unassigned_occupied": 0,
 			"available": 999,
 			"is_available": True,
 		}
 
+	req_skills = normalize_skill_requirements(required_skills)
 	target_date = normalize_date(date) or str(date)
 	norm_start = normalize_time(start_time) or start_time
 	technicians = get_active_technicians(date=target_date)
@@ -143,10 +175,40 @@ def get_technician_pool_availability(
 	if total_techs == 0:
 		return {
 			"total_technicians": 0,
+			"qualified_technicians": 0,
 			"on_leave": 0,
 			"on_duty": 0,
 			"occupied": 0,
+			"unassigned_occupied": 0,
 			"available": 0,
+			"available_technicians": [],
+			"is_available": False,
+		}
+
+	all_tech_ids = [t["employee"] for t in technicians]
+	profiles = load_active_technician_profiles(all_tech_ids)
+	inactive_profile_ids = _load_inactive_profile_ids(all_tech_ids)
+
+	eligible_tech_ids: List[str] = []
+	for emp_id in all_tech_ids:
+		if emp_id in inactive_profile_ids:
+			continue
+		if req_skills:
+			profile = profiles.get(emp_id)
+			if not profile or not is_technician_qualified(profile, req_skills):
+				continue
+		eligible_tech_ids.append(emp_id)
+
+	if not eligible_tech_ids:
+		return {
+			"total_technicians": total_techs,
+			"qualified_technicians": 0,
+			"on_leave": 0,
+			"on_duty": 0,
+			"occupied": 0,
+			"unassigned_occupied": 0,
+			"available": 0,
+			"available_technicians": [],
 			"is_available": False,
 		}
 
@@ -157,20 +219,20 @@ def get_technician_pool_availability(
 	span = calculate_working_span(target_date, norm_start, duration_minutes, is_holiday_fn=holiday_fn)
 	seg_dates = [s["date"] for s in span["segments"]] or [target_date]
 
-	tech_ids = [t["employee"] for t in technicians]
-	leaves_by_emp = _get_leaves_by_employee(tech_ids, min(seg_dates), max(seg_dates))
+	leaves_by_emp = _get_leaves_by_employee(eligible_tech_ids, min(seg_dates), max(seg_dates))
 	all_entries = fetch_blocking_entries(
 		min(seg_dates),
 		max(seg_dates),
-		assigned_technicians=tech_ids,
 		exclude_entry=exclude_entry,
 		fields=["name", "assigned_technician", "scheduled_date", "scheduled_time", "estimated_duration"],
 	)
 
+	eligible_set = set(eligible_tech_ids)
 	entry_segments_by_tech: Dict[str, List[Dict[str, Any]]] = {}
+	unassigned_segments_by_date: Dict[str, List[Dict[str, Any]]] = {}
 	for ent in all_entries:
-		tid = ent.get("assigned_technician")
-		if not tid:
+		tid = (ent.get("assigned_technician") or "").strip()
+		if tid and tid not in eligible_set:
 			continue
 		e_dur = ent.get("estimated_duration") or 0
 		e_span = calculate_working_span(
@@ -179,34 +241,51 @@ def get_technician_pool_availability(
 			e_dur,
 			is_holiday_fn=holiday_fn,
 		)
-		tech_segs = entry_segments_by_tech.setdefault(tid, [])
-		for s in e_span["segments"]:
-			tech_segs.append({
-				"date": s["date"],
-				"start": to_timedelta(s["start_time"]),
-				"end": to_timedelta(s["end_time"]),
-			})
+		if tid:
+			tech_segs = entry_segments_by_tech.setdefault(tid, [])
+			for s in e_span["segments"]:
+				tech_segs.append({
+					"date": s["date"],
+					"start": to_timedelta(s["start_time"]),
+					"end": to_timedelta(s["end_time"]),
+				})
+		else:
+			entry_name = ent.get("name") or ""
+			for s in e_span["segments"]:
+				unassigned_segments_by_date.setdefault(s["date"], []).append({
+					"name": entry_name,
+					"start": to_timedelta(s["start_time"]),
+					"end": to_timedelta(s["end_time"]),
+				})
 
-	min_available = total_techs
+	min_available = len(eligible_tech_ids)
 	max_occupied = 0
+	max_unassigned = 0
 	max_on_leave = 0
-	min_on_duty = total_techs
-	available_tech_ids = list(tech_ids)
+	min_on_duty = len(eligible_tech_ids)
+	available_tech_ids = list(eligible_tech_ids)
 
 	for prop_seg in span["segments"]:
 		seg_date = prop_seg["date"]
 		seg_start = to_timedelta(prop_seg["start_time"])
 		seg_end = to_timedelta(prop_seg["end_time"])
 
-		on_duty_in_seg = []
+		on_duty_in_seg: List[str] = []
 		on_leave_in_seg = 0
-		for tech in technicians:
-			emp_id = tech["employee"]
-			leave_res = _is_employee_on_leave_for_date(leaves_by_emp.get(emp_id, []), str(seg_date))
-			if leave_res["on_leave"]:
+		for emp_id in eligible_tech_ids:
+			profile = profiles.get(emp_id)
+			base_shift = get_technician_shift_window(profile, str(seg_date), settings=settings)
+			if not base_shift:
+				continue
+			eff_shift = apply_leave_to_shift_window(base_shift, leaves_by_emp.get(emp_id, ()), str(seg_date))
+			if not eff_shift:
 				on_leave_in_seg += 1
-			else:
-				on_duty_in_seg.append(emp_id)
+				continue
+			if not is_interval_within_shift(seg_start, seg_end, eff_shift):
+				if is_interval_within_shift(seg_start, seg_end, base_shift):
+					on_leave_in_seg += 1
+				continue
+			on_duty_in_seg.append(emp_id)
 
 		occupied_in_seg = set()
 		for emp_id in on_duty_in_seg:
@@ -215,13 +294,24 @@ def get_technician_pool_availability(
 					occupied_in_seg.add(emp_id)
 					break
 
+		unassigned_names = {
+			u["name"]
+			for u in unassigned_segments_by_date.get(seg_date, ())
+			if intervals_overlap(seg_start, seg_end, u["start"], u["end"])
+		}
+		unassigned_in_seg = len(unassigned_names)
+
 		free_in_seg = [emp_id for emp_id in on_duty_in_seg if emp_id not in occupied_in_seg]
 		available_tech_ids = [emp_id for emp_id in available_tech_ids if emp_id in free_in_seg]
-		avail_in_seg = len(free_in_seg)
+		avail_in_seg = max(0, len(free_in_seg) - unassigned_in_seg)
+		total_occupied_in_seg = len(occupied_in_seg) + unassigned_in_seg
+
 		if avail_in_seg < min_available:
 			min_available = avail_in_seg
-		if len(occupied_in_seg) > max_occupied:
-			max_occupied = len(occupied_in_seg)
+		if total_occupied_in_seg > max_occupied:
+			max_occupied = total_occupied_in_seg
+		if unassigned_in_seg > max_unassigned:
+			max_unassigned = unassigned_in_seg
 		if on_leave_in_seg > max_on_leave:
 			max_on_leave = on_leave_in_seg
 		if len(on_duty_in_seg) < min_on_duty:
@@ -229,26 +319,30 @@ def get_technician_pool_availability(
 
 	return {
 		"total_technicians": total_techs,
+		"qualified_technicians": len(eligible_tech_ids),
 		"on_leave": max_on_leave,
 		"on_duty": min_on_duty,
 		"occupied": max_occupied,
+		"unassigned_occupied": max_unassigned,
 		"available": min_available,
-		"available_technicians": available_tech_ids,
+		"available_technicians": available_tech_ids if min_available > 0 else [],
 		"is_available": min_available > 0,
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET", "POST"])
 def check_technician_availability(
 	employee: str,
 	date: Union[str, date, datetime],
 	start_time: Union[str, time, timedelta],
 	duration_minutes: Union[int, float],
 	exclude_entry: Optional[str] = None,
+	required_skills: Optional[Any] = None,
 ) -> Dict[str, Any]:
 	"""
 	Checks availability of a specific technician for a given date/time window.
-	Returns details on leave status, overlaps, and availability across active working segments.
+	Enforces active profile, optional skill qualification, per-tech weekly shift,
+	AM/PM half-day leave, and assigned entry overlaps across active working segments.
 	"""
 	frappe.has_permission("Schedule Entry", "read", throw=True)
 	if not employee or not isinstance(employee, str) or not date:
@@ -290,6 +384,27 @@ def check_technician_availability(
 			"conflicts": [],
 		}
 
+	inactive_profile_ids = _load_inactive_profile_ids([employee])
+	if employee in inactive_profile_ids:
+		return {
+			"is_available": False,
+			"reason": "inactive",
+			"on_leave": False,
+			"half_day": False,
+			"conflicts": [],
+		}
+
+	profile = load_active_technician_profiles([employee]).get(employee)
+	req_skills = normalize_skill_requirements(required_skills)
+	if req_skills and (not profile or not is_technician_qualified(profile, req_skills)):
+		return {
+			"is_available": False,
+			"reason": "unqualified",
+			"on_leave": False,
+			"half_day": False,
+			"conflicts": [],
+		}
+
 	target_date = normalize_date(date) or str(date)
 	norm_start = normalize_time(start_time) or start_time
 	holiday_fn = build_holiday_checker(
@@ -300,16 +415,71 @@ def check_technician_availability(
 	seg_dates = [s["date"] for s in span["segments"]] or [target_date]
 	emp_leaves = _get_leaves_by_employee([employee], min(seg_dates), max(seg_dates)).get(employee, [])
 
-	for seg_d in dict.fromkeys(seg_dates):
-		leave_res = _is_employee_on_leave_for_date(emp_leaves, str(seg_d))
-		if leave_res["on_leave"]:
-			return {
-				"is_available": False,
-				"reason": "on_leave",
-				"on_leave": True,
-				"half_day": leave_res["half_day"],
-				"conflicts": [],
-			}
+	if span["segments"]:
+		for prop_seg in span["segments"]:
+			seg_d = str(prop_seg["date"])
+			seg_start = to_timedelta(prop_seg["start_time"])
+			seg_end = to_timedelta(prop_seg["end_time"])
+			base_shift = get_technician_shift_window(profile, seg_d, settings=settings)
+			if not base_shift:
+				return {
+					"is_available": False,
+					"reason": "off_shift",
+					"on_leave": False,
+					"half_day": False,
+					"conflicts": [],
+				}
+			eff_shift = apply_leave_to_shift_window(base_shift, emp_leaves, seg_d)
+			if not eff_shift:
+				leave_res = _is_employee_on_leave_for_date(emp_leaves, seg_d)
+				return {
+					"is_available": False,
+					"reason": "on_leave",
+					"on_leave": True,
+					"half_day": bool(leave_res.get("half_day")),
+					"half_day_period": leave_res.get("half_day_period"),
+					"conflicts": [],
+				}
+			if not is_interval_within_shift(seg_start, seg_end, eff_shift):
+				if is_interval_within_shift(seg_start, seg_end, base_shift):
+					leave_res = _is_employee_on_leave_for_date(emp_leaves, seg_d)
+					return {
+						"is_available": False,
+						"reason": "on_leave",
+						"on_leave": True,
+						"half_day": bool(leave_res.get("half_day")),
+						"half_day_period": leave_res.get("half_day_period"),
+						"conflicts": [],
+					}
+				return {
+					"is_available": False,
+					"reason": "off_shift",
+					"on_leave": False,
+					"half_day": False,
+					"conflicts": [],
+				}
+	else:
+		for seg_d in dict.fromkeys(seg_dates):
+			base_shift = get_technician_shift_window(profile, str(seg_d), settings=settings)
+			if not base_shift:
+				return {
+					"is_available": False,
+					"reason": "off_shift",
+					"on_leave": False,
+					"half_day": False,
+					"conflicts": [],
+				}
+			eff_shift = apply_leave_to_shift_window(base_shift, emp_leaves, str(seg_d))
+			if not eff_shift:
+				leave_res = _is_employee_on_leave_for_date(emp_leaves, str(seg_d))
+				return {
+					"is_available": False,
+					"reason": "on_leave",
+					"on_leave": True,
+					"half_day": bool(leave_res.get("half_day")),
+					"half_day_period": leave_res.get("half_day_period"),
+					"conflicts": [],
+				}
 
 	existing_entries = fetch_blocking_entries(
 		min(seg_dates),

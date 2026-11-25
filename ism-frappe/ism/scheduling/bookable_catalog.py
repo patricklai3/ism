@@ -12,6 +12,7 @@ from frappe.utils import cint, flt
 
 from ism.scheduling.capacity import load_package_tags_map
 from ism.scheduling.estimation_light import estimate_total_duration
+from ism.scheduling.skills import get_required_skills_for_packages
 from ism.utils.demo_mode import compute_demo_package_entry, is_demo_mode, is_demo_package_id
 from ism.utils.tesla_manual import (
 	is_in_generation_range,
@@ -521,6 +522,7 @@ def compute_packages_booking_requirements(
 	- duration_minutes (int >= 15): deterministic sum of self_serve_duration_minutes overrides PLUS
 	  Fenton-Wilkinson estimate_total_duration() over FRT-derived packages + buffer_padding_minutes.
 	- required_tags (List[str]): deduplicated sorted union of Service Package equipment tags across packages.
+	- required_skills (List[Tuple[str, int]]): internal skill+difficulty requirements across packages (never exposed on public cards).
 	- items_summary (str): clean bullet list for Schedule Entry.items_summary.
 	- booked_packages_snapshot (List[Dict[str, Any]]): JSON-serializable customer snapshot for
 	  Schedule Entry.booked_packages_json.
@@ -628,9 +630,12 @@ def compute_packages_booking_requirements(
 	)
 	total_duration = max(15, override_minutes + frt_duration + settings["buffer_padding_minutes"])
 
+	required_skills = get_required_skills_for_packages(real_ids)
+
 	return {
 		"duration_minutes": total_duration,
 		"required_tags": sorted(tags_set),
+		"required_skills": required_skills,
 		"items_summary": "\n".join(f"- {card['title']}" for card in cards),
 		"booked_packages_snapshot": snapshot,
 		"packages": cards,
