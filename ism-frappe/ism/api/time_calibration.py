@@ -218,20 +218,22 @@ def review_time_observation(
 		doc.review_status = REVIEW_EXCLUDED
 		doc.exclude_from_calibration = 1
 
+	doc.flags._calibration_hook_ran = False
 	doc.save()
 
 	clean_notes = str(notes or "").strip()
 	if clean_notes:
 		doc.add_comment("Comment", text=clean_notes)
 
-	recalibrated = False
-	try:
-		from ism.time_calibration.service import on_observation_update
+	recalibrated = bool(getattr(doc.flags, "_calibration_hook_ran", False))
+	if not recalibrated:
+		try:
+			from ism.time_calibration.service import on_observation_update
 
-		on_observation_update(doc)
-		recalibrated = True
-	except ImportError:
-		pass
+			on_observation_update(doc)
+			recalibrated = True
+		except ImportError:
+			pass
 
 	return {
 		"observation": doc.name,

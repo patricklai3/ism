@@ -645,8 +645,9 @@ class TestTimeCalibrationE2E(ISMTestCase):
 			time_logs=[
 				{
 					"from_time": t0,
-					"to_time": t0 + timedelta(hours=1),
-					"time_in_hours": 1.0,
+					"to_time": t0 + timedelta(days=1, hours=1),
+					"time_in_hours": 8.0,
+					"spans_overnight": 1,
 					"needs_review": 1,
 					"flag_reason": "Overnight Session",
 					"session_status": SESSION_CLOSED,
@@ -835,41 +836,46 @@ class TestTimeCalibrationE2E(ISMTestCase):
 		self.assertEqual(flt(obs_scoped["Job B"]["confidence_score"]), 1.0)
 
 		# Incomplete mapping (Job B unassigned) -> RO-Wide Prorated splits 3.0h equally (1.5h each)
+		# Use fresh uncalibrated packages and a non-overlapping day so prior calibration on pkg_a
+		# and tech_a/tech_b sessions from ro_scoped do not affect the equal-weight RO-wide check.
+		pkg_c = self._create_package("TechJobC", correction_code="31011003", standard_labor_hours=1.0)
+		pkg_d = self._create_package("TechJobD", correction_code="18101002", standard_labor_hours=1.0)
+		t1 = t0 + timedelta(days=1)
 		ro_wide = self._create_completed_ro(
 			services=[
 				{
-					"service_package": pkg_a.name,
-					"correction_code": "31011002",
+					"service_package": pkg_c.name,
+					"correction_code": "31011003",
 					"service_title": "Job A",
 					"assigned_technician": tech_a.name,
 					"status": "Approved",
 					"is_completed": 1,
 					"labor_hours": 1.0,
-					"completed_at": t0 + timedelta(hours=2),
+					"completed_at": t1 + timedelta(hours=2),
 				},
 				{
-					"service_package": pkg_b.name,
-					"correction_code": "18101001",
+					"service_package": pkg_d.name,
+					"correction_code": "18101002",
 					"service_title": "Job B",
 					"assigned_technician": None,
 					"status": "Approved",
 					"is_completed": 1,
 					"labor_hours": 1.0,
-					"completed_at": t0 + timedelta(hours=1),
+					"completed_at": t1 + timedelta(hours=1),
 				},
 			],
 			time_logs=[
 				{
 					"technician": tech_a.name,
-					"from_time": t0,
-					"to_time": t0 + timedelta(hours=2),
+					"from_time": t1,
+					"to_time": t1 + timedelta(hours=2),
 					"time_in_hours": 2.0,
 					"session_status": SESSION_CLOSED,
 				},
 				{
 					"technician": tech_b.name,
-					"from_time": t0,
-					"to_time": t0 + timedelta(hours=1),
+					"from_time": t1,
+					"to_time": t1 + timedelta(hours=1),
 					"time_in_hours": 1.0,
 					"session_status": SESSION_CLOSED,
 				},
@@ -1015,12 +1021,12 @@ class TestTimeCalibrationE2E(ISMTestCase):
 			(pkg_a, pkg_a, 3.6),
 			(pkg_b, pkg_b, 1.2),
 		]
-		base_dt = datetime(2026, 11, 10, 9, 0, 0)
+		base_dt = datetime(2026, 10, 15, 8, 30, 0)
 		idx = 0
 		for _rep in range(5):
 			for p1, p2, total_h in combos:
 				idx += 1
-				t0 = base_dt + timedelta(hours=idx)
+				t0 = base_dt + timedelta(days=idx)
 				t1 = t0 + timedelta(hours=total_h)
 				pos1 = "LH" if p1 == p2 else "None"
 				pos2 = "RH" if p1 == p2 else "None"
@@ -1077,3 +1083,134 @@ class TestTimeCalibrationE2E(ISMTestCase):
 		self.assertLess(flt(pkg_b.calibrated_median_minutes), 48.0)
 		self.assertGreater(flt(pkg_c.calibrated_median_minutes), 65.0)
 		self.assertLess(flt(pkg_c.calibrated_median_minutes), 78.0)
+
+	# -----------------------------------------------------------------------
+	# 9. Regression Tests: Bundle-Only Preservation, Review Sync, RO Reopen
+	# -----------------------------------------------------------------------
+
+	def test_bundle_only_package_preserves_deconvolved_calibration(self):
+		"""recalibrate_service_package must NOT zero out deconvolved stats when only same-corner bundles exist."""
+		pkg_a = self._create_package("BundleOnlyA", correction_code="31011002", standard_labor_hours=1.0)
+		pkg_b = self._create_package("BundleOnlyB", correction_code="31011005", standard_labor_hours=1.0)
+		t0 = datetime(2026, 11, 18, 9, 0, 0)
+
+		ro = self._create_completed_ro(
+			services=[
+				{
+					"service_package": pkg_a.name,
+					"correction_code": "31011002",
+					"service_title": "Front Upper Control Arm LH",
+					"service_position": "LH",
+					"status": "Approved",
+					"is_completed": 1,
+					"labor_hours": 1.0,
+					"completed_at": t0 + timedelta(hours=1.6),
+				},
+				{
+					"service_package": pkg_b.name,
+					"correction_code": "31011005",
+					"service_title": "Front Lower Lateral Link LH",
+					"service_position": "LH",
+					"status": "Approved",
+					"is_completed": 1,
+					"labor_hours": 1.0,
+					"completed_at": t0 + timedelta(hours=1.6),
+				},
+			],
+			time_logs=[
+				{
+					"from_time": t0,
+					"to_time": t0 + timedelta(hours=1.6),
+					"time_in_hours": 1.6,
+					"session_status": SESSION_CLOSED,
+				}
+			],
+		)
+		recompute_observations_for_ro(ro)
+
+		# Simulate nightly deconvolution having calibrated pkg_a
+		frappe.db.set_value(
+			"Service Package",
+			pkg_a.name,
+			{
+				"calibrated_median_minutes": 72.5,
+				"calibrated_sigma": 0.24,
+				"frt_realization_ratio": 1.21,
+				"effective_sample_count": 4.0,
+			},
+			update_modified=False,
+		)
+
+		res = recalibrate_service_package(pkg_a.name)
+		self.assertTrue(res.get("preserved_deconvolved"))
+		pkg_a.reload()
+		self.assertAlmostEqual(flt(pkg_a.calibrated_median_minutes), 72.5, places=1)
+		self.assertAlmostEqual(flt(pkg_a.calibrated_sigma), 0.24, places=3)
+
+	def test_observation_review_sync_and_ro_reopen_voiding(self):
+		"""Unchecking exclude on Needs Review confirms it; Clean clears exclude; reopening RO voids active obs."""
+		pkg = self._create_package("ReopenSyncPkg", correction_code="33011001", standard_labor_hours=1.0)
+		t0 = datetime(2026, 11, 19, 9, 0, 0)
+
+		ro = self._create_completed_ro(
+			services=[
+				{
+					"service_package": pkg.name,
+					"correction_code": "33011001",
+					"service_title": "Brake Service",
+					"status": "Approved",
+					"is_completed": 1,
+					"labor_hours": 1.0,
+					"completed_at": t0 + timedelta(hours=1.5),
+				}
+			],
+			time_logs=[
+				{
+					"from_time": t0,
+					"to_time": t0 + timedelta(hours=1.5),
+					"time_in_hours": 1.5,
+					"session_status": SESSION_CLOSED,
+				}
+			],
+		)
+		on_repair_order_update(ro)
+		obs_list = self._get_observations(ro.name)
+		self.assertEqual(len(obs_list), 1)
+		obs = frappe.get_doc("Service Time Observation", obs_list[0]["name"])
+		self.assertEqual(obs.review_status, REVIEW_CLEAN)
+
+		# Transition to Needs Review with exclude=1, then uncheck exclude -> Confirmed
+		obs.review_status = REVIEW_NEEDS_REVIEW
+		obs.exclude_from_calibration = 1
+		obs.save(ignore_permissions=True)
+		self.assertEqual(obs.review_status, REVIEW_NEEDS_REVIEW)
+		self.assertEqual(cint(obs.exclude_from_calibration), 1)
+
+		obs.exclude_from_calibration = 0
+		obs.save(ignore_permissions=True)
+		self.assertEqual(obs.review_status, REVIEW_CONFIRMED)
+		self.assertEqual(cint(obs.exclude_from_calibration), 0)
+
+		# Transition to Excluded, then change review_status to Clean -> exclude cleared to 0
+		obs.review_status = REVIEW_EXCLUDED
+		obs.save(ignore_permissions=True)
+		self.assertEqual(cint(obs.exclude_from_calibration), 1)
+
+		obs.review_status = REVIEW_CLEAN
+		obs.save(ignore_permissions=True)
+		self.assertEqual(obs.review_status, REVIEW_CLEAN)
+		self.assertEqual(cint(obs.exclude_from_calibration), 0)
+
+		pkg.reload()
+		self.assertGreater(flt(pkg.effective_sample_count), 0.0)
+
+		# Reopening a Work Completed RO back to Authorized - In Progress must void active observations
+		ro.status = "Authorized - In Progress"
+		ro.save(ignore_permissions=True)
+		obs.reload()
+		self.assertEqual(obs.review_status, REVIEW_VOIDED)
+		self.assertEqual(cint(obs.exclude_from_calibration), 1)
+
+		pkg.reload()
+		self.assertAlmostEqual(flt(pkg.effective_sample_count), 0.0, places=2)
+		self.assertAlmostEqual(flt(pkg.calibrated_median_minutes), 0.0, places=2)

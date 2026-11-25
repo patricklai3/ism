@@ -10,9 +10,13 @@ from typing import Any
 
 import frappe
 
-from ism.time_calibration.allocator import COMPLETED_RO_STATUSES, recompute_observations_for_ro
+from ism.time_calibration.allocator import (
+	COMPLETED_RO_STATUSES,
+	_void_existing_observations,
+	recompute_observations_for_ro,
+)
 from ism.time_calibration.bayesian import recalibrate_overlap_group, recalibrate_service_package
-from ism.time_calibration.contracts import get_calibration_settings
+from ism.time_calibration.contracts import REVIEW_VOIDED, get_calibration_settings
 from ism.time_calibration.deconvolution import run_nightly_calibration_job
 
 _TRIGGER_RO_STATUSES = (*COMPLETED_RO_STATUSES, "Cancelled")
@@ -40,17 +44,26 @@ def on_repair_order_update(doc: Any, method: str | None = None) -> dict[str, Any
 	):
 		return {"skipped": True, "reason": "recursive_guard"}
 
-	if getattr(doc, "status", None) not in _TRIGGER_RO_STATUSES:
-		return {"skipped": True, "reason": "status_not_eligible"}
-
 	ro_name = getattr(doc, "name", None)
 	if not ro_name:
 		return {"skipped": True, "reason": "missing_name"}
 
+	is_eligible_status = getattr(doc, "status", None) in _TRIGGER_RO_STATUSES
+	if not is_eligible_status:
+		has_active_obs = frappe.db.exists(
+			"Service Time Observation",
+			{"repair_order": ro_name, "review_status": ["!=", REVIEW_VOIDED]},
+		)
+		if not has_active_obs:
+			return {"skipped": True, "reason": "status_not_eligible"}
+
 	frappe.flags.in_time_calibration_recompute = True
 	try:
 		prev_packages, prev_groups = _collect_ro_observation_targets(ro_name)
-		obs_names = recompute_observations_for_ro(doc)
+		if is_eligible_status:
+			obs_names = recompute_observations_for_ro(doc)
+		else:
+			obs_names = _void_existing_observations(ro_name)
 		curr_packages, curr_groups = _collect_ro_observation_targets(ro_name)
 
 		affected_packages = sorted(prev_packages | curr_packages)
@@ -84,6 +97,7 @@ def on_observation_update(doc: Any, method: str | None = None) -> dict[str, Any]
 
 	frappe.flags.in_time_calibration_recompute = True
 	try:
+		doc.flags._calibration_hook_ran = True
 		pkg_result = {}
 		grp_result = {}
 		pkg = getattr(doc, "service_package", None)

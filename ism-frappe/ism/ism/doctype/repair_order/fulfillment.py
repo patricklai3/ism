@@ -425,10 +425,12 @@ def recalculate_ro_time_logs(ro) -> None:
 		prev_end = get_datetime(prev.to_time) if (prev and prev.to_time) else None
 
 		times_modified = (
-			prev is None
-			or prev_start != start_dt
-			or prev_end != end_dt
-			or getattr(prev, "technician", None) != row.technician
+			prev is not None
+			and (
+				prev_start != start_dt
+				or prev_end != end_dt
+				or getattr(prev, "technician", None) != row.technician
+			)
 		)
 		needs_zero_recalc = flt(row.time_in_hours) == 0.0 and end_dt > start_dt
 
@@ -528,7 +530,7 @@ def park_ro_vehicle(ro, odometer_out=None, require_odometer=False, temporary=Fal
 	if open_rows:
 		for row in open_rows:
 			_close_time_log_row(ro, row, now)
-	elif ro.picked_up_at:
+	elif ro.picked_up_at and not (ro.time_logs or []):
 		picked_dt = get_datetime(ro.picked_up_at)
 		already_logged = any(
 			r.from_time and get_datetime(r.from_time) == picked_dt

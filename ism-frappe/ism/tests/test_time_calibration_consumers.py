@@ -548,7 +548,9 @@ class TestTimeCalibrationConsumers(ISMTestCase):
 				"flag_reason": "Oversized Session",
 				"exclude_from_calibration": 1,
 			}
-		).insert(ignore_permissions=True)
+		)
+		obs.flags.ignore_calibration_hook = True
+		obs.insert(ignore_permissions=True)
 		self.track(obs)
 
 		tech_user = self._create_role_user("tech", ["ISM Technician"])

@@ -50,10 +50,15 @@ class ServiceTimeObservation(Document):
 			if exclude_changed and excluded == 1 and not status_changed:
 				self.review_status = REVIEW_EXCLUDED
 				self.exclude_from_calibration = 1
+			elif exclude_changed and excluded == 0 and not status_changed:
+				self.review_status = REVIEW_CONFIRMED
+				self.exclude_from_calibration = 0
 			return
 
 		# Clean (or fallback)
-		if excluded == 1:
+		if status_changed and status == REVIEW_CLEAN and not exclude_changed:
+			self.exclude_from_calibration = 0
+		elif excluded == 1:
 			self.review_status = REVIEW_EXCLUDED
 			self.exclude_from_calibration = 1
 		else:

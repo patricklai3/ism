@@ -238,6 +238,11 @@ def recalibrate_service_package(
 			"correction_code",
 			"standard_labor_hours",
 			"exclude_from_time_calibration",
+			"calibrated_median_minutes",
+			"calibrated_sigma",
+			"frt_realization_ratio",
+			"effective_sample_count",
+			"drift_alert",
 		],
 		as_dict=True,
 	)
@@ -269,6 +274,28 @@ def recalibrate_service_package(
 			"same_group_job_count",
 		],
 	)
+
+	if not obs_rows:
+		has_bundled_clean = frappe.db.exists(
+			"Service Time Observation",
+			{
+				"service_package": pkg_id,
+				"review_status": ["in", [REVIEW_CLEAN, REVIEW_CONFIRMED]],
+				"exclude_from_calibration": 0,
+				"is_outlier": 0,
+				"allocated_hours": [">", 0],
+				"same_group_job_count": [">=", 2],
+			},
+		)
+		if has_bundled_clean:
+			return {
+				"preserved_deconvolved": True,
+				"calibrated_median_minutes": flt(pkg.get("calibrated_median_minutes")),
+				"calibrated_sigma": flt(pkg.get("calibrated_sigma")),
+				"frt_realization_ratio": flt(pkg.get("frt_realization_ratio")),
+				"effective_sample_count": flt(pkg.get("effective_sample_count")),
+				"drift_alert": cint(pkg.get("drift_alert")),
+			}
 
 	obs_inputs: list[dict[str, Any]] = []
 	for row in obs_rows:

@@ -443,7 +443,7 @@ def get_estimate(item_code: Optional[str] = None, **kwargs) -> Dict[str, Any]:
 			item_code=clean_code,
 		)
 		if emp is not None:
-			emp_p_pure, sample_count, _ = emp
+			emp_p_pure, sample_count, _raw_emp = emp
 			return {
 				"duration_minutes": emp_p_pure + opts["buffer_padding"],
 				"p_pure": emp_p_pure,
@@ -783,7 +783,7 @@ def estimate_repair_order(repair_order: Optional[str] = None, **kwargs) -> Dict[
 							pkg_meta.get("correction_code") if pkg_meta else None
 						)
 						explicit_grp = pkg_meta.get("overlap_group") if pkg_meta else None
-						grp_code, _, _ = derive_overlap_group_info(corr_code, explicit_grp)
+						grp_code, _grp_label, _is_auto = derive_overlap_group_info(corr_code, explicit_grp)
 						op_entry["overlap_group"] = grp_code
 						op_entry["correction_code"] = corr_code
 
