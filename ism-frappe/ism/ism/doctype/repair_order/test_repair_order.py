@@ -325,6 +325,8 @@ class TestRepairOrder(ISMTestCase):
 			signer_name="John Customer",
 		)
 		ro2.reload()
+		ro2.pick_up_vehicle()
+		ro2.reload()
 		ro2.toggle_service_completion(service_row_id=ro2.services[0].name, is_completed=1)
 
 		# Verify deferred service is marked 'Completed Later'
@@ -1491,11 +1493,15 @@ class TestRepairOrder(ISMTestCase):
 		for job in portal_data["services"]:
 			self.assertTrue(job["is_locked"], f"Job {job['job_title']} should be marked locked")
 
-		# 7. Complete approved services and release
+		# 7. Pick up into bay, complete approved services, park, and release
+		ro.reload()
+		ro.pick_up_vehicle()
 		ro.reload()
 		ro.services[0].is_completed = 1
 		ro.services[2].is_completed = 1
 		ro.save(ignore_permissions=True)
+		ro.park_vehicle(odometer_out=30020)
+		ro.reload()
 		rel_res = ro.process_payment_and_release(paid_amount=ro.grand_total, odometer_out=30020)
 		self.assertEqual(rel_res.get("status"), "success")
 		self.assertEqual(ro.status, "Closed / Released")
@@ -2057,5 +2063,73 @@ class TestRepairOrder(ISMTestCase):
 		self.assertNotEqual(saved["package_name"], pkg.name)
 		saved_pkg = frappe.get_doc("Service Package", saved["package_name"])
 		self.assertEqual(saved_pkg.applicable_generation, "Model Y Feb 2025")
+
+	def test_service_completion_bay_guard_on_direct_save(self):
+		"""Direct ORM/Desk saves cannot mutate is_completed unless vehicle is in bay, while post-completion saves succeed."""
+		# 1. Inserting a new RO already marked is_completed=1 while in customer lot must throw ValidationError
+		ro_bad_insert = frappe.get_doc({
+			"doctype": "Repair Order",
+			"customer": self.customer.name,
+			"vehicle": self.vehicle.name,
+			"odometer_in": 21000,
+			"approval_status": "Approved",
+			"status": "Authorized - In Progress",
+			"services": [
+				{
+					"service_title": "Tire Rotation",
+					"status": "Approved",
+					"is_completed": 1,
+					"labor_hours": 0.5,
+					"labor_rate": 120.0,
+				}
+			],
+		})
+		with self.assertRaises(frappe.ValidationError):
+			ro_bad_insert.insert(ignore_permissions=True)
+
+		# 2. Normal RO in customer lot: direct ro.save() flipping 0 -> 1 must throw ValidationError
+		ro = frappe.get_doc({
+			"doctype": "Repair Order",
+			"customer": self.customer.name,
+			"vehicle": self.vehicle.name,
+			"odometer_in": 21000,
+			"approval_status": "Approved",
+			"status": "Authorized - In Progress",
+			"services": [
+				{
+					"service_title": "Tire Rotation",
+					"status": "Approved",
+					"labor_hours": 0.5,
+					"labor_rate": 120.0,
+				}
+			],
+		}).insert(ignore_permissions=True)
+		self.track(ro)
+
+		ro.services[0].is_completed = 1
+		with self.assertRaises(frappe.ValidationError):
+			ro.save(ignore_permissions=True)
+		ro.reload()
+		self.assertEqual(int(ro.services[0].is_completed), 0)
+
+		# 3. Pick up into bay, complete via direct save, park -> unrelated saves stay valid while 1 -> 0 is blocked
+		ro.pick_up_vehicle()
+		ro.reload()
+		ro.services[0].is_completed = 1
+		ro.save(ignore_permissions=True)
+
+		ro.park_vehicle(odometer_out=21005)
+		ro.reload()
+		self.assertEqual(ro.vehicle_location, "Completed / Parked in Lot")
+
+		# Unrelated save with already-completed row must still pass
+		ro.verbal_notes = "Parked and ready for advisor checkout"
+		ro.save(ignore_permissions=True)
+
+		# Flipping 1 -> 0 while parked in lot must throw ValidationError
+		ro.services[0].is_completed = 0
+		with self.assertRaises(frappe.ValidationError):
+			ro.save(ignore_permissions=True)
+
 
 

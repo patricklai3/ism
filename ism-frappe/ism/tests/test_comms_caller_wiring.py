@@ -114,10 +114,12 @@ class TestCommsCallerWiring(ISMTestCase):
 			service_status="Approved",
 		)
 		ro.approval_status = "Approved"
-		ro.vehicle_location = "Completed / Parked in Lot"
 		ro.save(ignore_permissions=True)
 
+		ro.pick_up_vehicle()
+		ro.reload()
 		ro.toggle_service_completion(service_row_id=ro.services[0].name, is_completed=1)
+		ro.park_vehicle()
 		ro.reload()
 		self.assertEqual(ro.status, "Work Completed")
 
@@ -134,17 +136,14 @@ class TestCommsCallerWiring(ISMTestCase):
 		self.assertEqual(logs[0].provider, "Mock (Deterministic Test)")
 		self.assertEqual(logs[0].phone_e164, phone)
 
-		# Opt out customer, revert service, and transition again: status must succeed with Blocked - Opted Out log
+		# Opt out customer, revert service in bay, and transition again: status must succeed with Blocked - Opted Out log
 		upsert_sms_opt_out(phone, is_opted_out=True, source="Manual Staff Override", notes="Test opt-out")
+		ro.pick_up_vehicle()
+		ro.reload()
 		ro.toggle_service_completion(service_row_id=ro.services[0].name, is_completed=0)
-		frappe.db.set_value(
-			"Repair Order",
-			ro.name,
-			{"status": "Authorized - In Progress", "vehicle_location": "Completed / Parked in Lot"},
-			update_modified=False,
-		)
 		ro.reload()
 		ro.toggle_service_completion(service_row_id=ro.services[0].name, is_completed=1)
+		ro.park_vehicle()
 		ro.reload()
 		self.assertEqual(ro.status, "Work Completed")
 

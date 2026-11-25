@@ -498,11 +498,12 @@ class TestMcpProtocol(McpTestCase, ISMTestCase):
 		self.assertTrue(res_dup["success"])
 		self.assertTrue(any("Right" in s["service_title"] for s in res_dup["data"]["services"]))
 
-		# Authorize RO so floor actions are allowed
+		# Authorize RO and pull into bay so floor actions are allowed
 		ro_doc = frappe.get_doc("Repair Order", ro_name)
 		ro_doc.approval_status = "Approved"
 		ro_doc.status = "Authorized - In Progress"
 		ro_doc.save(ignore_permissions=True)
+		ro_doc.pick_up_vehicle()
 
 		# Toggle completion, add supplement, park bay
 		res_tog = self.result(

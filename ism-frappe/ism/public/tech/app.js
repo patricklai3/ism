@@ -1068,9 +1068,10 @@ function buildPartBinBadgeHtml(part) {
 	return `<span class="part-bin-badge part-bin-badge--missing">NO BIN</span>`;
 }
 
-function buildServiceCardHtml(svc, { isCompletedRo }) {
+function buildServiceCardHtml(svc, { isCompletedRo, isBayLocked = false }) {
 	const checked = Boolean(svc.is_completed);
 	const isToggling = state.togglingServices.has(svc.name);
+	const isDisabled = isToggling || isCompletedRo || isBayLocked;
 	const parts = Array.isArray(svc.parts) ? svc.parts : [];
 	const hoursLabel = formatHours(svc.labor_hours);
 	const pos = (svc.service_position || "").trim();
@@ -1105,16 +1106,22 @@ function buildServiceCardHtml(svc, { isCompletedRo }) {
 	}
 
 	const safeManualUrl = safeHttpUrl(svc.tesla_manual_url);
+	const svcTitle = svc.service_title || "Service";
+	const checkAriaLabel = isBayLocked
+		? `Pick up vehicle into bay to update: ${svcTitle}`
+		: `${checked ? "Mark incomplete:" : "Mark complete:"} ${svcTitle}`;
 	return `
-		<article class="service-card${checked ? " is-completed" : ""}" data-service-id="${escapeHtml(svc.name)}">
+		<article class="service-card${checked ? " is-completed" : ""}${isBayLocked ? " is-bay-locked" : ""}" data-service-id="${escapeHtml(svc.name)}">
 			<button
 				type="button"
 				class="service-check-btn${checked ? " is-checked" : ""}"
 				role="checkbox"
 				aria-checked="${checked ? "true" : "false"}"
-				aria-label="${checked ? "Mark incomplete:" : "Mark complete:"} ${escapeHtml(svc.service_title || "Service")}"
+				aria-disabled="${isDisabled ? "true" : "false"}"
+				aria-label="${escapeHtml(checkAriaLabel)}"
+				${isBayLocked ? 'title="Pick up vehicle into bay first"' : ""}
 				data-service-id="${escapeHtml(svc.name)}"
-				${isToggling || isCompletedRo ? "disabled" : ""}
+				${isDisabled ? "disabled" : ""}
 			>
 				&#10003;
 			</button>
@@ -1232,6 +1239,7 @@ function renderRepairOrderView() {
 
 	const isInBay = ro.vehicle_location === "In Bay / Being Serviced";
 	const isCompletedRo = ro.lifecycle_state === "COMPLETED";
+	const isBayLocked = !isInBay && !isCompletedRo;
 	const bayElapsed = isInBay && ro.picked_up_at ? formatBayElapsed(ro.picked_up_at) : "";
 	const approvedCount = Number(ro.approved_count || (ro.services ? ro.services.length : 0));
 	const completedCount = Number(ro.completed_count || 0);
@@ -1382,7 +1390,7 @@ function renderRepairOrderView() {
 
 		${buildLifecycleBannerHtml(ro)}
 
-		<section class="checklist-section">
+		<section class="checklist-section${isBayLocked ? " is-bay-locked" : ""}">
 			<div class="checklist-header">
 				<h3 class="checklist-header__title">
 					Service Checklist &mdash; ${completedCount} of ${approvedCount} Completed (${progressPct}%)
@@ -1392,10 +1400,15 @@ function renderRepairOrderView() {
 			<div class="checklist-progress" aria-hidden="true">
 				<div class="checklist-progress__fill${progressPct >= 100 ? " is-complete" : ""}" style="width:${progressPct}%"></div>
 			</div>
+			${
+				isBayLocked
+					? `<div class="checklist-lock-notice" role="status">Pick up vehicle into bay to check off services.</div>`
+					: ""
+			}
 			<div class="service-list">
 				${
 					services.length
-						? services.map((svc) => buildServiceCardHtml(svc, { isCompletedRo })).join("")
+						? services.map((svc) => buildServiceCardHtml(svc, { isCompletedRo, isBayLocked })).join("")
 						: `<div class="tech-card"><p class="tech-card__body">No approved services listed on this Repair Order.</p></div>`
 				}
 			</div>
@@ -1629,6 +1642,10 @@ async function handlePickUpVehicle() {
 
 async function handleToggleService(serviceRowId) {
 	if (!state.roData || state.togglingServices.has(serviceRowId)) return;
+	if (state.roData.vehicle_location !== "In Bay / Being Serviced") {
+		showToast("Pick up vehicle into bay before updating services.", "error");
+		return;
+	}
 	const services = Array.isArray(state.roData.services) ? state.roData.services : [];
 	const target = services.find((s) => s.name === serviceRowId);
 	if (!target) return;

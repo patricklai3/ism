@@ -641,11 +641,15 @@ class TestAgentFacade(ISMTestCase):
 		svc_titles = [s["service_title"] for s in dup_res["data"]["services"]]
 		self.assertTrue(any("Right" in title for title in svc_titles), svc_titles)
 
-		# 4. Approve RO and exercise floor actions: toggle completion, supplement, park
+		# 4. Approve RO, start bay work, and exercise floor actions: toggle completion, supplement, park
 		ro_doc = frappe.get_doc("Repair Order", ro_name)
 		ro_doc.approval_status = "Approved"
 		ro_doc.status = "Authorized - In Progress"
 		ro_doc.save(ignore_permissions=True)
+
+		start_res = update_job_status(repair_order=ro_name, action="start")
+		self.assertTrue(start_res["success"])
+		self.assertEqual(start_res["data"]["vehicle_location"], "In Bay / Being Serviced")
 
 		tog = toggle_service_completion(repair_order=ro_name, service_row_id=first_row_id, is_completed=True)
 		self.assertTrue(tog["success"])
@@ -2722,4 +2726,39 @@ class TestAgentFacade(ISMTestCase):
 					call()
 		finally:
 			frappe.set_user(orig_user)
+
+	def test_toggle_service_completion_requires_vehicle_in_bay(self):
+		"""Agent toggle_service_completion blocks both completing and reopening when vehicle is not in bay."""
+		q_res = create_quote(
+			customer_name=self.customer,
+			vehicle_identifier=self.vehicle_vin,
+			odometer_in=43000,
+			services=[{"service_title": "Cabin Filter Service", "labor_hours": 0.5, "labor_rate": 140.0}],
+		)
+		self.assertTrue(q_res["success"])
+		ro_name = q_res["data"]["name"]
+		self.track("Repair Order", ro_name)
+		row_id = q_res["data"]["services"][0]["name"]
+
+		ro_doc = frappe.get_doc("Repair Order", ro_name)
+		ro_doc.approval_status = "Approved"
+		ro_doc.status = "Authorized - In Progress"
+		ro_doc.save(ignore_permissions=True)
+
+		# In customer lot before start: completing (0 -> 1) must raise ValidationError
+		with self.assertRaises(frappe.ValidationError):
+			toggle_service_completion(repair_order=ro_name, service_row_id=row_id, is_completed=True)
+
+		# Start bay work -> completing succeeds
+		start_res = update_job_status(repair_order=ro_name, action="start")
+		self.assertEqual(start_res["data"]["vehicle_location"], "In Bay / Being Serviced")
+		comp_res = toggle_service_completion(repair_order=ro_name, service_row_id=row_id, is_completed=True)
+		self.assertEqual(comp_res["data"]["services"][0]["is_completed"], 1)
+
+		# Park back in lot -> reopening (1 -> 0) must raise ValidationError
+		park_res = update_job_status(repair_order=ro_name, action="park", odometer_out=43005)
+		self.assertEqual(park_res["data"]["vehicle_location"], "Completed / Parked in Lot")
+		with self.assertRaises(frappe.ValidationError):
+			toggle_service_completion(repair_order=ro_name, service_row_id=row_id, is_completed=False)
+
 
