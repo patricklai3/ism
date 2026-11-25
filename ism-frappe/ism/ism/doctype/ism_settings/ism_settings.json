@@ -58,6 +58,16 @@
   "cb_estimation",
   "buffer_padding_minutes",
   "default_diagnostic_duration",
+  "sb_time_calibration",
+  "time_calibration_mode",
+  "calibration_prior_strength",
+  "calibration_overlap_prior_strength",
+  "calibration_half_life_days",
+  "cb_time_calibration",
+  "calibration_min_ratio",
+  "calibration_max_ratio",
+  "calibration_drift_alert_pct",
+  "calibration_max_single_session_hours",
   "sb_pricing",
   "default_labor_rate",
   "shop_supplies_percentage",
@@ -440,6 +450,77 @@
    "fieldname": "default_diagnostic_duration",
    "fieldtype": "Int",
    "label": "Default Diagnostic Duration (Minutes)"
+  },
+  {
+   "fieldname": "sb_time_calibration",
+   "fieldtype": "Section Break",
+   "label": "Time Calibration"
+  },
+  {
+   "default": "Shadow (Observe Only)",
+   "description": "Disabled: no observations or calibration. Shadow (Observe Only): logs sessions and calibrates packages while estimators stay on static FRT. Active: estimators use calibrated operational durations and overlap discounts.",
+   "fieldname": "time_calibration_mode",
+   "fieldtype": "Select",
+   "label": "Time Calibration Mode",
+   "options": "Disabled\nShadow (Observe Only)\nActive"
+  },
+  {
+   "default": "5.0",
+   "description": "Bayesian prior weight n0 anchoring calibrated package median to factory FRT (0.5 - 50.0).",
+   "fieldname": "calibration_prior_strength",
+   "fieldtype": "Float",
+   "label": "Calibration Prior Strength",
+   "precision": "2"
+  },
+  {
+   "default": "5.0",
+   "description": "Bayesian prior weight m0 anchoring overlap group alpha to neutral 1.0 (0.5 - 50.0).",
+   "fieldname": "calibration_overlap_prior_strength",
+   "fieldtype": "Float",
+   "label": "Overlap Prior Strength",
+   "precision": "2"
+  },
+  {
+   "default": "180",
+   "description": "Exponential recency decay half-life in days (14 - 1095).",
+   "fieldname": "calibration_half_life_days",
+   "fieldtype": "Int",
+   "label": "Calibration Half-Life (Days)"
+  },
+  {
+   "fieldname": "cb_time_calibration",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0.20",
+   "description": "Minimum allocated-to-FRT ratio before flagging as an outlier (0.05 - 0.90).",
+   "fieldname": "calibration_min_ratio",
+   "fieldtype": "Float",
+   "label": "Calibration Min Ratio",
+   "precision": "2"
+  },
+  {
+   "default": "4.00",
+   "description": "Maximum allocated-to-FRT ratio before flagging as an outlier (1.20 - 10.0).",
+   "fieldname": "calibration_max_ratio",
+   "fieldtype": "Float",
+   "label": "Calibration Max Ratio",
+   "precision": "2"
+  },
+  {
+   "default": "25.0",
+   "description": "Percent deviation from FRT that raises a Service Package drift alert (5.0 - 100.0).",
+   "fieldname": "calibration_drift_alert_pct",
+   "fieldtype": "Percent",
+   "label": "Calibration Drift Alert (%)"
+  },
+  {
+   "default": "8.5",
+   "description": "Maximum hours in a single bay session before flagging as Oversized Session (1.0 - 24.0).",
+   "fieldname": "calibration_max_single_session_hours",
+   "fieldtype": "Float",
+   "label": "Max Single Session (Hours)",
+   "precision": "2"
   },
   {
    "fieldname": "sb_pricing",
@@ -836,7 +917,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-24 05:00:00.000000",
+ "modified": "2026-11-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "ISM",
  "name": "ISM Settings",

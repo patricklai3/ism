@@ -22,6 +22,24 @@ from ism.portal.contracts import (
 	PORTAL_BOOKING_TOKEN_TTL_MIN_DAYS,
 )
 from ism.scheduling.time_utils import to_timedelta
+from ism.time_calibration.contracts import (
+	DRIFT_ALERT_PCT_MAX,
+	DRIFT_ALERT_PCT_MIN,
+	HALF_LIFE_DAYS_MAX,
+	HALF_LIFE_DAYS_MIN,
+	MAX_RATIO_LOWER,
+	MAX_RATIO_UPPER,
+	MAX_SINGLE_SESSION_HOURS_MAX,
+	MAX_SINGLE_SESSION_HOURS_MIN,
+	MIN_RATIO_LOWER,
+	MIN_RATIO_UPPER,
+	MODE_SHADOW,
+	OVERLAP_PRIOR_STRENGTH_MAX,
+	OVERLAP_PRIOR_STRENGTH_MIN,
+	PRIOR_STRENGTH_MAX,
+	PRIOR_STRENGTH_MIN,
+	TIME_CALIBRATION_MODES,
+)
 
 _DEFAULT_COUNTRY_CODE_RE = re.compile(r"^\+\d{1,3}$")
 _COOKIE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
@@ -35,6 +53,7 @@ class ISMSettings(Document):
 		self._validate_operating_hours()
 		self._validate_break_hours()
 		self._validate_estimation_parameters()
+		self._validate_time_calibration_settings()
 		self._validate_pricing_parameters()
 		self._validate_comms_and_otp_settings()
 		self._validate_square_settings()
@@ -93,6 +112,78 @@ class ISMSettings(Document):
 
 		if self.default_diagnostic_duration is not None and self.default_diagnostic_duration <= 0:
 			frappe.throw(_("Default Diagnostic Duration must be greater than 0 minutes."))
+
+	def _validate_time_calibration_settings(self):
+		if not getattr(self, "time_calibration_mode", None):
+			self.time_calibration_mode = MODE_SHADOW
+		if self.time_calibration_mode not in TIME_CALIBRATION_MODES:
+			frappe.throw(
+				_("Invalid Time Calibration Mode: {0}.").format(self.time_calibration_mode),
+				frappe.ValidationError,
+			)
+
+		if getattr(self, "calibration_prior_strength", None) is not None:
+			val = flt(self.calibration_prior_strength)
+			if val < PRIOR_STRENGTH_MIN or val > PRIOR_STRENGTH_MAX:
+				frappe.throw(
+					_("Calibration Prior Strength must be between {0} and {1}.").format(
+						PRIOR_STRENGTH_MIN, PRIOR_STRENGTH_MAX
+					)
+				)
+
+		if getattr(self, "calibration_overlap_prior_strength", None) is not None:
+			val = flt(self.calibration_overlap_prior_strength)
+			if val < OVERLAP_PRIOR_STRENGTH_MIN or val > OVERLAP_PRIOR_STRENGTH_MAX:
+				frappe.throw(
+					_("Overlap Prior Strength must be between {0} and {1}.").format(
+						OVERLAP_PRIOR_STRENGTH_MIN, OVERLAP_PRIOR_STRENGTH_MAX
+					)
+				)
+
+		if getattr(self, "calibration_half_life_days", None) is not None:
+			val = cint(self.calibration_half_life_days)
+			if val < HALF_LIFE_DAYS_MIN or val > HALF_LIFE_DAYS_MAX:
+				frappe.throw(
+					_("Calibration Half-Life (Days) must be between {0} and {1}.").format(
+						HALF_LIFE_DAYS_MIN, HALF_LIFE_DAYS_MAX
+					)
+				)
+
+		if getattr(self, "calibration_min_ratio", None) is not None:
+			val = flt(self.calibration_min_ratio)
+			if val < MIN_RATIO_LOWER or val > MIN_RATIO_UPPER:
+				frappe.throw(
+					_("Calibration Min Ratio must be between {0:.2f} and {1:.2f}.").format(
+						MIN_RATIO_LOWER, MIN_RATIO_UPPER
+					)
+				)
+
+		if getattr(self, "calibration_max_ratio", None) is not None:
+			val = flt(self.calibration_max_ratio)
+			if val < MAX_RATIO_LOWER or val > MAX_RATIO_UPPER:
+				frappe.throw(
+					_("Calibration Max Ratio must be between {0:.2f} and {1:.2f}.").format(
+						MAX_RATIO_LOWER, MAX_RATIO_UPPER
+					)
+				)
+
+		if getattr(self, "calibration_drift_alert_pct", None) is not None:
+			val = flt(self.calibration_drift_alert_pct)
+			if val < DRIFT_ALERT_PCT_MIN or val > DRIFT_ALERT_PCT_MAX:
+				frappe.throw(
+					_("Calibration Drift Alert (%) must be between {0:.1f} and {1:.1f}.").format(
+						DRIFT_ALERT_PCT_MIN, DRIFT_ALERT_PCT_MAX
+					)
+				)
+
+		if getattr(self, "calibration_max_single_session_hours", None) is not None:
+			val = flt(self.calibration_max_single_session_hours)
+			if val < MAX_SINGLE_SESSION_HOURS_MIN or val > MAX_SINGLE_SESSION_HOURS_MAX:
+				frappe.throw(
+					_("Max Single Session (Hours) must be between {0:.1f} and {1:.1f}.").format(
+						MAX_SINGLE_SESSION_HOURS_MIN, MAX_SINGLE_SESSION_HOURS_MAX
+					)
+				)
 
 	def _validate_pricing_parameters(self):
 		if self.default_labor_rate is not None and flt(self.default_labor_rate) <= 0:

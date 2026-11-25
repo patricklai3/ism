@@ -1,0 +1,346 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-11-25 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sb_context",
+  "naming_series",
+  "repair_order",
+  "repair_order_service",
+  "service_package",
+  "service_title",
+  "technician",
+  "cb_context",
+  "vehicle_model",
+  "vehicle_generation",
+  "service_position",
+  "is_paired_symmetrical",
+  "is_supplement",
+  "observed_at",
+  "sb_overlap",
+  "overlap_group",
+  "overlap_bucket_key",
+  "same_group_job_count",
+  "cb_overlap",
+  "is_overlap_primary",
+  "applied_overlap_factor",
+  "sb_attribution",
+  "frt_hours",
+  "allocation_weight",
+  "allocated_hours",
+  "allocated_minutes",
+  "ro_net_active_hours",
+  "cb_attribution",
+  "ro_service_count",
+  "allocation_method",
+  "confidence_score",
+  "frt_ratio",
+  "sb_review",
+  "review_status",
+  "flag_reason",
+  "cb_review",
+  "is_outlier",
+  "exclude_from_calibration"
+ ],
+ "fields": [
+  {
+   "fieldname": "sb_context",
+   "fieldtype": "Section Break",
+   "label": "Links & Context"
+  },
+  {
+   "default": "STO-.YYYY.-.######",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Series",
+   "options": "STO-.YYYY.-.######",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "repair_order",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Repair Order",
+   "options": "Repair Order",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "repair_order_service",
+   "fieldtype": "Data",
+   "label": "Repair Order Service Row",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "service_package",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Service Package",
+   "options": "Service Package",
+   "search_index": 1
+  },
+  {
+   "fieldname": "service_title",
+   "fieldtype": "Data",
+   "label": "Service Title"
+  },
+  {
+   "fieldname": "technician",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Technician",
+   "options": "Employee",
+   "search_index": 1
+  },
+  {
+   "fieldname": "cb_context",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "vehicle_model",
+   "fieldtype": "Data",
+   "label": "Vehicle Model"
+  },
+  {
+   "fieldname": "vehicle_generation",
+   "fieldtype": "Data",
+   "label": "Vehicle Generation"
+  },
+  {
+   "fieldname": "service_position",
+   "fieldtype": "Select",
+   "label": "Service Position",
+   "options": "\nNone\nLH\nRH"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_paired_symmetrical",
+   "fieldtype": "Check",
+   "label": "Is Paired Symmetrical"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_supplement",
+   "fieldtype": "Check",
+   "label": "Is Supplement"
+  },
+  {
+   "fieldname": "observed_at",
+   "fieldtype": "Datetime",
+   "label": "Observed At",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "sb_overlap",
+   "fieldtype": "Section Break",
+   "label": "Overlap Metadata"
+  },
+  {
+   "fieldname": "overlap_group",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Overlap Group",
+   "options": "Service Overlap Group",
+   "search_index": 1
+  },
+  {
+   "fieldname": "overlap_bucket_key",
+   "fieldtype": "Data",
+   "label": "Overlap Bucket Key"
+  },
+  {
+   "default": "1",
+   "fieldname": "same_group_job_count",
+   "fieldtype": "Int",
+   "label": "Same Group Job Count"
+  },
+  {
+   "fieldname": "cb_overlap",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "is_overlap_primary",
+   "fieldtype": "Check",
+   "label": "Is Overlap Primary"
+  },
+  {
+   "default": "1.0",
+   "fieldname": "applied_overlap_factor",
+   "fieldtype": "Float",
+   "label": "Applied Overlap Factor",
+   "precision": "3"
+  },
+  {
+   "fieldname": "sb_attribution",
+   "fieldtype": "Section Break",
+   "label": "Timing & Attribution"
+  },
+  {
+   "fieldname": "frt_hours",
+   "fieldtype": "Float",
+   "label": "FRT Hours",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocation_weight",
+   "fieldtype": "Float",
+   "label": "Allocation Weight",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocated_hours",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Allocated Hours",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocated_minutes",
+   "fieldtype": "Float",
+   "label": "Allocated Minutes",
+   "precision": "1",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ro_net_active_hours",
+   "fieldtype": "Float",
+   "label": "RO Net Active Hours",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_attribution",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "ro_service_count",
+   "fieldtype": "Int",
+   "label": "RO Service Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocation_method",
+   "fieldtype": "Select",
+   "label": "Allocation Method",
+   "options": "Single-Job Direct\nTech-Scoped Prorated\nRO-Wide Prorated\nSupplement Post-Approval",
+   "read_only": 1
+  },
+  {
+   "default": "1.0",
+   "fieldname": "confidence_score",
+   "fieldtype": "Float",
+   "label": "Confidence Score",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "frt_ratio",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "FRT Ratio",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_review",
+   "fieldtype": "Section Break",
+   "label": "Quality & Manager Review"
+  },
+  {
+   "default": "Clean",
+   "fieldname": "review_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Review Status",
+   "options": "Clean\nNeeds Review\nConfirmed\nExcluded\nVoided",
+   "search_index": 1
+  },
+  {
+   "fieldname": "flag_reason",
+   "fieldtype": "Data",
+   "label": "Flag Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_outlier",
+   "fieldtype": "Check",
+   "label": "Is Outlier",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "exclude_from_calibration",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Exclude from Calibration"
+  }
+ ],
+ "links": [],
+ "modified": "2026-11-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "ISM",
+ "name": "Service Time Observation",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "ISM Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "ISM Service Advisor",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "repair_order,service_package,service_title,review_status",
+ "sort_field": "observed_at",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

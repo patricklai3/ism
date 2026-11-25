@@ -33,6 +33,16 @@
   "customer_estimate_min",
   "customer_estimate_max",
   "self_serve_duration_minutes",
+  "sb_time_calibration",
+  "overlap_group",
+  "exclude_from_time_calibration",
+  "calibrated_median_minutes",
+  "calibrated_sigma",
+  "cb_time_calibration",
+  "frt_realization_ratio",
+  "effective_sample_count",
+  "drift_alert",
+  "last_calibrated_at",
   "sb_items",
   "items"
  ],
@@ -208,6 +218,80 @@
    "label": "Self-Serve Duration (Minutes)"
   },
   {
+   "fieldname": "sb_time_calibration",
+   "fieldtype": "Section Break",
+   "label": "Time Calibration (Operational)"
+  },
+  {
+   "description": "Optional explicit Service Overlap Group override. Leave blank to auto-derive from the 4-digit correction code subcategory.",
+   "fieldname": "overlap_group",
+   "fieldtype": "Link",
+   "label": "Overlap Group",
+   "options": "Service Overlap Group"
+  },
+  {
+   "default": "0",
+   "description": "Exclude this package (e.g. diagnostics or inspections) from operational time calibration.",
+   "fieldname": "exclude_from_time_calibration",
+   "fieldtype": "Check",
+   "label": "Exclude from Time Calibration"
+  },
+  {
+   "default": "0",
+   "description": "Learned operational median duration in minutes (strictly separate from billing FRT).",
+   "fieldname": "calibrated_median_minutes",
+   "fieldtype": "Float",
+   "label": "Calibrated Median (Minutes)",
+   "precision": "1",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Learned log-normal dispersion (sigma) clamped to [0.10, 0.80].",
+   "fieldname": "calibrated_sigma",
+   "fieldtype": "Float",
+   "label": "Calibrated Sigma",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_time_calibration",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Ratio of calibrated operational median to factory FRT (1.00 = exact alignment).",
+   "fieldname": "frt_realization_ratio",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "FRT Realization Ratio",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Time-decayed effective observation count backing this calibration.",
+   "fieldname": "effective_sample_count",
+   "fieldtype": "Float",
+   "label": "Effective Sample Count",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "drift_alert",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Drift Alert",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_calibrated_at",
+   "fieldtype": "Datetime",
+   "label": "Last Calibrated At",
+   "read_only": 1
+  },
+  {
    "fieldname": "sb_items",
    "fieldtype": "Section Break",
    "label": "Required Parts & Materials"
@@ -234,7 +318,7 @@
   }
  ],
  "links": [],
- "modified": "2026-11-24 04:00:00.000000",
+ "modified": "2026-11-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "ISM",
  "name": "Service Package",

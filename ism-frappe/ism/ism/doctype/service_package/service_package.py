@@ -121,6 +121,7 @@ class ServicePackage(Document):
 			)
 
 		self._validate_self_serve_catalog()
+		self._validate_time_calibration_fields()
 
 	def validate_duplicate_tags(self):
 		"""Reject duplicate Equipment Tag rows and strip blank rows."""
@@ -184,6 +185,17 @@ class ServicePackage(Document):
 			frappe.throw(_("Applicable Year To must be between 2008 and 2100 (or 0 for no upper bound)."))
 		if year_from != 0 and year_to != 0 and year_from > year_to:
 			frappe.throw(_("Applicable Year From cannot be greater than Applicable Year To."))
+
+	def _validate_time_calibration_fields(self):
+		"""Normalize and guard operational Time Calibration fields without affecting billing FRT."""
+		if isinstance(getattr(self, "overlap_group", None), str):
+			self.overlap_group = self.overlap_group.strip().upper() or None
+		if flt(getattr(self, "calibrated_median_minutes", 0) or 0) < 0:
+			frappe.throw(_("Calibrated Median (Minutes) cannot be negative."))
+		if flt(getattr(self, "calibrated_sigma", 0) or 0) < 0:
+			frappe.throw(_("Calibrated Sigma cannot be negative."))
+		if flt(getattr(self, "effective_sample_count", 0) or 0) < 0:
+			frappe.throw(_("Effective Sample Count cannot be negative."))
 
 	def sync_generation_compatibility(self):
 		"""Keep applicable_model, applicable_generation, and generation_compatibility synchronized."""
