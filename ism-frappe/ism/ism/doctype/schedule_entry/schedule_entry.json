@@ -30,6 +30,11 @@
   "column_break_assignment",
   "service_bay",
   "assigned_technician",
+  "assignment_mode",
+  "assignment_locked",
+  "is_comeback",
+  "assignment_reason",
+  "required_skills_json",
   "section_break_self_serve",
   "booking_source",
   "waiter_preference",
@@ -248,6 +253,38 @@
    "label": "Assigned Technician",
    "options": "Employee",
    "search_index": 1
+  },
+  {
+   "default": "Auto",
+   "fieldname": "assignment_mode",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Assignment Mode",
+   "options": "Auto\nManual Override\nSticky Continuity\nRebalanced\nUnassigned"
+  },
+  {
+   "default": "0",
+   "fieldname": "assignment_locked",
+   "fieldtype": "Check",
+   "label": "Assignment Locked"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_comeback",
+   "fieldtype": "Check",
+   "label": "Is Comeback"
+  },
+  {
+   "fieldname": "assignment_reason",
+   "fieldtype": "Small Text",
+   "label": "Assignment Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "required_skills_json",
+   "fieldtype": "Small Text",
+   "label": "Required Skills (JSON)",
+   "read_only": 1
   },
   {
    "fieldname": "section_break_self_serve",
@@ -535,7 +572,7 @@
  "index_web_pages_for_search": 1,
  "is_calendar_and_gantt": 1,
  "links": [],
- "modified": "2026-11-24 05:00:00.000000",
+ "modified": "2026-11-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "ISM",
  "name": "Schedule Entry",

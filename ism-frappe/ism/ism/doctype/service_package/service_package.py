@@ -70,6 +70,7 @@ class ServicePackage(Document):
 		self.sync_generation_compatibility()
 		self._validate_scoped_uniqueness()
 		self.validate_duplicate_tags()
+		self.validate_required_skills()
 
 		if not self.is_flat_rate and flt(self.standard_labor_hours) and flt(self.hourly_rate):
 			self.service_rate = flt(self.standard_labor_hours) * flt(self.hourly_rate)
@@ -142,6 +143,47 @@ class ServicePackage(Document):
 			cleaned_rows.append(row)
 		if len(cleaned_rows) != len(self.equipment_tags):
 			self.set("equipment_tags", cleaned_rows)
+
+	def validate_required_skills(self):
+		"""Reject duplicate Technician Skill rows and enforce difficulty_level in 1..3."""
+		rows = getattr(self, "required_skills", None) or []
+		if not rows:
+			return
+		seen_skills: set[str] = set()
+		cleaned_rows = []
+		for row in rows:
+			skill = (getattr(row, "skill", None) or "").strip()
+			if not skill:
+				continue
+			row.skill = skill
+			if skill in seen_skills:
+				frappe.throw(
+					_("Duplicate required skill '{0}' at row #{1}.").format(skill, row.idx),
+					title=_("Duplicate Skill"),
+				)
+			seen_skills.add(skill)
+
+			raw_diff = getattr(row, "difficulty_level", None)
+			if raw_diff is None or raw_diff == "":
+				diff = 1
+			else:
+				try:
+					diff_float = float(raw_diff)
+				except (TypeError, ValueError):
+					frappe.throw(
+						_("Difficulty Level must be between 1 and 3 at row #{0}.").format(row.idx),
+						title=_("Invalid Difficulty"),
+					)
+				if diff_float != int(diff_float) or int(diff_float) not in (1, 2, 3):
+					frappe.throw(
+						_("Difficulty Level must be between 1 and 3 at row #{0}.").format(row.idx),
+						title=_("Invalid Difficulty"),
+					)
+				diff = int(diff_float)
+			row.difficulty_level = diff
+			cleaned_rows.append(row)
+		if len(cleaned_rows) != len(rows):
+			self.set("required_skills", cleaned_rows)
 
 	def get_equipment_tags(self) -> list[str]:
 		"""Return sorted deduplicated Equipment Tag names linked to this Service Package."""

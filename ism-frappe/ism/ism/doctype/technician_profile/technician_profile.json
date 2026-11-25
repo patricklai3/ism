@@ -1,0 +1,152 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:employee",
+ "creation": "2026-11-25 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "employee_name",
+  "is_active",
+  "cb_profile",
+  "assignment_tier",
+  "target_load_weight",
+  "daily_soft_cap_pct",
+  "sb_skills",
+  "skills",
+  "sb_weekly_schedule",
+  "weekly_schedule"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Is Active"
+  },
+  {
+   "fieldname": "cb_profile",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "1=Workhorse, 2=Buffer, 3=Reserve",
+   "fieldname": "assignment_tier",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Assignment Tier"
+  },
+  {
+   "default": "1.0",
+   "description": "Relative target load weight used in Weighted Share mode (must be > 0).",
+   "fieldname": "target_load_weight",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Target Load Weight"
+  },
+  {
+   "description": "Optional daily utilization ceiling (%). Falls back to ISM Settings Tier Spillover Threshold.",
+   "fieldname": "daily_soft_cap_pct",
+   "fieldtype": "Percent",
+   "label": "Daily Soft Cap (%)"
+  },
+  {
+   "fieldname": "sb_skills",
+   "fieldtype": "Section Break",
+   "label": "Skill Competencies"
+  },
+  {
+   "fieldname": "skills",
+   "fieldtype": "Table",
+   "label": "Skills",
+   "options": "Technician Skill Competency"
+  },
+  {
+   "fieldname": "sb_weekly_schedule",
+   "fieldtype": "Section Break",
+   "label": "Weekly Shift Schedule"
+  },
+  {
+   "fieldname": "weekly_schedule",
+   "fieldtype": "Table",
+   "label": "Weekly Schedule",
+   "options": "Technician Shift Day"
+  }
+ ],
+ "links": [],
+ "modified": "2026-11-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "ISM",
+ "name": "Technician Profile",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "ISM Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "ISM Service Advisor"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "ISM Technician"
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_name_in_global_search": 1,
+ "sort_field": "assignment_tier",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "employee_name",
+ "track_changes": 1
+}

@@ -124,7 +124,18 @@
   "portal_pin_prompt_disclaimer",
   "portal_phone_key_disclaimer",
   "sb_inventory_dimensions",
-  "require_bin_on_receive"
+  "require_bin_on_receive",
+  "sb_technician_assignment",
+  "assignment_policy_mode",
+  "fairness_window_days",
+  "tier_spillover_threshold_pct",
+  "enable_morning_auto_rebalance",
+  "auto_rebalance_skew_threshold_pct",
+  "cb_technician_assignment",
+  "fairness_weight",
+  "skill_conservation_weight",
+  "skill_preference_weight",
+  "schedule_packing_weight"
  ],
  "fields": [
   {
@@ -832,11 +843,84 @@
    "fieldname": "require_bin_on_receive",
    "fieldtype": "Check",
    "label": "Require Bin Location on Stock Receive"
+  },
+  {
+   "fieldname": "sb_technician_assignment",
+   "fieldtype": "Section Break",
+   "label": "Technician Assignment & Fairness Policy"
+  },
+  {
+   "default": "Tiered Waterfall",
+   "description": "Shop-wide fairness policy mode for automatic technician assignment.",
+   "fieldname": "assignment_policy_mode",
+   "fieldtype": "Select",
+   "label": "Assignment Policy Mode",
+   "options": "Tiered Waterfall\nEqual Balance\nWeighted Share"
+  },
+  {
+   "default": "7",
+   "description": "Rolling lookback window in days (1-30) for normalized FRT fairness ledger.",
+   "fieldname": "fairness_window_days",
+   "fieldtype": "Int",
+   "label": "Fairness Window (Days)"
+  },
+  {
+   "default": "85.0",
+   "description": "Daily utilization ceiling (%) at which Tier 1 Workhorse spills into Tier 2 Buffer in Tiered Waterfall mode.",
+   "fieldname": "tier_spillover_threshold_pct",
+   "fieldtype": "Percent",
+   "label": "Tier Spillover Threshold (%)"
+  },
+  {
+   "default": "0",
+   "description": "When enabled, the daily morning scheduler automatically rebalances unlocked future entries if skew exceeds threshold.",
+   "fieldname": "enable_morning_auto_rebalance",
+   "fieldtype": "Check",
+   "label": "Enable Morning Auto-Rebalance"
+  },
+  {
+   "default": "25.0",
+   "description": "Intra-tier load spread (%) above which event-driven or morning auto-rebalance triggers.",
+   "fieldname": "auto_rebalance_skew_threshold_pct",
+   "fieldtype": "Percent",
+   "label": "Auto-Rebalance Skew Threshold (%)"
+  },
+  {
+   "fieldname": "cb_technician_assignment",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0.55",
+   "fieldname": "fairness_weight",
+   "fieldtype": "Float",
+   "label": "Fairness Weight",
+   "precision": "2"
+  },
+  {
+   "default": "0.25",
+   "fieldname": "skill_conservation_weight",
+   "fieldtype": "Float",
+   "label": "Skill Conservation Weight",
+   "precision": "2"
+  },
+  {
+   "default": "0.12",
+   "fieldname": "skill_preference_weight",
+   "fieldtype": "Float",
+   "label": "Skill Preference Weight",
+   "precision": "2"
+  },
+  {
+   "default": "0.08",
+   "fieldname": "schedule_packing_weight",
+   "fieldtype": "Float",
+   "label": "Schedule Packing Weight",
+   "precision": "2"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-24 05:00:00.000000",
+ "modified": "2026-11-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "ISM",
  "name": "ISM Settings",

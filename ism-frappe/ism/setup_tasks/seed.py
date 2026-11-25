@@ -34,30 +34,73 @@ DEFAULT_EQUIPMENT_TAGS = [
 	{"tag_name": "Alignment Rack", "description": "3D optical wheel alignment rack and sensor system"},
 ]
 
+DEFAULT_TECHNICIAN_SKILLS = [
+	{
+		"skill_name": "Tires & Maintenance",
+		"scarcity_weight": 1.0,
+		"description": "Tires, wheel balance, cabin filters, wipers, and routine maintenance",
+	},
+	{
+		"skill_name": "Brakes & Suspension",
+		"scarcity_weight": 1.0,
+		"description": "Brake pads, rotors, hydraulic flushes, control arms, and suspension links",
+	},
+	{
+		"skill_name": "Alignment",
+		"scarcity_weight": 1.1,
+		"description": "Four-wheel alignment, camber/thrust adjustments, and ADAS calibration",
+	},
+	{
+		"skill_name": "General Diagnostics",
+		"scarcity_weight": 1.2,
+		"description": "Electrical, chassis, NVH, and general vehicle fault diagnostics",
+	},
+	{
+		"skill_name": "High Voltage & Battery",
+		"scarcity_weight": 1.5,
+		"description": "HV isolation, battery pack service, pyro fuses, and HV safety procedures",
+	},
+	{
+		"skill_name": "Drive Unit & Thermal",
+		"scarcity_weight": 1.4,
+		"description": "EV drive unit service, inverter, heat pump, and thermal coolant systems",
+	},
+]
+
 _SCHEDULE_ENTRY_TYPE_METADATA = {
 	"Diagnostic": {
 		"color": "#1f538d",
 		"requires_repair_order": 0,
+		"default_skill": "General Diagnostics",
+		"default_difficulty_level": 2,
 		"description": "Initial vehicle inspection and diagnostic appointment",
 	},
 	"Repair": {
 		"color": "#2e7d32",
 		"requires_repair_order": 1,
+		"default_skill": "Brakes & Suspension",
+		"default_difficulty_level": 2,
 		"description": "Authorized vehicle repair service",
 	},
 	"Maintenance": {
 		"color": "#0284c7",
 		"requires_repair_order": 1,
+		"default_skill": "Tires & Maintenance",
+		"default_difficulty_level": 1,
 		"description": "Scheduled maintenance and inspection service",
 	},
 	"Meeting": {
 		"color": "#7b1fa2",
 		"requires_repair_order": 0,
+		"default_skill": None,
+		"default_difficulty_level": 1,
 		"description": "Internal staff or shop meeting",
 	},
 	"Internal Service": {
 		"color": "#ef6c00",
 		"requires_repair_order": 0,
+		"default_skill": "Tires & Maintenance",
+		"default_difficulty_level": 1,
 		"description": "Internal shop vehicle service or bay maintenance",
 	},
 }
@@ -120,6 +163,14 @@ _ISM_SETTINGS_FALSY_DEFAULTS = (
 	("self_serve_booking_ip_rate_limit_per_hour", 15),
 	("self_serve_booking_phone_rate_limit_per_day", 3),
 	("max_concurrent_bookings_per_phone", 2),
+	("assignment_policy_mode", "Tiered Waterfall"),
+	("fairness_window_days", 7),
+	("tier_spillover_threshold_pct", 85.0),
+	("fairness_weight", 0.55),
+	("skill_conservation_weight", 0.25),
+	("skill_preference_weight", 0.12),
+	("schedule_packing_weight", 0.08),
+	("auto_rebalance_skew_threshold_pct", 25.0),
 )
 
 _ISM_SETTINGS_NONE_DEFAULTS = (
@@ -138,6 +189,7 @@ _ISM_SETTINGS_NONE_DEFAULTS = (
 	("customer_journey_demo_mode", 0),
 	("self_serve_require_email", 0),
 	("self_serve_honeypot_enabled", 1),
+	("enable_morning_auto_rebalance", 0),
 )
 
 
@@ -355,6 +407,23 @@ def seed_equipment_tags():
 			doc.insert(ignore_permissions=True)
 
 
+def seed_technician_skills():
+	"""Idempotently seed the 6 canonical Technician Skill categories."""
+	if not frappe.db.exists("DocType", "Technician Skill"):
+		return
+	existing = set(frappe.get_all("Technician Skill", pluck="name"))
+	for skill in DEFAULT_TECHNICIAN_SKILLS:
+		if skill["skill_name"] not in existing:
+			doc = frappe.get_doc({
+				"doctype": "Technician Skill",
+				"skill_name": skill["skill_name"],
+				"is_active": 1,
+				"scarcity_weight": skill["scarcity_weight"],
+				"description": skill["description"],
+			})
+			doc.insert(ignore_permissions=True)
+
+
 _ISM_STANDARD_ROLES = (
 	"ISM Manager",
 	"ISM Service Advisor",
@@ -473,39 +542,73 @@ def seed_schedule_entry_types():
 	if not frappe.db.exists("DocType", "Schedule Entry Type"):
 		return
 
+	has_skill_cols = frappe.db.has_column("Schedule Entry Type", "default_skill") and frappe.db.has_column(
+		"Schedule Entry Type", "default_difficulty_level"
+	)
+	existing_skills = (
+		set(frappe.get_all("Technician Skill", pluck="name"))
+		if has_skill_cols and frappe.db.exists("DocType", "Technician Skill")
+		else set()
+	)
+
+	query_fields = ["name", "requires_repair_order", "color", "description"]
+	if has_skill_cols:
+		query_fields.extend(["default_skill", "default_difficulty_level"])
+
 	existing_rows = {
 		row.name: row
 		for row in frappe.get_all(
 			"Schedule Entry Type",
-			fields=["name", "requires_repair_order", "color", "description"],
+			fields=query_fields,
 		)
 	}
 
 	for type_name in sorted(STANDARD_SCHEDULE_ENTRY_TYPES):
 		spec = _SCHEDULE_ENTRY_TYPE_METADATA.get(
 			type_name,
-			{"color": "#4b5563", "requires_repair_order": 0, "description": type_name},
+			{
+				"color": "#4b5563",
+				"requires_repair_order": 0,
+				"default_skill": None,
+				"default_difficulty_level": 1,
+				"description": type_name,
+			},
 		)
+		target_skill = spec.get("default_skill")
+		if target_skill and target_skill not in existing_skills:
+			target_skill = None
+		target_diff = int(spec.get("default_difficulty_level") or 1)
+
 		row = existing_rows.get(type_name)
 		if not row:
-			doc = frappe.get_doc({
+			payload = {
 				"doctype": "Schedule Entry Type",
 				"type_name": type_name,
 				"requires_repair_order": spec["requires_repair_order"],
 				"color": spec["color"],
 				"description": spec["description"],
-			})
-			doc.insert(ignore_permissions=True)
+			}
+			if has_skill_cols:
+				payload["default_skill"] = target_skill
+				payload["default_difficulty_level"] = target_diff
+			frappe.get_doc(payload).insert(ignore_permissions=True)
 			continue
 
+		needs_skill_backfill = bool(
+			has_skill_cols and target_skill and not (row.get("default_skill") or "").strip()
+		)
 		needs_update = (
 			int(row.get("requires_repair_order") or 0) != spec["requires_repair_order"]
 			or (row.get("color") or "") != spec["color"]
 			or (row.get("description") or "") != spec["description"]
+			or needs_skill_backfill
 		)
 		if needs_update:
 			existing = frappe.get_doc("Schedule Entry Type", type_name)
 			existing.requires_repair_order = spec["requires_repair_order"]
 			existing.color = spec["color"]
 			existing.description = spec["description"]
+			if needs_skill_backfill:
+				existing.default_skill = target_skill
+				existing.default_difficulty_level = target_diff
 			existing.save(ignore_permissions=True)

@@ -9,6 +9,7 @@ from ism.setup_tasks.fields import (
 	cleanup_legacy_custom_fields,
 	ensure_doctype_creation_enabled,
 	setup_item_custom_fields,
+	setup_leave_custom_fields,
 	setup_procurement_custom_fields,
 )
 from ism.setup_tasks.inventory_dimensions import (
@@ -20,12 +21,14 @@ from ism.setup_tasks.inventory_dimensions import (
 )
 from ism.setup_tasks.seed import (
 	DEFAULT_EQUIPMENT_TAGS,
+	DEFAULT_TECHNICIAN_SKILLS,
 	STANDARD_INSPECTION_ITEMS,
 	STANDARD_SCHEDULE_ENTRY_TYPES,
 	create_standard_inspection_template,
 	ensure_ism_roles,
 	seed_equipment_tags,
 	seed_schedule_entry_types,
+	seed_technician_skills,
 	setup_default_ism_settings,
 	setup_parts_item_group,
 )
@@ -43,6 +46,7 @@ __all__ = [
 	"BIN_REFERENCE_DOCTYPE",
 	"DEFAULT_BIN_FIELDNAME",
 	"DEFAULT_EQUIPMENT_TAGS",
+	"DEFAULT_TECHNICIAN_SKILLS",
 	"LEGACY_FIELDS_TO_REMOVE",
 	"SLE_BIN_INDEX_NAME",
 	"STANDARD_INSPECTION_ITEMS",
@@ -61,10 +65,12 @@ __all__ = [
 	"get_or_create_default_sales_tax_template",
 	"seed_equipment_tags",
 	"seed_schedule_entry_types",
+	"seed_technician_skills",
 	"setup_default_ism_settings",
 	"setup_default_taxes_and_payments",
 	"setup_inventory_dimensions",
 	"setup_item_custom_fields",
+	"setup_leave_custom_fields",
 	"setup_parts_item_group",
 	"setup_procurement_custom_fields",
 ]

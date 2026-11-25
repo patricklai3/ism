@@ -12,7 +12,7 @@ from typing import Any, Optional
 import frappe
 
 from ism.ism.doctype.repair_vehicle.vin_decoder import compute_vin_check_digit, decode_tesla_vin
-from ism.setup_tasks import seed_schedule_entry_types
+from ism.setup_tasks import seed_schedule_entry_types, seed_technician_skills
 from ism.setup_tasks.taxes import _ensure_company_tax_template, _ensure_default_tax_rule, _get_generic_tax_rules
 from ism.testing.manifest import SimManifest
 
@@ -166,6 +166,57 @@ _EMPLOYEES: tuple[dict[str, Any], ...] = (
 		"relieving_date": "2024-11-30",
 	},
 )
+
+_TECHNICIAN_PROFILE_SPECS: dict[str, dict[str, Any]] = {
+	"marcus": {
+		"assignment_tier": 1,
+		"target_load_weight": 1.0,
+		"skills": (
+			("Tires & Maintenance", 3, "Preferred"),
+			("Brakes & Suspension", 3, "Preferred"),
+			("Alignment", 2, "Standard"),
+			("General Diagnostics", 2, "Standard"),
+			("High Voltage & Battery", 0, "Standard"),
+			("Drive Unit & Thermal", 1, "Backup"),
+		),
+	},
+	"elena": {
+		"assignment_tier": 1,
+		"target_load_weight": 1.0,
+		"skills": (
+			("Tires & Maintenance", 2, "Standard"),
+			("Brakes & Suspension", 3, "Preferred"),
+			("Alignment", 3, "Preferred"),
+			("General Diagnostics", 2, "Preferred"),
+			("High Voltage & Battery", 2, "Standard"),
+			("Drive Unit & Thermal", 2, "Standard"),
+		),
+	},
+	"devon": {
+		"assignment_tier": 1,
+		"target_load_weight": 1.0,
+		"skills": (
+			("Tires & Maintenance", 2, "Preferred"),
+			("Brakes & Suspension", 2, "Standard"),
+			("Alignment", 1, "Standard"),
+			("General Diagnostics", 1, "Backup"),
+			("High Voltage & Battery", 0, "Standard"),
+			("Drive Unit & Thermal", 0, "Standard"),
+		),
+	},
+	"noah": {
+		"assignment_tier": 2,
+		"target_load_weight": 0.5,
+		"skills": (
+			("Tires & Maintenance", 3, "Backup"),
+			("Brakes & Suspension", 3, "Backup"),
+			("Alignment", 3, "Standard"),
+			("General Diagnostics", 3, "Preferred"),
+			("High Voltage & Battery", 3, "Preferred"),
+			("Drive Unit & Thermal", 3, "Preferred"),
+		),
+	},
+}
 
 _EQUIPMENT_TAGS: tuple[tuple[str, str, str], ...] = (
 	("lift", "Lift", "Standard automotive 2-post / 4-post vehicle lift"),
@@ -577,6 +628,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"hourly_rate": 140.0,
 		"is_flat_rate": 0,
 		"equipment_tags": ("Lift",),
+		"required_skills": (("Brakes & Suspension", 2),),
 		"is_symmetrical": 1,
 		"items": (
 			{"slot_number": 1, "item_handle": "fore_link_lh_oem", "qty": 1.0, "side": "LH", "is_default": 1},
@@ -596,6 +648,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"hourly_rate": 140.0,
 		"is_flat_rate": 0,
 		"equipment_tags": ("Lift",),
+		"required_skills": (("Brakes & Suspension", 2),),
 		"is_symmetrical": 0,
 		"items": (
 			{"slot_number": 1, "item_handle": "front_pad_set_oem", "qty": 1.0, "side": "Both", "is_default": 1},
@@ -615,6 +668,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"service_rate": 169.00,
 		"is_flat_rate": 1,
 		"equipment_tags": ("Lift", "Alignment Rack"),
+		"required_skills": (("Alignment", 2),),
 		"is_symmetrical": 0,
 		"items": (),
 	},
@@ -627,6 +681,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"hourly_rate": 140.0,
 		"is_flat_rate": 0,
 		"equipment_tags": (),
+		"required_skills": (("Tires & Maintenance", 1),),
 		"is_symmetrical": 0,
 		"items": (
 			{"slot_number": 1, "item_handle": "cabin_hepa_filter_oem", "qty": 1.0, "side": "Both", "is_default": 1},
@@ -643,6 +698,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"service_rate": 65.00,
 		"is_flat_rate": 1,
 		"equipment_tags": (),
+		"required_skills": (("Tires & Maintenance", 1),),
 		"is_symmetrical": 0,
 		"items": (
 			{"slot_number": 1, "item_handle": "wiper_blade_set_oem", "qty": 1.0, "side": "Both", "is_default": 1},
@@ -658,6 +714,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"service_rate": 89.00,
 		"is_flat_rate": 1,
 		"equipment_tags": ("Lift", "Tire Mount & Road Force Balancer"),
+		"required_skills": (("Tires & Maintenance", 1),),
 		"is_symmetrical": 0,
 		"items": (),
 	},
@@ -670,6 +727,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"hourly_rate": 140.0,
 		"is_flat_rate": 0,
 		"equipment_tags": ("Lift",),
+		"required_skills": (("Brakes & Suspension", 1),),
 		"is_symmetrical": 0,
 		"items": (
 			{"slot_number": 1, "item_handle": "dot4_brake_fluid", "qty": 2.0, "side": "Both", "is_default": 1},
@@ -684,6 +742,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"hourly_rate": 140.0,
 		"is_flat_rate": 0,
 		"equipment_tags": ("EV High Voltage",),
+		"required_skills": (("High Voltage & Battery", 2), ("General Diagnostics", 2)),
 		"is_symmetrical": 0,
 		"items": (),
 	},
@@ -696,6 +755,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"hourly_rate": 140.0,
 		"is_flat_rate": 0,
 		"equipment_tags": ("Lift", "EV High Voltage", "HV Battery Station"),
+		"required_skills": (("High Voltage & Battery", 3),),
 		"is_symmetrical": 0,
 		"items": (
 			{"slot_number": 1, "item_handle": "hv_pyro_fuse_oem", "qty": 1.0, "side": "Both", "is_default": 1},
@@ -712,6 +772,7 @@ _PACKAGE_SPECS: tuple[dict[str, Any], ...] = (
 		"hourly_rate": 140.0,
 		"is_flat_rate": 0,
 		"equipment_tags": ("Lift",),
+		"required_skills": (("Brakes & Suspension", 3),),
 		"is_symmetrical": 1,
 		"items": (
 			{"slot_number": 1, "item_handle": "rear_subframe_arm_lh", "qty": 1.0, "side": "LH", "is_default": 1},
@@ -1407,6 +1468,15 @@ def seed_accounting_and_settings(manifest: SimManifest) -> SimManifest:
 		"cost_tolerance_flat_amount": 20.0,
 		"authorization_token_expiry_hours": 48,
 		"sms_gateway_provider": "Disabled",
+		"assignment_policy_mode": "Tiered Waterfall",
+		"fairness_window_days": 7,
+		"tier_spillover_threshold_pct": 85.0,
+		"fairness_weight": 0.55,
+		"skill_conservation_weight": 0.25,
+		"skill_preference_weight": 0.12,
+		"schedule_packing_weight": 0.08,
+		"enable_morning_auto_rebalance": 0,
+		"auto_rebalance_skew_threshold_pct": 25.0,
 	}
 	for fieldname, val in canonical_settings.items():
 		settings.set(fieldname, val)
@@ -1574,7 +1644,36 @@ def seed_workforce_and_leave(manifest: SimManifest) -> SimManifest:
 						alloc.insert(ignore_permissions=True)
 						alloc.submit()
 
+	_ensure_canonical_technician_profiles(manifest)
 	return manifest
+
+
+def _ensure_canonical_technician_profiles(manifest: SimManifest) -> None:
+	"""Idempotently seed canonical Technician Skills and Layer 1 Technician Profile records."""
+	if not frappe.db.exists("DocType", "Technician Skill") or not frappe.db.exists("DocType", "Technician Profile"):
+		return
+	seed_technician_skills()
+	for handle, spec in _TECHNICIAN_PROFILE_SPECS.items():
+		emp_id = manifest.techs.get(handle)
+		if not emp_id or frappe.db.exists("Technician Profile", emp_id):
+			continue
+		profile = frappe.get_doc({
+			"doctype": "Technician Profile",
+			"employee": emp_id,
+			"is_active": 1,
+			"assignment_tier": spec["assignment_tier"],
+			"target_load_weight": spec["target_load_weight"],
+			"skills": [
+				{
+					"skill": skill_name,
+					"max_difficulty": max_diff,
+					"skill_role": role,
+				}
+				for skill_name, max_diff, role in spec["skills"]
+				if frappe.db.exists("Technician Skill", skill_name)
+			],
+		})
+		profile.insert(ignore_permissions=True)
 
 
 def seed_shop_floor(manifest: SimManifest) -> SimManifest:
@@ -1596,6 +1695,7 @@ def seed_shop_floor(manifest: SimManifest) -> SimManifest:
 			}).insert(ignore_permissions=True)
 		manifest.register("bays", spec["handle"], bay.name)
 
+	seed_technician_skills()
 	seed_schedule_entry_types()
 	for se_type in frappe.get_all("Schedule Entry Type", pluck="name"):
 		manifest.register("schedule_entry_types", se_type.lower().replace(" ", "_"), se_type)
@@ -1770,8 +1870,24 @@ def _ensure_canonical_package_tags(pkg_name: str, tags: tuple[str, ...]) -> None
 		pkg.save(ignore_permissions=True)
 
 
+def _ensure_canonical_package_skills(pkg_name: str, skills: tuple[tuple[str, int], ...]) -> None:
+	"""Backfill missing Required Skills on canonical Service Packages (e.g. warm DB upgrades)."""
+	if not skills or not frappe.db.exists("DocType", "Service Package Skill"):
+		return
+	if frappe.db.exists("Service Package Skill", {"parent": pkg_name, "parenttype": "Service Package"}):
+		return
+	seed_technician_skills()
+	pkg = frappe.get_doc("Service Package", pkg_name)
+	for skill_name, diff_level in skills:
+		if frappe.db.exists("Technician Skill", skill_name):
+			pkg.append("required_skills", {"skill": skill_name, "difficulty_level": diff_level})
+	if pkg.required_skills:
+		pkg.save(ignore_permissions=True)
+
+
 def seed_service_packages_and_inspections(manifest: SimManifest) -> SimManifest:
 	"""Phase 1.5: Seed nested Service Packages and Inspection Templates."""
+	seed_technician_skills()
 	item_rates = {
 		row.name: float(row.standard_rate or 0.0)
 		for row in frappe.get_all(
@@ -1784,8 +1900,10 @@ def seed_service_packages_and_inspections(manifest: SimManifest) -> SimManifest:
 	for spec in _PACKAGE_SPECS:
 		pkg_name = spec["package_name"]
 		spec_tags = tuple(spec.get("equipment_tags") or ())
+		spec_skills = tuple(spec.get("required_skills") or ())
 		if frappe.db.exists("Service Package", pkg_name):
 			_ensure_canonical_package_tags(pkg_name, spec_tags)
+			_ensure_canonical_package_skills(pkg_name, spec_skills)
 			pkg = frappe.get_doc("Service Package", pkg_name)
 		else:
 			child_items = []
@@ -1811,6 +1929,11 @@ def seed_service_packages_and_inspections(manifest: SimManifest) -> SimManifest:
 				"service_rate": spec.get("service_rate", 0.0),
 				"is_flat_rate": spec["is_flat_rate"],
 				"equipment_tags": [{"equipment_tag": tag} for tag in spec_tags],
+				"required_skills": [
+					{"skill": skill_name, "difficulty_level": diff_level}
+					for skill_name, diff_level in spec_skills
+					if frappe.db.exists("Technician Skill", skill_name)
+				],
 				"is_symmetrical": spec["is_symmetrical"],
 				"items": child_items,
 			})
@@ -2032,6 +2155,7 @@ def get_master_manifest(
 	for spec in _EMPLOYEES:
 		if spec["employee_name"] in emp_map:
 			manifest.techs[spec["handle"]] = emp_map[spec["employee_name"]]
+	_ensure_canonical_technician_profiles(manifest)
 
 	for lt_handle, lt_name in (("privilege", "Privilege Leave"), ("sick", "Sick Leave"), ("casual", "Casual Leave")):
 		if frappe.db.exists("Leave Type", lt_name):
@@ -2064,6 +2188,7 @@ def get_master_manifest(
 	for spec in _PACKAGE_SPECS:
 		if frappe.db.exists("Service Package", spec["package_name"]):
 			_ensure_canonical_package_tags(spec["package_name"], tuple(spec.get("equipment_tags") or ()))
+			_ensure_canonical_package_skills(spec["package_name"], tuple(spec.get("required_skills") or ()))
 			manifest.packages[spec["handle"]] = spec["package_name"]
 
 	if frappe.db.exists("Inspection Template", "Standard Vehicle Walkaround"):

@@ -8,6 +8,7 @@ from ism.setup_tasks import (
 	BIN_REFERENCE_DOCTYPE,
 	DEFAULT_BIN_FIELDNAME,
 	DEFAULT_EQUIPMENT_TAGS,
+	DEFAULT_TECHNICIAN_SKILLS,
 	LEGACY_FIELDS_TO_REMOVE,
 	SLE_BIN_INDEX_NAME,
 	STANDARD_INSPECTION_ITEMS,
@@ -26,10 +27,12 @@ from ism.setup_tasks import (
 	get_or_create_default_sales_tax_template,
 	seed_equipment_tags,
 	seed_schedule_entry_types,
+	seed_technician_skills,
 	setup_default_ism_settings,
 	setup_default_taxes_and_payments,
 	setup_inventory_dimensions,
 	setup_item_custom_fields,
+	setup_leave_custom_fields,
 	setup_parts_item_group,
 	setup_procurement_custom_fields,
 )
@@ -39,6 +42,7 @@ def _run_setup_tasks(full=False):
 	"""Execute idempotent setup steps; full=True forces tax and custom field refresh."""
 	ensure_ism_roles()
 	seed_equipment_tags()
+	seed_technician_skills()
 	seed_schedule_entry_types()
 	setup_default_ism_settings()
 	create_standard_inspection_template()
@@ -48,6 +52,7 @@ def _run_setup_tasks(full=False):
 	setup_item_custom_fields(force_update=full)
 	setup_inventory_dimensions(force_update=full)
 	setup_procurement_custom_fields(force_update=full)
+	setup_leave_custom_fields(force_update=full)
 
 
 def after_migrate():
@@ -65,6 +70,7 @@ __all__ = [
 	"BIN_REFERENCE_DOCTYPE",
 	"DEFAULT_BIN_FIELDNAME",
 	"DEFAULT_EQUIPMENT_TAGS",
+	"DEFAULT_TECHNICIAN_SKILLS",
 	"LEGACY_FIELDS_TO_REMOVE",
 	"SLE_BIN_INDEX_NAME",
 	"STANDARD_INSPECTION_ITEMS",
@@ -86,10 +92,12 @@ __all__ = [
 	"get_or_create_default_sales_tax_template",
 	"seed_equipment_tags",
 	"seed_schedule_entry_types",
+	"seed_technician_skills",
 	"setup_default_ism_settings",
 	"setup_default_taxes_and_payments",
 	"setup_inventory_dimensions",
 	"setup_item_custom_fields",
+	"setup_leave_custom_fields",
 	"setup_parts_item_group",
 	"setup_procurement_custom_fields",
 ]
