@@ -260,7 +260,12 @@ def _extract_package_names_from_json(raw_json: Any) -> list[str]:
 		if isinstance(item, str) and item.strip():
 			names.append(item.strip())
 		elif isinstance(item, Mapping):
-			pkg = item.get("name") or item.get("service_package") or item.get("package_name")
+			pkg = (
+				item.get("package_id")
+				or item.get("name")
+				or item.get("service_package")
+				or item.get("package_name")
+			)
 			if pkg and str(pkg).strip():
 				names.append(str(pkg).strip())
 	return names

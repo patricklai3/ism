@@ -302,7 +302,16 @@ class TestSchedulingCapacity(ISMTestCase):
 		# Occupy all active bays with distinct vehicles
 		for bay_name in self.active_bays:
 			ro = self._create_distinct_ro()
-			self.track(self.create_test_schedule_entry(repair_order=ro.name, scheduled_date=target_date, scheduled_time="08:00:00", estimated_duration=120, service_bay=bay_name))
+			self.track(
+				self.create_test_schedule_entry(
+					repair_order=ro.name,
+					entry_type="Maintenance",
+					scheduled_date=target_date,
+					scheduled_time="08:00:00",
+					estimated_duration=120,
+					service_bay=bay_name,
+				)
+			)
 		with self.assertRaises(frappe.ValidationError):
 			auto_assign_bay(target_date, "08:00:00", 60)
 
@@ -339,7 +348,16 @@ class TestSchedulingCapacity(ISMTestCase):
 		target_date = today()
 		for bay_name in self.active_bays:
 			ro = self._create_distinct_ro()
-			self.track(self.create_test_schedule_entry(repair_order=ro.name, scheduled_date=target_date, scheduled_time="08:00:00", estimated_duration=120, service_bay=bay_name))
+			self.track(
+				self.create_test_schedule_entry(
+					repair_order=ro.name,
+					entry_type="Maintenance",
+					scheduled_date=target_date,
+					scheduled_time="08:00:00",
+					estimated_duration=120,
+					service_bay=bay_name,
+				)
+			)
 		with self.assertRaises(frappe.ValidationError):
 			auto_assign_bay(target_date, "08:30:00", 60)
 
