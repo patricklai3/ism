@@ -23,6 +23,13 @@ from ism.portal.contracts import (
 )
 from ism.scheduling.time_utils import to_timedelta
 from ism.time_calibration.contracts import (
+	DEFAULT_DRIFT_ALERT_PCT,
+	DEFAULT_HALF_LIFE_DAYS,
+	DEFAULT_MAX_RATIO,
+	DEFAULT_MAX_SINGLE_SESSION_HOURS,
+	DEFAULT_MIN_RATIO,
+	DEFAULT_OVERLAP_PRIOR_STRENGTH,
+	DEFAULT_PRIOR_STRENGTH,
 	DRIFT_ALERT_PCT_MAX,
 	DRIFT_ALERT_PCT_MIN,
 	HALF_LIFE_DAYS_MAX,
@@ -48,6 +55,7 @@ _COOKIE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
 class ISMSettings(Document):
 	def before_validate(self):
 		self._normalize_sms_settings()
+		self._normalize_time_calibration_settings()
 
 	def validate(self):
 		self._validate_operating_hours()
@@ -113,9 +121,30 @@ class ISMSettings(Document):
 		if self.default_diagnostic_duration is not None and self.default_diagnostic_duration <= 0:
 			frappe.throw(_("Default Diagnostic Duration must be greater than 0 minutes."))
 
-	def _validate_time_calibration_settings(self):
+	def _normalize_time_calibration_settings(self):
+		# On migrated Single docs, newly added Float/Int/Percent fields load as 0/0.0/None
+		# until persisted. Coerce unset/zero values to contract defaults while preserving
+		# non-zero values for strict bounds validation.
 		if not getattr(self, "time_calibration_mode", None):
 			self.time_calibration_mode = MODE_SHADOW
+
+		defaults = (
+			("calibration_prior_strength", DEFAULT_PRIOR_STRENGTH),
+			("calibration_overlap_prior_strength", DEFAULT_OVERLAP_PRIOR_STRENGTH),
+			("calibration_half_life_days", DEFAULT_HALF_LIFE_DAYS),
+			("calibration_min_ratio", DEFAULT_MIN_RATIO),
+			("calibration_max_ratio", DEFAULT_MAX_RATIO),
+			("calibration_drift_alert_pct", DEFAULT_DRIFT_ALERT_PCT),
+			("calibration_max_single_session_hours", DEFAULT_MAX_SINGLE_SESSION_HOURS),
+		)
+		for fieldname, default_val in defaults:
+			raw = getattr(self, fieldname, None)
+			if raw is None or raw == "" or flt(raw) == 0.0:
+				setattr(self, fieldname, default_val)
+
+	def _validate_time_calibration_settings(self):
+		self._normalize_time_calibration_settings()
+
 		if self.time_calibration_mode not in TIME_CALIBRATION_MODES:
 			frappe.throw(
 				_("Invalid Time Calibration Mode: {0}.").format(self.time_calibration_mode),
@@ -166,6 +195,9 @@ class ISMSettings(Document):
 						MAX_RATIO_LOWER, MAX_RATIO_UPPER
 					)
 				)
+
+		if flt(self.calibration_min_ratio) >= flt(self.calibration_max_ratio):
+			frappe.throw(_("Calibration Min Ratio must be less than Calibration Max Ratio."))
 
 		if getattr(self, "calibration_drift_alert_pct", None) is not None:
 			val = flt(self.calibration_drift_alert_pct)
