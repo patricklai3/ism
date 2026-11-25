@@ -276,6 +276,216 @@ def handler():
 		self.assertEqual(check["missing_paths"], [])
 		self.assertGreater(check["total_mapped_files"], 250)
 
+	def _add_extra_frappe_zones(self) -> None:
+		"""Expand synthetic zones fixture to 4 Frappe zones + 1 Agent OS zone to test 5-slot saturation."""
+		(self.root / "zone_c").mkdir(exist_ok=True)
+		(self.root / "zone_d").mkdir(exist_ok=True)
+		zones_data = health_cli.load_json(self.state / "zones.json")
+		zones_data["zones"].extend(
+			[
+				{
+					"id": "frappe-c",
+					"repo_area": "ism-frappe",
+					"description": "Zone C",
+					"criticality": "high",
+					"requires_bench_slot": True,
+					"cooldown_days": 7,
+					"paths": ["zone_c"],
+					"verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_c,ism.tests.test_shared",
+					"last_audited_at": None,
+					"last_audited_run": None,
+					"last_audited_commit": None,
+					"audit_count": 0,
+				},
+				{
+					"id": "frappe-d",
+					"repo_area": "ism-frappe",
+					"description": "Zone D",
+					"criticality": "medium",
+					"requires_bench_slot": True,
+					"cooldown_days": 10,
+					"paths": ["zone_d"],
+					"verification_cmd": "powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 -Slot {slot} -Module ism.tests.test_d,ism.tests.test_shared",
+					"last_audited_at": None,
+					"last_audited_run": None,
+					"last_audited_commit": None,
+					"audit_count": 0,
+				},
+			]
+		)
+		health_cli.save_json(self.state / "zones.json", zones_data)
+
+	def test_extended_and_overnight_multi_wave_slot_saturation_and_deep_tracks(self) -> None:
+		self._add_extra_frappe_zones()
+		items = [
+			# Critical unsafe item for Architect RFC track
+			{
+				"title": "Critical auth architecture decision",
+				"category": "security",
+				"severity": "critical",
+				"zone": "frappe-a",
+				"files": ["zone_a/auth.py"],
+				"safe_for_auto_fix": False,
+				"estimated_effort": "large",
+			},
+			# Semantic auto-fixable items across 4 Frappe zones + 1 Agent OS zone
+			{
+				"title": "High semantic bug A",
+				"category": "correctness",
+				"severity": "high",
+				"zone": "frappe-a",
+				"files": ["zone_a/a.py"],
+				"safe_for_auto_fix": True,
+				"estimated_effort": "small",
+			},
+			{
+				"title": "High semantic bug B",
+				"category": "security",
+				"severity": "high",
+				"zone": "frappe-b",
+				"files": ["zone_b/b.py"],
+				"safe_for_auto_fix": True,
+				"estimated_effort": "medium",
+			},
+			{
+				"title": "High semantic bug C",
+				"category": "correctness",
+				"severity": "high",
+				"zone": "frappe-c",
+				"files": ["zone_c/c.py"],
+				"safe_for_auto_fix": True,
+				"estimated_effort": "small",
+			},
+			{
+				"title": "Medium semantic bug D",
+				"category": "correctness",
+				"severity": "medium",
+				"zone": "frappe-d",
+				"files": ["zone_d/d.py"],
+				"safe_for_auto_fix": True,
+				"estimated_effort": "small",
+			},
+			{
+				"title": "Agent OS CLI fix",
+				"category": "correctness",
+				"severity": "medium",
+				"zone": "agent-os-a",
+				"files": ["zone_os/cli.py"],
+				"safe_for_auto_fix": True,
+				"estimated_effort": "small",
+			},
+			# Static-scanner items in frappe-d for Wave 2 sweeper
+			{
+				"title": "Static unbounded get_all 1",
+				"rule": "unbounded-get-all",
+				"category": "performance",
+				"severity": "medium",
+				"zone": "frappe-d",
+				"files": ["zone_d/q1.py"],
+				"source": "static-scanner",
+				"safe_for_auto_fix": True,
+				"estimated_effort": "small",
+			},
+			{
+				"title": "Static unbounded get_all 2",
+				"rule": "unbounded-get-all",
+				"category": "performance",
+				"severity": "medium",
+				"zone": "frappe-d",
+				"files": ["zone_d/q2.py"],
+				"source": "static-scanner",
+				"safe_for_auto_fix": True,
+				"estimated_effort": "small",
+			},
+			# File-size critical monolith in frappe-d for Wave 3 refactor
+			{
+				"title": "Oversized file in zone D",
+				"rule": "file-size-critical",
+				"category": "file-size",
+				"severity": "high",
+				"zone": "frappe-d",
+				"files": ["zone_d/monolith.py"],
+				"safe_for_auto_fix": False,
+				"estimated_effort": "large",
+			},
+		]
+		payload_file = self.root / "multi.json"
+		payload_file.write_text(json.dumps(items), encoding="utf-8")
+		rc, _ = self._run_cli("add-issue", "--from-json", str(payload_file), "--run", "run-001")
+		self.assertEqual(rc, 0)
+
+		# Wave 1 of overnight: 3 Frappe slots (1..3) + 1 agent-os (None), 2 verifiers (4, 5), 2 auditors, 1 RFC track
+		rc, out_w1 = self._run_cli("next-batch", "--preset", "overnight", "--wave", "1", "--json")
+		self.assertEqual(rc, 0)
+		w1 = json.loads(out_w1)
+		self.assertEqual(w1["total_waves"], 4)
+		self.assertTrue(w1["final_integration_gate"])
+		self.assertEqual(len(w1["auditor_assignments"]), 2)
+		self.assertEqual(len(w1["fix_tracks"]), 4)
+		frappe_slots = sorted(t["bench_slot"] for t in w1["fix_tracks"] if t["bench_slot"] is not None)
+		self.assertEqual(frappe_slots, [1, 2, 3])
+		self.assertEqual(w1["verifier_bench_slots"], [4, 5])
+		self.assertEqual(len(w1["verifiers"]), 2)
+		self.assertEqual(len(w1["deep_tracks"]), 1)
+		self.assertEqual(w1["deep_tracks"][0]["kind"], "rfc")
+		rfc_id = w1["deep_tracks"][0]["items"][0]["id"]
+
+		# Once RFC file exists in code-health/rfcs/, architect track skips it
+		rfcs_dir = self.state / "rfcs"
+		rfcs_dir.mkdir(exist_ok=True)
+		(rfcs_dir / f"{rfc_id}.md").write_text("# RFC\n", encoding="utf-8")
+		rc, out_ext = self._run_cli("next-batch", "--preset", "extended", "--wave", "1", "--json")
+		self.assertEqual(rc, 0)
+		ext = json.loads(out_ext)
+		self.assertEqual(ext["total_waves"], 2)
+		self.assertEqual(ext["deep_tracks"], [])
+
+		# Wave 2 of overnight schedules static-sweeper track within 3-Frappe-slot cap
+		rc, out_w2 = self._run_cli("next-batch", "--preset", "overnight", "--wave", "2", "--json")
+		self.assertEqual(rc, 0)
+		w2 = json.loads(out_w2)
+		kinds_w2 = {t["track_kind"] for t in w2["fix_tracks"]}
+		self.assertIn("static-sweeper", kinds_w2)
+		self.assertEqual(sorted(t["bench_slot"] for t in w2["fix_tracks"] if t["bench_slot"] is not None), [1, 2, 3])
+
+		# Wave 3 of overnight schedules POLICY.md §4 file-size refactor with 800-LOC cap
+		rc, out_w3 = self._run_cli("next-batch", "--preset", "overnight", "--wave", "3", "--json")
+		self.assertEqual(rc, 0)
+		w3 = json.loads(out_w3)
+		ref_tracks = [t for t in w3["fix_tracks"] if t["track_kind"] == "refactor"]
+		self.assertEqual(len(ref_tracks), 1)
+		self.assertEqual(ref_tracks[0]["zone"], "frappe-d")
+		self.assertEqual(ref_tracks[0]["max_loc"], 800)
+		self.assertEqual(len({t["zone"] for t in w3["fix_tracks"]}), len(w3["fix_tracks"]))
+
+		# --exclude-zones drops excluded zones from both audit and fix tracks
+		rc, out_ex = self._run_cli(
+			"next-batch", "--preset", "extended", "--wave", "1", "--exclude-zones", "frappe-a,frappe-b", "--json"
+		)
+		self.assertEqual(rc, 0)
+		ex = json.loads(out_ex)
+		for z in [t["zone"] for t in ex["fix_tracks"]] + [a["zone"] for a in ex["audit_tracks"]]:
+			self.assertNotIn(z, {"frappe-a", "frappe-b"})
+
+	def test_integration_gate_deduplicates_modules_and_adds_cross_track_seams(self) -> None:
+		self._add_extra_frappe_zones()
+		rc, out = self._run_cli(
+			"integration-gate", "--zones", "frappe-c,frappe-d,agent-os-a", "--slot", "4", "--json"
+		)
+		self.assertEqual(rc, 0)
+		gate = json.loads(out)
+		self.assertEqual(gate["bench_slot"], 4)
+		self.assertEqual(
+			gate["frappe_modules"],
+			["ism.tests.test_c", "ism.tests.test_shared", "ism.tests.test_d", "ism.tests.test_cross_track_seams"],
+		)
+		self.assertIn("-Slot 4", gate["frappe_cmd"])
+		self.assertIn("ism.tests.test_cross_track_seams", gate["frappe_cmd"])
+		self.assertIsNotNone(gate["agent_os_cmd"])
+
+		rc_bad, _ = self._run_cli("integration-gate", "--zones", "nonexistent-zone", "--json")
+		self.assertEqual(rc_bad, 1)
+
 
 if __name__ == "__main__":
 	unittest.main()

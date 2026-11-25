@@ -51,24 +51,88 @@ SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 EFFORT_RANK = {"small": 3, "medium": 2, "large": 1}
 CRITICALITY_WEIGHT = {"critical": 40, "high": 25, "medium": 15, "low": 5}
 
-PRESETS: dict[str, dict[str, int]] = {
+PRESETS: dict[str, dict[str, Any]] = {
 	"eco": {
+		"waves": 1,
+		"auditors_per_wave": 1,
 		"audit_zones": 1,
 		"fix_tracks": 1,
+		"max_frappe_fix_tracks": 1,
 		"max_loc_per_fixer": 250,
 		"max_items_per_fixer": 2,
+		"verifiers": 1,
+		"verifier_slots": [3],
+		"deep_tracks": [],
+		"final_integration_gate": False,
+		"max_session_commits": 2,
+		"max_session_loc": 300,
+		"max_consecutive_failures": 2,
 	},
 	"standard": {
+		"waves": 1,
+		"auditors_per_wave": 1,
 		"audit_zones": 2,
 		"fix_tracks": 2,
+		"max_frappe_fix_tracks": 2,
 		"max_loc_per_fixer": 400,
 		"max_items_per_fixer": 2,
+		"verifiers": 1,
+		"verifier_slots": [3],
+		"deep_tracks": [],
+		"final_integration_gate": False,
+		"max_session_commits": 4,
+		"max_session_loc": 800,
+		"max_consecutive_failures": 2,
 	},
 	"audit-only": {
+		"waves": 1,
+		"auditors_per_wave": 2,
 		"audit_zones": 3,
 		"fix_tracks": 0,
+		"max_frappe_fix_tracks": 0,
 		"max_loc_per_fixer": 0,
 		"max_items_per_fixer": 0,
+		"verifiers": 1,
+		"verifier_slots": [],
+		"deep_tracks": [],
+		"final_integration_gate": False,
+		"max_session_commits": 0,
+		"max_session_loc": 0,
+		"max_consecutive_failures": 1,
+	},
+	"extended": {
+		"waves": 2,
+		"auditors_per_wave": 2,
+		"audit_zones": 2,
+		"fix_tracks": 4,
+		"max_frappe_fix_tracks": 3,
+		"max_loc_per_fixer": 400,
+		"max_items_per_fixer": 2,
+		"verifiers": 2,
+		"verifier_slots": [4, 5],
+		"deep_tracks": ["rfc-or-test"],
+		"final_integration_gate": True,
+		"max_session_commits": 8,
+		"max_session_loc": 2000,
+		"max_consecutive_failures": 2,
+	},
+	"overnight": {
+		"waves": 4,
+		"auditors_per_wave": 2,
+		"audit_zones": 2,
+		"fix_tracks": 4,
+		"max_frappe_fix_tracks": 3,
+		"max_loc_per_fixer": 450,
+		"max_items_per_fixer": 3,
+		"refactor_max_loc": 800,
+		"sweeper_max_items": 6,
+		"verifiers": 2,
+		"verifier_slots": [4, 5],
+		"deep_tracks": ["refactor", "static-or-test-sweeper", "rfc"],
+		"final_integration_gate": True,
+		"max_session_commits": 14,
+		"max_session_loc": 3000,
+		"max_consecutive_failures": 2,
 	},
 }
 
@@ -812,6 +876,236 @@ def score_audit_zones(
 	return scored
 
 
+def _existing_rfc_ids(state_dir: Path | None) -> set[str]:
+	if state_dir is None:
+		return set()
+	rfcs_dir = state_dir / "rfcs"
+	if not rfcs_dir.exists():
+		return set()
+	ids: set[str] = set()
+	for p in rfcs_dir.iterdir():
+		if p.is_file() and p.suffix == ".md" and not p.name.startswith("_"):
+			ids.add(p.stem.upper())
+	return ids
+
+
+def _item_priority_key(it: dict[str, Any]) -> tuple[int, int, int, str]:
+	source_rank = 0 if it.get("source") != "static-scanner" else 1
+	return (
+		-SEVERITY_RANK.get(it.get("severity", "low"), 1),
+		source_rank,
+		-EFFORT_RANK.get(it.get("estimated_effort", "medium"), 2),
+		it.get("id", ""),
+	)
+
+
+def _format_plan_item(it: dict[str, Any]) -> dict[str, Any]:
+	return {
+		"id": it["id"],
+		"title": it["title"],
+		"category": it["category"],
+		"severity": it["severity"],
+		"source": it.get("source", "llm-audit"),
+		"files": it.get("files", []),
+		"line_hint": it.get("line_hint"),
+		"proposed_fix": it.get("proposed_fix", ""),
+	}
+
+
+def _select_rfc_track(
+	backlog_data: dict[str, Any],
+	zones_by_id: dict[str, dict[str, Any]],
+	existing_rfcs: set[str],
+	max_items: int = 2,
+) -> dict[str, Any] | None:
+	candidates = [
+		it
+		for it in backlog_data.get("items", [])
+		if it.get("status") == "open"
+		and it.get("safe_for_auto_fix") is False
+		and it.get("severity") in {"critical", "high"}
+		and it.get("category") != "file-size"
+		and it.get("zone") in zones_by_id
+		and str(it.get("id", "")).upper() not in existing_rfcs
+	]
+	if not candidates:
+		return None
+	candidates.sort(key=_item_priority_key)
+	picked = candidates[:max_items]
+	return {
+		"worker": "architect",
+		"kind": "rfc",
+		"workspace": "inherit",
+		"read_only_app_code": True,
+		"bench_slot": None,
+		"recommended_model": "gemini-4-neon-high",
+		"output_dir": "code-health/rfcs",
+		"items": [_format_plan_item(it) for it in picked],
+	}
+
+
+def _select_refactor_candidate(
+	backlog_data: dict[str, Any],
+	zones_by_id: dict[str, dict[str, Any]],
+	excluded_zones: set[str],
+) -> tuple[str, list[dict[str, Any]]] | None:
+	candidates = [
+		it
+		for it in backlog_data.get("items", [])
+		if it.get("status") == "open"
+		and it.get("category") == "file-size"
+		and it.get("zone") in zones_by_id
+		and it.get("zone") not in excluded_zones
+		and any(str(f).endswith(".py") for f in it.get("files", []))
+	]
+	if not candidates:
+		return None
+	# Prefer file-size-critical and items that already have human/auditor triage notes (split plans)
+	candidates.sort(
+		key=lambda it: (
+			0 if it.get("rule") == "file-size-critical" else 1,
+			0 if it.get("notes") else 1,
+			-SEVERITY_RANK.get(it.get("severity", "low"), 1),
+			it.get("id", ""),
+		)
+	)
+	chosen = candidates[0]
+	return chosen["zone"], [chosen]
+
+
+def _select_test_hardening_candidate(
+	backlog_data: dict[str, Any],
+	zones_by_id: dict[str, dict[str, Any]],
+	excluded_zones: set[str],
+) -> tuple[str, list[dict[str, Any]]] | None:
+	candidates = [
+		it
+		for it in backlog_data.get("items", [])
+		if it.get("status") == "open"
+		and it.get("category") == "test-coverage"
+		and it.get("zone") in zones_by_id
+		and it.get("zone") not in excluded_zones
+	]
+	if not candidates:
+		return None
+	candidates.sort(key=_item_priority_key)
+	chosen = candidates[0]
+	return chosen["zone"], [chosen]
+
+
+def _select_static_sweeper_candidate(
+	backlog_data: dict[str, Any],
+	zones_by_id: dict[str, dict[str, Any]],
+	excluded_zones: set[str],
+	max_items: int = 6,
+) -> tuple[str, list[dict[str, Any]]] | None:
+	by_zone: dict[str, list[dict[str, Any]]] = defaultdict(list)
+	for it in backlog_data.get("items", []):
+		if (
+			it.get("status") == "open"
+			and it.get("safe_for_auto_fix") is True
+			and it.get("source") == "static-scanner"
+			and it.get("zone") in zones_by_id
+			and it.get("zone") not in excluded_zones
+		):
+			by_zone[it["zone"]].append(it)
+	if not by_zone:
+		return None
+	ranked: list[tuple[tuple[int, int, str], str, list[dict[str, Any]]]] = []
+	for zid, items in by_zone.items():
+		items.sort(key=_item_priority_key)
+		top = items[0]
+		ranked.append(
+			(
+				(-SEVERITY_RANK.get(top.get("severity", "low"), 1), -len(items), zid),
+				zid,
+				items[:max_items],
+			)
+		)
+	ranked.sort(key=lambda e: e[0])
+	return ranked[0][1], ranked[0][2]
+
+
+def _build_auditor_assignments(
+	selected_audits: list[dict[str, Any]],
+	auditors_per_wave: int,
+) -> list[dict[str, Any]]:
+	if not selected_audits:
+		return []
+	worker_count = max(1, min(auditors_per_wave, len(selected_audits)))
+	buckets: list[list[dict[str, Any]]] = [[] for _ in range(worker_count)]
+	for idx, zone_entry in enumerate(selected_audits):
+		buckets[idx % worker_count].append(zone_entry)
+
+	assignments: list[dict[str, Any]] = []
+	for idx, bucket in enumerate(buckets):
+		worker_name = "auditor" if worker_count == 1 else f"auditor-{idx + 1}"
+		has_critical = any(z.get("criticality") == "critical" for z in bucket)
+		assignments.append(
+			{
+				"worker": worker_name,
+				"workspace": "inherit",
+				"recommended_model": "gemini-4-neon-high" if has_critical else "gemini-4-neon-medium",
+				"zones": [z["zone"] for z in bucket],
+				"zone_details": bucket,
+			}
+		)
+	return assignments
+
+
+def build_integration_gate_plan(
+	zones_data: dict[str, Any],
+	touched_zones: list[str],
+	slot: int = 4,
+) -> dict[str, Any]:
+	zones_by_id = {z["id"]: z for z in zones_data.get("zones", [])}
+	unknown_zones = [zid for zid in touched_zones if zid not in zones_by_id]
+	frappe_modules: list[str] = []
+	seen_mods: set[str] = set()
+	agent_os_touched = False
+
+	for zid in touched_zones:
+		z = zones_by_id.get(zid)
+		if not z:
+			continue
+		if z.get("repo_area") == "ism-agent-os" or not z.get("requires_bench_slot"):
+			agent_os_touched = True
+			continue
+		cmd = z.get("verification_cmd", "")
+		m = re.search(r"-Module\s+([^\s]+)", cmd)
+		if m:
+			for mod in m.group(1).split(","):
+				mod = mod.strip()
+				if mod and mod not in seen_mods:
+					seen_mods.add(mod)
+					frappe_modules.append(mod)
+
+	frappe_cmd = None
+	if frappe_modules:
+		if "ism.tests.test_cross_track_seams" not in seen_mods:
+			frappe_modules.append("ism.tests.test_cross_track_seams")
+		frappe_cmd = (
+			f"powershell -ExecutionPolicy Bypass -File scripts\\test-in-slot.ps1 "
+			f"-Slot {slot} -Module {','.join(frappe_modules)}"
+		)
+
+	agent_os_cmd = (
+		"python -m unittest discover -s ism-agent-os/tests -t ism-agent-os -v"
+		if agent_os_touched
+		else None
+	)
+
+	return {
+		"touched_zones": touched_zones,
+		"unknown_zones": unknown_zones,
+		"bench_slot": slot if frappe_cmd else None,
+		"frappe_modules": frappe_modules,
+		"frappe_cmd": frappe_cmd,
+		"agent_os_cmd": agent_os_cmd,
+		"cli_test_cmd": "python -m unittest code-health/scripts/test_health_cli.py",
+	}
+
+
 def plan_next_batch(
 	repo_root: Path,
 	zones_data: dict[str, Any],
@@ -819,39 +1113,53 @@ def plan_next_batch(
 	preset: str,
 	audit_zones_override: int | None = None,
 	fix_tracks_override: int | None = None,
+	wave: int = 1,
+	exclude_zones: set[str] | None = None,
+	state_dir: Path | None = None,
 ) -> dict[str, Any]:
 	cfg = PRESETS[preset]
-	n_audit = audit_zones_override if audit_zones_override is not None else cfg["audit_zones"]
-	n_fix = fix_tracks_override if fix_tracks_override is not None else cfg["fix_tracks"]
-	max_items = cfg["max_items_per_fixer"]
-	max_loc = cfg["max_loc_per_fixer"]
+	n_audit = audit_zones_override if audit_zones_override is not None else int(cfg["audit_zones"])
+	n_fix = fix_tracks_override if fix_tracks_override is not None else int(cfg["fix_tracks"])
+	max_frappe_fix = (
+		min(n_fix, int(cfg.get("max_frappe_fix_tracks", n_fix)))
+		if fix_tracks_override is None
+		else min(n_fix, 3)
+	)
+	max_items = int(cfg["max_items_per_fixer"])
+	max_loc = int(cfg["max_loc_per_fixer"])
+	total_waves = int(cfg.get("waves", 1))
+	auditors_per_wave = int(cfg.get("auditors_per_wave", 1))
+	verifier_slots_cfg = list(cfg.get("verifier_slots", [3]))
+	deep_track_modes = list(cfg.get("deep_tracks", []))
+	excluded = set(exclude_zones or set())
 
 	zones_by_id = {z["id"]: z for z in zones_data.get("zones", [])}
-	ranked_audits = score_audit_zones(repo_root, zones_data, backlog_data)
+	ranked_audits = [
+		z for z in score_audit_zones(repo_root, zones_data, backlog_data) if z["zone"] not in excluded
+	]
 	selected_audits = ranked_audits[:n_audit]
+	auditor_assignments = _build_auditor_assignments(selected_audits, auditors_per_wave)
 
 	# Group open auto-fixable items by zone
 	open_auto = [
 		item
 		for item in backlog_data.get("items", [])
-		if item.get("status") == "open" and item.get("safe_for_auto_fix") is True and item.get("zone") in zones_by_id
+		if item.get("status") == "open"
+		and item.get("safe_for_auto_fix") is True
+		and item.get("zone") in zones_by_id
+		and item.get("zone") not in excluded
 	]
 	by_zone: dict[str, list[dict[str, Any]]] = defaultdict(list)
 	for item in open_auto:
 		by_zone[item["zone"]].append(item)
 
-	zone_candidates: list[tuple[tuple[int, int, str], str, list[dict[str, Any]]]] = []
+	zone_candidates: list[tuple[tuple[int, int, int, str], str, list[dict[str, Any]]]] = []
 	for zid, items in by_zone.items():
-		items.sort(
-			key=lambda it: (
-				-SEVERITY_RANK.get(it.get("severity", "low"), 1),
-				-EFFORT_RANK.get(it.get("estimated_effort", "medium"), 2),
-				it.get("id", ""),
-			)
-		)
+		items.sort(key=_item_priority_key)
 		top = items[0]
 		sort_key = (
 			-SEVERITY_RANK.get(top.get("severity", "low"), 1),
+			0 if top.get("source") != "static-scanner" else 1,
 			-EFFORT_RANK.get(top.get("estimated_effort", "medium"), 2),
 			zid,
 		)
@@ -859,93 +1167,212 @@ def plan_next_batch(
 
 	zone_candidates.sort(key=lambda entry: entry[0])
 
-	# Pick up to n_fix strictly disjoint zones; prefer pairing 1 agent-os with 1 frappe if severities tie
-	selected_fix_tracks: list[dict[str, Any]] = []
-	used_zones: set[str] = set()
-	chosen_entries: list[tuple[str, list[dict[str, Any]]]] = []
+	# Reserve optional wave-scheduled deep writer tracks (within Frappe slot budget)
+	reserved_deep_writers: list[tuple[str, str, list[dict[str, Any]], int, str]] = []
+	used_zones: set[str] = set(excluded)
+	frappe_used = 0
+
+	if n_fix > 0:
+		# Wave 3 of overnight: 1 POLICY.md §4 file-size refactor track
+		if "refactor" in deep_track_modes and wave == 3:
+			ref_pick = _select_refactor_candidate(backlog_data, zones_by_id, used_zones)
+			if ref_pick is not None:
+				rzid, ritems = ref_pick
+				needs_slot = bool(zones_by_id[rzid].get("requires_bench_slot"))
+				if not needs_slot or frappe_used < max_frappe_fix:
+					used_zones.add(rzid)
+					if needs_slot:
+						frappe_used += 1
+					reserved_deep_writers.append(
+						("refactor", rzid, ritems, int(cfg.get("refactor_max_loc", 800)), "gemini-4-neon-medium")
+					)
+
+		# Wave 2 of overnight: 1 static-debt or test-coverage sweeper track
+		if "static-or-test-sweeper" in deep_track_modes and wave == 2:
+			test_pick = _select_test_hardening_candidate(backlog_data, zones_by_id, used_zones)
+			static_pick = _select_static_sweeper_candidate(
+				backlog_data, zones_by_id, used_zones, max_items=int(cfg.get("sweeper_max_items", 6))
+			)
+			pick_kind = None
+			pick_data = None
+			if test_pick is not None and SEVERITY_RANK.get(test_pick[1][0].get("severity", "low"), 1) >= 2:
+				pick_kind, pick_data = "test-hardening", test_pick
+			elif static_pick is not None:
+				pick_kind, pick_data = "static-sweeper", static_pick
+			elif test_pick is not None:
+				pick_kind, pick_data = "test-hardening", test_pick
+
+			if pick_kind and pick_data is not None:
+				szid, sitems = pick_data
+				needs_slot = bool(zones_by_id[szid].get("requires_bench_slot"))
+				if not needs_slot or frappe_used < max_frappe_fix:
+					used_zones.add(szid)
+					if needs_slot:
+						frappe_used += 1
+					reserved_deep_writers.append(
+						(pick_kind, szid, sitems, max_loc, "gemini-4-hydrogen-medium")
+					)
+
+		# Wave 2 of extended: optional test-only hardening track
+		if "rfc-or-test" in deep_track_modes and wave == 2:
+			test_pick = _select_test_hardening_candidate(backlog_data, zones_by_id, used_zones)
+			if test_pick is not None:
+				tzid, titems = test_pick
+				needs_slot = bool(zones_by_id[tzid].get("requires_bench_slot"))
+				if not needs_slot or frappe_used < max_frappe_fix:
+					used_zones.add(tzid)
+					if needs_slot:
+						frappe_used += 1
+					reserved_deep_writers.append(
+						("test-hardening", tzid, titems, max_loc, "gemini-4-hydrogen-medium")
+					)
+
+	# Pick remaining strictly disjoint semantic fix tracks, honoring max_frappe_fix_tracks
+	chosen_entries: list[tuple[str, str, list[dict[str, Any]], int, str | None]] = []
+	remaining_fix_slots = max(0, n_fix - len(reserved_deep_writers))
 
 	for _, zid, items in zone_candidates:
-		if len(chosen_entries) >= n_fix:
+		if len(chosen_entries) >= remaining_fix_slots:
 			break
 		if zid in used_zones:
 			continue
+		needs_slot = bool(zones_by_id[zid].get("requires_bench_slot"))
+		if needs_slot and frappe_used >= max_frappe_fix:
+			continue
 		used_zones.add(zid)
-		chosen_entries.append((zid, items))
+		if needs_slot:
+			frappe_used += 1
+		chosen_entries.append(("semantic-fix", zid, items, max_loc, None))
 
-	# If we have 2 frappe zones and an equally severe agent-os candidate exists, swap second to save a bench slot
-	if len(chosen_entries) == 2 and n_fix >= 2:
-		z0, z1 = chosen_entries[0][0], chosen_entries[1][0]
+	# Preserve standard/2-track tie-break: if 2 Frappe zones selected and an equally severe agent-os candidate exists, swap 2nd to save a bench slot
+	if len(chosen_entries) == 2 and n_fix == 2 and not reserved_deep_writers:
+		z0, z1 = chosen_entries[0][1], chosen_entries[1][1]
 		if zones_by_id[z0].get("requires_bench_slot") and zones_by_id[z1].get("requires_bench_slot"):
-			z1_sev = SEVERITY_RANK.get(chosen_entries[1][1][0].get("severity", "low"), 1)
+			z1_sev = SEVERITY_RANK.get(chosen_entries[1][2][0].get("severity", "low"), 1)
 			for _, zid, items in zone_candidates:
 				if zid not in used_zones and not zones_by_id[zid].get("requires_bench_slot"):
 					if SEVERITY_RANK.get(items[0].get("severity", "low"), 1) >= z1_sev:
-						chosen_entries[1] = (zid, items)
+						chosen_entries[1] = ("semantic-fix", zid, items, max_loc, None)
 						break
 
+	all_writer_entries: list[tuple[str, str, list[dict[str, Any]], int, str | None]] = [
+		*chosen_entries,
+		*reserved_deep_writers,
+	]
+
+	selected_fix_tracks: list[dict[str, Any]] = []
 	next_slot = 1
 	any_neon_fixer = False
-	for idx, (zid, items) in enumerate(chosen_entries):
+	for idx, (track_kind, zid, items, track_max_loc, forced_model) in enumerate(all_writer_entries):
 		worker_name = f"fixer-{chr(ord('a') + idx)}"
 		zmeta = zones_by_id[zid]
 		slot: int | None = None
 		if zmeta.get("requires_bench_slot"):
 			slot = next_slot
 			next_slot += 1
-		verify_cmd = zmeta.get("verification_cmd", "").replace("{slot}", str(slot or 3))
+		default_verify_slot = verifier_slots_cfg[0] if verifier_slots_cfg else 3
+		verify_cmd = zmeta.get("verification_cmd", "").replace("{slot}", str(slot or default_verify_slot))
 
-		# Model triage: routine tests/hygiene/small fixes -> hydrogen-medium; perf/file-size/security/medium+ -> neon-medium
-		needs_neon = any(
-			it.get("category") in {"security", "performance", "file-size"} or it.get("estimated_effort") != "small"
-			for it in items
-		)
-		model = "gemini-4-neon-medium" if needs_neon else "gemini-4-hydrogen-medium"
-		if needs_neon:
+		if forced_model:
+			model = forced_model
+		else:
+			needs_neon = any(
+				it.get("category") in {"security", "performance", "file-size"} or it.get("estimated_effort") != "small"
+				for it in items
+			)
+			model = "gemini-4-neon-medium" if needs_neon else "gemini-4-hydrogen-medium"
+		if "neon" in model:
 			any_neon_fixer = True
 
 		selected_fix_tracks.append(
 			{
 				"worker": worker_name,
+				"track_kind": track_kind,
 				"workspace": "share",
 				"zone": zid,
 				"repo_area": zmeta.get("repo_area"),
 				"bench_slot": slot,
-				"max_loc": max_loc,
+				"max_loc": track_max_loc,
 				"recommended_model": model,
 				"allowed_paths": zmeta.get("paths", []),
 				"verification_cmd": verify_cmd,
-				"items": [
-					{
-						"id": it["id"],
-						"title": it["title"],
-						"category": it["category"],
-						"severity": it["severity"],
-						"files": it.get("files", []),
-						"line_hint": it.get("line_hint"),
-						"proposed_fix": it.get("proposed_fix", ""),
-					}
-					for it in items
-				],
+				"items": [_format_plan_item(it) for it in items],
 			}
 		)
 
+	# Build read-only deep tracks (Architect RFCs)
+	deep_tracks: list[dict[str, Any]] = []
+	existing_rfcs = _existing_rfc_ids(state_dir)
+	should_run_rfc = (
+		("rfc" in deep_track_modes and wave in {1, 3})
+		or ("rfc-or-test" in deep_track_modes and wave == 1)
+	)
+	if should_run_rfc:
+		rfc_track = _select_rfc_track(backlog_data, zones_by_id, existing_rfcs, max_items=2)
+		if rfc_track is not None:
+			deep_tracks.append(rfc_track)
+
+	# Assign verifiers (1 for eco/standard, up to 2 on slots 4 & 5 for extended/overnight)
+	any_frappe_fixer = any(t["bench_slot"] is not None for t in selected_fix_tracks)
+	verifiers_plan: list[dict[str, Any]] = []
+	if selected_fix_tracks:
+		n_verifiers = min(int(cfg.get("verifiers", 1)), len(selected_fix_tracks))
+		v_buckets: list[list[dict[str, Any]]] = [[] for _ in range(n_verifiers)]
+		for idx, track in enumerate(selected_fix_tracks):
+			v_buckets[idx % n_verifiers].append(track)
+
+		for idx, bucket in enumerate(v_buckets):
+			v_name = "verifier" if n_verifiers == 1 else f"verifier-{idx + 1}"
+			bucket_has_frappe = any(t["bench_slot"] is not None for t in bucket)
+			v_slot = (
+				verifier_slots_cfg[idx]
+				if bucket_has_frappe and idx < len(verifier_slots_cfg)
+				else (verifier_slots_cfg[0] if bucket_has_frappe and verifier_slots_cfg else None)
+			)
+			bucket_has_neon = any("neon" in t["recommended_model"] for t in bucket)
+			verifiers_plan.append(
+				{
+					"worker": v_name,
+					"workspace": "inherit",
+					"bench_slot": v_slot,
+					"recommended_model": "gemini-4-carbon-high" if bucket_has_neon else "gemini-4-neon-high",
+					"assigned_fixers": [t["worker"] for t in bucket],
+				}
+			)
+
 	verifier_model = "gemini-4-carbon-high" if any_neon_fixer else "gemini-4-neon-high"
+	active_verifier_slots = [v["bench_slot"] for v in verifiers_plan if v["bench_slot"] is not None]
+	primary_verifier_slot = active_verifier_slots[0] if active_verifier_slots else (verifier_slots_cfg[0] if any_frappe_fixer and verifier_slots_cfg else None)
+
 	fallback_note = None
 	if n_fix > len(selected_fix_tracks):
 		fallback_note = (
 			f"Requested {n_fix} fix track(s), found {len(selected_fix_tracks)} zone(s) with open "
-			"safe_for_auto_fix items. Run `scan --seed` first, run an `audit-only` night, or assign "
+			"eligible items. Run `scan --seed` first, run an `audit-only` night, or assign "
 			"the remaining fixer slot to additive test-coverage hardening in a disjoint zone."
 		)
 
 	return {
 		"preset": preset,
-		"coordinator_model": "gemini-4-neon-medium",
+		"wave": wave,
+		"total_waves": total_waves,
+		"coordinator_model": "gemini-4-neon-high" if total_waves > 1 else "gemini-4-neon-medium",
 		"monitor_model": "gemini-4-hydrogen-low",
 		"verifier_model": verifier_model if selected_fix_tracks else None,
-		"verifier_bench_slot": 3 if any(t["bench_slot"] is not None for t in selected_fix_tracks) else None,
+		"verifier_bench_slot": primary_verifier_slot,
+		"verifier_bench_slots": active_verifier_slots,
+		"verifiers": verifiers_plan,
+		"auditor_assignments": auditor_assignments,
 		"audit_tracks": selected_audits,
 		"fix_tracks": selected_fix_tracks,
+		"deep_tracks": deep_tracks,
+		"final_integration_gate": bool(cfg.get("final_integration_gate", False)),
+		"session_limits": {
+			"max_waves": total_waves,
+			"max_session_commits": int(cfg.get("max_session_commits", 4)),
+			"max_session_loc": int(cfg.get("max_session_loc", 800)),
+			"max_consecutive_failures": int(cfg.get("max_consecutive_failures", 2)),
+		},
 		"fallback_note": fallback_note,
 	}
 
@@ -1117,6 +1544,7 @@ def cmd_scan(args: argparse.Namespace, repo_root: Path, state_dir: Path) -> int:
 def cmd_next_batch(args: argparse.Namespace, repo_root: Path, state_dir: Path) -> int:
 	zones_data = load_json(state_dir / "zones.json")
 	backlog_data = load_json(state_dir / "backlog.json")
+	exclude_set = {z.strip() for z in (args.exclude_zones or "").split(",") if z.strip()}
 	plan = plan_next_batch(
 		repo_root,
 		zones_data,
@@ -1124,31 +1552,61 @@ def cmd_next_batch(args: argparse.Namespace, repo_root: Path, state_dir: Path) -
 		preset=args.preset,
 		audit_zones_override=args.audit_zones,
 		fix_tracks_override=args.fix_tracks,
+		wave=args.wave,
+		exclude_zones=exclude_set,
+		state_dir=state_dir,
 	)
 
 	if args.json:
 		print(json.dumps(plan, indent=2))
 	else:
-		print(f"Batch Plan (preset={plan['preset']}):")
-		print(f"  Coordinator: {plan['coordinator_model']} | Monitor: {plan['monitor_model']} | Verifier: {plan['verifier_model']}")
+		print(f"Batch Plan (preset={plan['preset']}, wave={plan['wave']}/{plan['total_waves']}):")
+		ver_str = (
+			", ".join(f"{v['worker']}:{v['recommended_model']}@slot-{v['bench_slot']}" for v in plan["verifiers"])
+			if plan["verifiers"]
+			else str(plan["verifier_model"])
+		)
+		print(f"  Coordinator: {plan['coordinator_model']} | Monitor: {plan['monitor_model']} | Verifiers: {ver_str}")
 		print("  Audit Track(s):")
-		for z in plan["audit_tracks"]:
-			print(
-				f"    - {z['zone']} (score={z['score']}, model={z['recommended_auditor_model']}, "
-				f"reasons={', '.join(z['reasons'])})"
-			)
+		for a in plan["auditor_assignments"]:
+			print(f"    - {a['worker']} ({a['recommended_model']}): {', '.join(a['zones'])}")
 		print("  Fix Track(s):")
 		if not plan["fix_tracks"]:
 			print("    - (none selected)")
 		for t in plan["fix_tracks"]:
 			ids = ", ".join(i["id"] for i in t["items"])
 			print(
-				f"    - {t['worker']} -> {t['zone']} (slot={t['bench_slot']}, model={t['recommended_model']}, "
-				f"items=[{ids}], max_loc={t['max_loc']})"
+				f"    - {t['worker']} [{t['track_kind']}] -> {t['zone']} (slot={t['bench_slot']}, "
+				f"model={t['recommended_model']}, items=[{ids}], max_loc={t['max_loc']})"
 			)
+		if plan["deep_tracks"]:
+			print("  Read-Only Deep Track(s):")
+			for d in plan["deep_tracks"]:
+				ids = ", ".join(i["id"] for i in d["items"])
+				print(f"    - {d['worker']} [{d['kind']}] ({d['recommended_model']}): items=[{ids}] -> {d['output_dir']}")
+		if plan["final_integration_gate"]:
+			print("  Final Integration Gate: ENABLED (run `integration-gate --zones <touched> --slot 4` after final wave)")
 		if plan["fallback_note"]:
 			print(f"  Note: {plan['fallback_note']}")
 	return 0
+
+
+def cmd_integration_gate(args: argparse.Namespace, repo_root: Path, state_dir: Path) -> int:
+	zones_data = load_json(state_dir / "zones.json")
+	touched = [z.strip() for z in args.zones.split(",") if z.strip()]
+	gate = build_integration_gate_plan(zones_data, touched, slot=args.slot)
+	if args.json:
+		print(json.dumps(gate, indent=2))
+	else:
+		print(f"Final Cross-Zone Integration Gate (zones={', '.join(gate['touched_zones'])}):")
+		if gate["unknown_zones"]:
+			print(f"  WARNING: Unknown zones ignored: {gate['unknown_zones']}", file=sys.stderr)
+		if gate["frappe_cmd"]:
+			print(f"  Frappe (slot-{gate['bench_slot']}): {gate['frappe_cmd']}")
+		if gate["agent_os_cmd"]:
+			print(f"  Agent OS: {gate['agent_os_cmd']}")
+		print(f"  CLI Self-Test: {gate['cli_test_cmd']}")
+	return 0 if not gate["unknown_zones"] else 1
 
 
 def cmd_add_issue(args: argparse.Namespace, repo_root: Path, state_dir: Path) -> int:
@@ -1372,9 +1830,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 	p_batch = sub.add_parser("next-batch", help="Select due audit zones and disjoint fix tracks.")
 	p_batch.add_argument("--preset", choices=sorted(PRESETS.keys()), default="standard")
+	p_batch.add_argument("--wave", type=int, default=1, help="Wave index (1-based) for multi-wave presets.")
 	p_batch.add_argument("--audit-zones", type=int, default=None)
 	p_batch.add_argument("--fix-tracks", type=int, default=None)
+	p_batch.add_argument("--exclude-zones", default=None, help="Comma-separated zone IDs to exclude from this wave.")
 	p_batch.add_argument("--json", action="store_true")
+
+	p_gate = sub.add_parser("integration-gate", help="Build batched cross-zone regression gate commands.")
+	p_gate.add_argument("--zones", required=True, help="Comma-separated zone IDs touched during the run.")
+	p_gate.add_argument("--slot", type=int, default=4, help="Bench slot for Frappe cross-zone gate (default: 4).")
+	p_gate.add_argument("--json", action="store_true")
 
 	p_add = sub.add_parser("add-issue", help="Add one or more issues to backlog.json with deduplication.")
 	p_add.add_argument("--from-json", default=None, help="Path to JSON file containing an issue object or list.")
@@ -1434,6 +1899,7 @@ def main(argv: list[str] | None = None) -> int:
 		"preflight": cmd_preflight,
 		"scan": cmd_scan,
 		"next-batch": cmd_next_batch,
+		"integration-gate": cmd_integration_gate,
 		"add-issue": cmd_add_issue,
 		"update-issue": cmd_update_issue,
 		"mark-audited": cmd_mark_audited,
