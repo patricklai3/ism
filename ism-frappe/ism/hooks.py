@@ -199,7 +199,11 @@ doc_events = {
 			"ism.board.projections.on_repair_order_update",
 			"ism.portal.pin_vault.on_repair_order_update_purge_pin",
 			"ism.ism.doctype.shop_action_item.clearing.on_repair_order_update_clear_actions",
+			"ism.time_calibration.service.on_repair_order_update",
 		],
+	},
+	"Service Time Observation": {
+		"on_update": "ism.time_calibration.service.on_observation_update",
 	},
 	"Schedule Entry": {
 		"on_update": [
@@ -232,6 +236,7 @@ scheduler_events = {
 		"ism.comms.otp.cleanup_expired_otp_challenges",
 		"ism.comms.sessions.cleanup_expired_portal_sessions",
 		"ism.portal.pin_vault.purge_stale_closed_ro_pins",
+		"ism.time_calibration.deconvolution.run_nightly_calibration_job",
 	],
 }
 
