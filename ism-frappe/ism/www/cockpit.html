@@ -35,6 +35,7 @@
         <div class="cockpit-status-group">
           <span id="bottleneckPill" class="cockpit-pill cockpit-pill--sky">Loading…</span>
           <span id="capacityMeta" class="cockpit-pill">—</span>
+          <span id="policyModePill" class="cockpit-pill cockpit-pill--sky" title="Active Technician Assignment Policy">—</span>
           <span id="tagSaturationGroup" class="cockpit-tag-sat"></span>
         </div>
       </div>
@@ -47,6 +48,8 @@
           <button id="todayBtn" class="cockpit-btn" type="button">Today</button>
         </div>
 
+        <button id="openMatrixBtn" class="cockpit-btn" type="button" title="Open Technician Skill &amp; Shift Matrix">Matrix</button>
+        <button id="rebalanceDayBtn" class="cockpit-btn" type="button" title="Preview &amp; Rebalance Soft-Assigned Jobs">Rebalance Day</button>
         <button id="refreshBtn" class="cockpit-btn cockpit-btn--primary" type="button">Refresh</button>
 
         <div class="cockpit-sync-meta">
@@ -128,6 +131,36 @@
           <div id="unscheduledBar" class="cockpit-strip cockpit-strip--sky" style="display:none;"></div>
         </section>
       </main>
+    </div>
+  </div>
+
+  <!-- Technician Assignment & Skill Matrix Modal -->
+  <div id="matrixModal" class="cockpit-modal" role="dialog" aria-modal="true" aria-labelledby="matrixModalTitle" hidden>
+    <div class="cockpit-modal__backdrop" data-close-modal="matrixModal"></div>
+    <div class="cockpit-modal__dialog cockpit-modal__dialog--wide">
+      <div class="cockpit-modal__head">
+        <div class="cockpit-modal__title-wrap">
+          <h2 id="matrixModalTitle" class="cockpit-modal__title">Technician Assignment &amp; Skill Matrix</h2>
+          <span id="matrixModalDateBadge" class="cockpit-pill cockpit-pill--muted">—</span>
+        </div>
+        <button type="button" class="cockpit-btn cockpit-btn--icon cockpit-btn--subtle" data-close-modal="matrixModal" aria-label="Close matrix modal">&times;</button>
+      </div>
+      <div id="matrixModalBody" class="cockpit-modal__body"></div>
+    </div>
+  </div>
+
+  <!-- Rebalance Day Diff Preview Modal -->
+  <div id="rebalanceModal" class="cockpit-modal" role="dialog" aria-modal="true" aria-labelledby="rebalanceModalTitle" hidden>
+    <div class="cockpit-modal__backdrop" data-close-modal="rebalanceModal"></div>
+    <div class="cockpit-modal__dialog">
+      <div class="cockpit-modal__head">
+        <div class="cockpit-modal__title-wrap">
+          <h2 id="rebalanceModalTitle" class="cockpit-modal__title">Rebalance Day Preview</h2>
+          <span id="rebalanceModalDateBadge" class="cockpit-pill cockpit-pill--muted">—</span>
+        </div>
+        <button type="button" class="cockpit-btn cockpit-btn--icon cockpit-btn--subtle" data-close-modal="rebalanceModal" aria-label="Close rebalance modal">&times;</button>
+      </div>
+      <div id="rebalanceModalBody" class="cockpit-modal__body"></div>
     </div>
   </div>
 

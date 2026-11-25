@@ -1,6 +1,8 @@
 // ISM Shop OS — Executive & Dispatch Cockpit (Vanilla ES Module)
 // Consumes ism.api.board.get_cockpit_dashboard & ism.api.board.sync_cockpit_action.
 
+import { initMatrixModals } from "./matrix.js";
+
 const BOOT = window.ISM_COCKPIT_BOOT || {};
 const CSRF_TOKEN = String(BOOT.csrf_token || "");
 
@@ -332,6 +334,22 @@ function renderToolbar(view) {
     const techs = Number(cap.on_duty_techs || 0);
     const freeHrs = cap.effective_bookable_hours != null ? ` · ${cap.effective_bookable_hours}h bookable` : "";
     capMeta.textContent = `${bays} Bays · ${techs} Techs${freeHrs}`;
+  }
+
+  const policyPill = document.getElementById("policyModePill");
+  if (policyPill) {
+    const mode = String(
+      (view && (view.assignment_policy_mode || (view.swimlane && view.swimlane.assignment_policy_mode))) ||
+        "Tiered Waterfall"
+    );
+    policyPill.textContent = mode;
+    const modeTone =
+      mode === "Equal Balance"
+        ? "cockpit-pill--green"
+        : mode === "Weighted Share"
+          ? "cockpit-pill--amber"
+          : "cockpit-pill--sky";
+    policyPill.className = `cockpit-pill ${modeTone}`;
   }
 
   const tagGroup = document.getElementById("tagSaturationGroup");
@@ -693,6 +711,18 @@ function renderLaneBlocksHtml(blocks, swim) {
           ? `<span class="cockpit-job-badge">${actionCount} Action${actionCount > 1 ? "s" : ""}</span>`
           : "";
 
+      const isLocked = Boolean(b.assignment_locked);
+      const assignMode = b.assignment_mode ? String(b.assignment_mode) : "";
+      const assignReason = b.assignment_reason ? String(b.assignment_reason) : "";
+      const lockTitle = isLocked
+        ? `Locked (${assignMode || "Manual"}) — click to unlock`
+        : `Soft-assigned (${assignMode || "Auto"}) — click to lock`;
+      const lockBtnHtml = b.name
+        ? `<button type="button" class="cockpit-lock-btn js-toggle-lock ${isLocked ? "is-locked" : "is-soft"}" ` +
+          `data-entry="${esc(b.name)}" data-locked="${isLocked ? "1" : "0"}" ` +
+          `title="${esc(lockTitle)}" aria-label="${esc(lockTitle)}">${isLocked ? "🔒" : "🔄"}</button>`
+        : "";
+
       const vehTooltip =
         b.vehicle_info && window.ISMVehicleDisplay
           ? window.ISMVehicleDisplay.formatTooltip(b.vehicle_info)
@@ -702,6 +732,9 @@ function renderLaneBlocksHtml(blocks, swim) {
         vehTooltip || b.sublabel || "",
         b.status ? `[${b.status}]` : "",
         b.start_clock ? `Internal T: ${b.start_clock}–${b.end_clock || ""}` : "",
+        b.is_comeback ? "Comeback" : "",
+        assignMode ? `Assignment: ${assignMode}${isLocked ? " (Locked)" : " (Soft)"}` : "",
+        assignReason ? `Reason: ${assignReason}` : "",
       ].filter(Boolean);
       const tooltip = tooltipParts.join(" · ");
 
@@ -719,7 +752,7 @@ function renderLaneBlocksHtml(blocks, swim) {
         `title="${esc(tooltip)}">` +
         `<div class="cockpit-job-title-row">` +
         `<span class="cockpit-job-title">${esc(b.label || b.name || "Job")}</span>` +
-        badgeHtml +
+        `<span class="cockpit-job-badges">${lockBtnHtml}${badgeHtml}</span>` +
         `</div>` +
         `<div class="cockpit-job-sub">${blockVehHtml || esc(b.sublabel || "")}</div>` +
         `</${tag}>`
@@ -809,12 +842,35 @@ function renderSwimlane(view) {
           ? `<span class="cockpit-pill cockpit-pill--amber" style="padding:1px 6px;font-size:0.64rem;">Leave</span>`
           : `<span class="cockpit-lane-util">${esc(lane.utilization_pct ?? 0)}%</span>`;
 
+        const tierNum = lane.assignment_tier != null ? Number(lane.assignment_tier) : null;
+        const tierLabel = lane.tier_label ? String(lane.tier_label) : "";
+        const tierHtml =
+          tierNum != null || tierLabel
+            ? `<span class="cockpit-tier-pill cockpit-tier-pill--t${esc(tierNum || 1)}">${esc(
+                `T${tierNum || 1}${tierLabel ? ` ${tierLabel}` : ""}`
+              )}</span>`
+            : "";
+
+        const hasFairness = lane.fairness_load_pct != null || lane.assigned_frt_hours_7d != null;
+        const fairnessPct = Math.max(0, Math.min(100, Number(lane.fairness_load_pct || 0)));
+        const frtHours7d = Number(lane.assigned_frt_hours_7d || 0).toFixed(1);
+        const availHours7d = Number(lane.available_shift_hours_7d || 0).toFixed(1);
+        const fairnessTone = fairnessPct >= 85 ? "cockpit-fill--amber" : "cockpit-fill--green";
+        const fairnessHtml = hasFairness
+          ? `<div class="cockpit-fairness-row" title="7-day normalized FRT load: ${esc(fairnessPct.toFixed(0))}% (${esc(frtHours7d)}h / ${esc(availHours7d)}h)">` +
+            `<div class="cockpit-fairness-track"><div class="cockpit-fairness-fill ${fairnessTone}" style="width:${fairnessPct}%"></div></div>` +
+            `<span class="cockpit-fairness-label">7d: ${esc(Math.round(fairnessPct))}% · ${esc(frtHours7d)}h</span>` +
+            `</div>`
+          : "";
+
         return (
           `<div class="cockpit-lane-meta">` +
           `<div class="cockpit-lane-name">` +
           `<span>${esc(lane.label || lane.id)}</span>` +
           badge +
           `</div>` +
+          (tierHtml ? `<div class="cockpit-lane-tags">${tierHtml}</div>` : "") +
+          fairnessHtml +
           `</div>` +
           `<div class="cockpit-lane-track ${collidingIndices.size ? "cockpit-lane-track--collision" : ""}">` +
           renderLaneBlocksHtml(blocks, swim) +
@@ -1115,9 +1171,56 @@ function bindEvents() {
   const nextDayBtn = document.getElementById("nextDayBtn");
   const todayBtn = document.getElementById("todayBtn");
   const refreshBtn = document.getElementById("refreshBtn");
+  const openMatrixBtn = document.getElementById("openMatrixBtn");
+  const rebalanceDayBtn = document.getElementById("rebalanceDayBtn");
+  const swimBody = document.getElementById("swimBody");
   const statusTabs = document.getElementById("queueStatusTabs");
   const priorityFilters = document.getElementById("priorityFilters");
   const actionQueueList = document.getElementById("actionQueueList");
+
+  const matrixControls = initMatrixModals({
+    apiGet,
+    apiPost,
+    esc,
+    showToast,
+    showError,
+    getSelectedDate: () => state.selectedDate || (state.view && state.view.date) || getLocalIsoDate(),
+    onDashboardRefreshNeeded: () => loadDashboard({ silent: true }),
+  });
+
+  if (openMatrixBtn) {
+    openMatrixBtn.addEventListener("click", () => matrixControls.openMatrixModal());
+  }
+
+  if (rebalanceDayBtn) {
+    rebalanceDayBtn.addEventListener("click", () => matrixControls.openRebalanceModal());
+  }
+
+  if (swimBody) {
+    swimBody.addEventListener("click", async (ev) => {
+      const lockBtn = ev.target.closest("button.js-toggle-lock");
+      if (!lockBtn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const entry = lockBtn.getAttribute("data-entry");
+      if (!entry || lockBtn.disabled) return;
+      const currentlyLocked = lockBtn.getAttribute("data-locked") === "1";
+      const nextLocked = currentlyLocked ? 0 : 1;
+      lockBtn.disabled = true;
+      try {
+        await apiPost("ism.api.technician_matrix.toggle_assignment_lock", {
+          schedule_entry: entry,
+          locked: nextLocked,
+        });
+        showToast(nextLocked ? `Locked ${entry} assignment.` : `Unlocked ${entry} (soft-assigned).`);
+        loadDashboard({ silent: true });
+      } catch (err) {
+        showError(err.message || "Failed to toggle assignment lock.");
+      } finally {
+        lockBtn.disabled = false;
+      }
+    });
+  }
 
   if (datePicker) {
     datePicker.addEventListener("change", (ev) => {
@@ -1226,6 +1329,7 @@ function bindEvents() {
 
   document.addEventListener("keydown", (ev) => {
     const tag = document.activeElement && document.activeElement.tagName;
+    if (document.querySelector(".cockpit-modal:not([hidden])")) return;
     if (
       ev.key === "r" &&
       !ev.metaKey &&
